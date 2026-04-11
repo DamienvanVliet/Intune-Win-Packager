@@ -229,8 +229,16 @@ try {
         throw "GitHub CLI is not authenticated. Run: gh auth login"
     }
 
-    $existingRelease = & $ghPath release view $tagName 2>$null
-    if ($LASTEXITCODE -eq 0 -and $existingRelease) {
+    $hasExistingRelease = $false
+    try {
+        & $ghPath release view $tagName 1>$null 2>$null
+        $hasExistingRelease = ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        $hasExistingRelease = $false
+    }
+
+    if ($hasExistingRelease) {
         & $ghPath release upload $tagName $installerPath --clobber | Out-Null
         & $ghPath release edit $tagName --title $finalTitle --notes-file $notesFile | Out-Null
     }
