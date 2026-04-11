@@ -20,8 +20,11 @@ This tool is built for Intune administrators who want a fast, local, no-cloud wo
 - EXE install/uninstall command editing
 - Immediate input validation before packaging starts
 - Real-time process log streaming during packaging
+- Step-based progress bar with percentage + active step detail
 - Local settings/profile/history persistence (`JSON`)
+- Low Impact Packaging Mode to reduce CPU impact while packing
 - Tool auto-locate plus one-click tool install
+- In-app update check with changelog and one-click installer launch
 - Open output folder after successful packaging
 
 ## Screenshots
@@ -83,6 +86,35 @@ dotnet run --project IntuneWinPackager.App
 6. Click `Start Packaging`.
 7. Watch live logs and status until completed.
 8. Click `Open Output` to open the generated package folder.
+
+## App Updates (In App)
+
+1. Open the `Settings & Profiles` card.
+2. In `App Updates`, click `Check for Updates`.
+3. Review:
+- Current version
+- Latest version
+- Changelog
+4. If an update is available, click `Install Update`.
+5. The installer is downloaded and launched automatically.
+
+Note: update checks require internet access to read GitHub releases.
+
+## Release + Changelog Workflow
+
+From now on, every release should include changelog notes and be published so the in-app update button can detect it.
+
+1. Make your code changes.
+2. Update notes in `CHANGELOG.md` (new version section).
+3. Publish release (builds installer + creates GitHub Release with installer asset):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-update.ps1 -Version 1.1.0 -ReleaseNotes "Your release notes here"
+```
+
+Requirements:
+- GitHub CLI (`gh`) installed and authenticated.
+- Repo remote correctly configured.
 
 ## Build A Real Windows Installer (Setup.exe)
 

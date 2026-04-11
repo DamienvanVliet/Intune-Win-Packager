@@ -74,6 +74,29 @@ public sealed class ProcessRunnerService : IProcessRunner
             throw new InvalidOperationException($"Failed to start process {request.FileName}.");
         }
 
+        if (request.PreferLowImpact)
+        {
+            try
+            {
+                process.PriorityClass = ProcessPriorityClass.BelowNormal;
+                outputProgress?.Report(new ProcessOutputLine
+                {
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    Severity = LogSeverity.Info,
+                    Text = "Process priority set to BelowNormal (Low Impact Mode)."
+                });
+            }
+            catch (Exception ex)
+            {
+                outputProgress?.Report(new ProcessOutputLine
+                {
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    Severity = LogSeverity.Warning,
+                    Text = $"Could not set low impact priority: {ex.Message}"
+                });
+            }
+        }
+
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 

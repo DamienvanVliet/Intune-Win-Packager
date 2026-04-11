@@ -1,11 +1,13 @@
 ﻿using System.Collections.ObjectModel;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Reflection;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfColor = System.Windows.Media.Color;
 using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
 using WpfDispatcherPriority = System.Windows.Threading.DispatcherPriority;
 using WpfDispatcherTimer = System.Windows.Threading.DispatcherTimer;
+using WpfApplication = System.Windows.Application;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using IntuneWinPackager.App.Services;
@@ -26,6 +28,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IHistoryService _historyService;
     private readonly IToolLocatorService _toolLocatorService;
     private readonly IToolInstallerService _toolInstallerService;
+    private readonly IAppUpdateService _appUpdateService;
     private readonly IDialogService _dialogService;
 
     private readonly ObservableCollection<string> _logs = new();
@@ -39,6 +42,7 @@ public partial class MainViewModel : ObservableObject
     private CancellationTokenSource? _msiInspectionCancellation;
     private bool _isInitialized;
     private bool _suppressSetupRefresh;
+    private AppUpdateInfo? _latestUpdateInfo;
 
     [ObservableProperty]
     private string sourceFolder = string.Empty;
@@ -91,6 +95,36 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string resultOutputPath = string.Empty;
 
+    [ObservableProperty]
+    private bool useLowImpactMode = true;
+
+    [ObservableProperty]
+    private double packagingProgressPercentage;
+
+    [ObservableProperty]
+    private bool isPackagingProgressIndeterminate;
+
+    [ObservableProperty]
+    private string packagingProgressStep = "Ready";
+
+    [ObservableProperty]
+    private string packagingProgressDetail = "Waiting to start.";
+
+    [ObservableProperty]
+    private string currentVersion = "1.0.0";
+
+    [ObservableProperty]
+    private string latestVersion = "-";
+
+    [ObservableProperty]
+    private string updateStatus = "Not checked yet.";
+
+    [ObservableProperty]
+    private string updateChangelog = "Click 'Check for Updates' to load release notes.";
+
+    [ObservableProperty]
+    private bool isUpdateAvailable;
+
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
         IValidationService validationService,
@@ -101,6 +135,7 @@ public partial class MainViewModel : ObservableObject
         IHistoryService historyService,
         IToolLocatorService toolLocatorService,
         IToolInstallerService toolInstallerService,
+        IAppUpdateService appUpdateService,
         IDialogService dialogService)
     {
         _packagingWorkflowService = packagingWorkflowService;
@@ -112,6 +147,7 @@ public partial class MainViewModel : ObservableObject
         _historyService = historyService;
         _toolLocatorService = toolLocatorService;
         _toolInstallerService = toolInstallerService;
+        _appUpdateService = appUpdateService;
         _dialogService = dialogService;
 
         _readonlyLogs = new ReadOnlyObservableCollection<string>(_logs);
@@ -153,6 +189,11 @@ public partial class MainViewModel : ObservableObject
         OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder, CanOpenOutputFolder);
         SaveProfileCommand = new AsyncRelayCommand(SaveProfileAsync, () => !IsBusy);
         LoadProfileCommand = new AsyncRelayCommand(LoadProfileAsync, () => !IsBusy);
+        CheckForUpdatesCommand = new AsyncRelayCommand(CheckForUpdatesAsync, () => !IsBusy);
+        InstallUpdateCommand = new AsyncRelayCommand(InstallUpdateAsync, CanInstallUpdate);
+
+        CurrentVersion = ResolveCurrentVersion();
+        LatestVersion = CurrentVersion;
     }
 
     public ObservableCollection<string> ValidationErrors { get; } = new();
@@ -242,6 +283,10 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    public string PackagingProgressLabel => IsPackagingProgressIndeterminate
+        ? PackagingProgressStep
+        : $"{PackagingProgressStep} ({PackagingProgressPercentage:0}%)";
+
     public IRelayCommand BrowseSourceFolderCommand { get; }
 
     public IAsyncRelayCommand BrowseSetupFileCommand { get; }
@@ -267,6 +312,10 @@ public partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand SaveProfileCommand { get; }
 
     public IAsyncRelayCommand LoadProfileCommand { get; }
+
+    public IAsyncRelayCommand CheckForUpdatesCommand { get; }
+
+    public IAsyncRelayCommand InstallUpdateCommand { get; }
 
     public async Task InitializeAsync()
     {
@@ -368,11 +417,39 @@ public partial class MainViewModel : ObservableObject
         SaveProfileCommand.NotifyCanExecuteChanged();
         LoadProfileCommand.NotifyCanExecuteChanged();
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
+        CheckForUpdatesCommand.NotifyCanExecuteChanged();
+        InstallUpdateCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnResultOutputPathChanged(string value)
     {
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnPackagingProgressPercentageChanged(double value)
+    {
+        OnPropertyChanged(nameof(PackagingProgressLabel));
+    }
+
+    partial void OnPackagingProgressStepChanged(string value)
+    {
+        OnPropertyChanged(nameof(PackagingProgressLabel));
+    }
+
+    partial void OnIsPackagingProgressIndeterminateChanged(bool value)
+    {
+        OnPropertyChanged(nameof(PackagingProgressLabel));
+    }
+
+    partial void OnIsUpdateAvailableChanged(bool value)
+    {
+        InstallUpdateCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnUseLowImpactModeChanged(bool value)
+    {
+        NotifyReadinessChanged();
+        _ = PersistSettingsSafeAsync();
     }
 
     private async Task LoadSettingsAsync()
@@ -382,6 +459,7 @@ public partial class MainViewModel : ObservableObject
         IntuneWinAppUtilPath = settings.IntuneWinAppUtilPath;
         SourceFolder = settings.LastSourceFolder;
         OutputFolder = settings.LastOutputFolder;
+        UseLowImpactMode = settings.UseLowImpactMode;
 
         if (File.Exists(settings.LastSetupFilePath))
         {
@@ -651,6 +729,115 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    private bool CanInstallUpdate()
+    {
+        return !IsBusy && IsUpdateAvailable;
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        IsBusy = true;
+        SetStatus(OperationState.Running, "Checking Updates", "Checking for a newer application version...");
+        UpdateStatus = "Checking GitHub releases...";
+        AppendLog("Checking for app updates...");
+
+        try
+        {
+            var updateInfo = await _appUpdateService.CheckForUpdatesAsync(CurrentVersion);
+            _latestUpdateInfo = updateInfo;
+
+            LatestVersion = string.IsNullOrWhiteSpace(updateInfo.LatestVersion)
+                ? CurrentVersion
+                : updateInfo.LatestVersion;
+
+            UpdateChangelog = string.IsNullOrWhiteSpace(updateInfo.ReleaseNotes)
+                ? "No changelog published for this release."
+                : updateInfo.ReleaseNotes.Trim();
+
+            UpdateStatus = updateInfo.Message;
+            IsUpdateAvailable = updateInfo.IsUpdateAvailable;
+
+            if (updateInfo.IsUpdateAvailable)
+            {
+                SetStatus(
+                    OperationState.Success,
+                    "Update Available",
+                    $"Version {updateInfo.LatestVersion} is available. Review changelog and click Install Update.");
+                AppendLog($"Update available: {updateInfo.LatestVersion}.");
+            }
+            else
+            {
+                SetStatus(
+                    OperationState.Idle,
+                    "Up To Date",
+                    string.IsNullOrWhiteSpace(updateInfo.Message)
+                        ? "You already have the latest version."
+                        : updateInfo.Message);
+                AppendLog("No newer app update found.");
+            }
+        }
+        catch (Exception ex)
+        {
+            UpdateStatus = $"Update check failed: {ex.Message}";
+            IsUpdateAvailable = false;
+            SetStatus(OperationState.Error, "Update Check Failed", ex.Message);
+            AppendLog($"Update check failed: {ex.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task InstallUpdateAsync()
+    {
+        if (!CanInstallUpdate())
+        {
+            return;
+        }
+
+        if (_latestUpdateInfo is null || !_latestUpdateInfo.IsUpdateAvailable)
+        {
+            SetStatus(OperationState.Error, "No Update Selected", "Check for updates first.");
+            return;
+        }
+
+        IsBusy = true;
+        SetStatus(OperationState.Running, "Installing Update", "Downloading and launching update installer...");
+        AppendLog($"Starting update install to version {_latestUpdateInfo.LatestVersion}...");
+
+        try
+        {
+            var installResult = await _appUpdateService.DownloadAndLaunchInstallerAsync(
+                _latestUpdateInfo,
+                new InlineProgress<string>(AppendLog));
+
+            if (!installResult.Success)
+            {
+                SetStatus(OperationState.Error, "Update Install Failed", installResult.Message);
+                UpdateStatus = installResult.Message;
+                return;
+            }
+
+            SetStatus(OperationState.Success, "Update Installer Started", "Installer launched. Finish setup, then reopen this app.");
+            UpdateStatus = "Update installer started.";
+            AppendLog("Installer launched. Closing app to allow update installation...");
+
+            await Task.Delay(700);
+            WpfApplication.Current.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            SetStatus(OperationState.Error, "Update Install Failed", ex.Message);
+            UpdateStatus = $"Update install failed: {ex.Message}";
+            AppendLog($"Update install failed: {ex.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     private bool CanPackage()
     {
         return !IsBusy && IsConfigurationValid;
@@ -682,6 +869,7 @@ public partial class MainViewModel : ObservableObject
         IsBusy = true;
         ResultOutputPath = string.Empty;
         ClearLogs();
+        SetPackagingProgress("Preparing", "Validating request and starting workflow.", 0);
 
         SetStatus(OperationState.Running, "Packaging In Progress", "Running IntuneWinAppUtil.exe...");
         AppendLog("Packaging started.");
@@ -691,9 +879,13 @@ public partial class MainViewModel : ObservableObject
             await PersistSettingsAsync();
 
             var request = BuildRequest();
-            var progress = new InlineProgress<string>(AppendLog);
+            var logProgress = new InlineProgress<string>(AppendLog);
+            var workflowProgress = new InlineProgress<PackagingProgressUpdate>(ApplyWorkflowProgressUpdate);
 
-            var result = await _packagingWorkflowService.PackageAsync(request, progress);
+            var result = await _packagingWorkflowService.PackageAsync(
+                request,
+                logProgress: logProgress,
+                progressUpdate: workflowProgress);
             ResultOutputPath = result.OutputPackagePath ?? string.Empty;
 
             var historyEntry = new PackageHistoryEntry
@@ -715,17 +907,20 @@ public partial class MainViewModel : ObservableObject
                     OperationState.Success,
                     "Package Created",
                     $"Created: {result.OutputPackagePath}");
+                SetPackagingProgress("Completed", "Package created successfully.", 100);
                 AppendLog("Packaging completed successfully.");
             }
             else
             {
                 SetStatus(OperationState.Error, "Packaging Failed", result.Message);
+                SetPackagingProgress("Failed", result.Message, 100);
                 AppendLog($"Packaging failed: {result.Message}");
             }
         }
         catch (Exception ex)
         {
             SetStatus(OperationState.Error, "Unexpected Error", ex.Message);
+            SetPackagingProgress("Unexpected Error", ex.Message, 100);
             AppendLog($"Unexpected error: {ex.Message}");
         }
         finally
@@ -831,6 +1026,10 @@ public partial class MainViewModel : ObservableObject
             InstallerType = InstallerType.Unknown;
             MsiMetadataSummary = string.Empty;
             ResultOutputPath = string.Empty;
+            PackagingProgressPercentage = 0;
+            IsPackagingProgressIndeterminate = false;
+            PackagingProgressStep = "Ready";
+            PackagingProgressDetail = "Waiting to start.";
             ProfileName = string.Empty;
             SelectedProfileName = null;
             OperationState = OperationState.Idle;
@@ -975,10 +1174,23 @@ public partial class MainViewModel : ObservableObject
             IntuneWinAppUtilPath = IntuneWinAppUtilPath,
             LastSourceFolder = SourceFolder,
             LastOutputFolder = OutputFolder,
-            LastSetupFilePath = SetupFilePath
+            LastSetupFilePath = SetupFilePath,
+            UseLowImpactMode = UseLowImpactMode
         };
 
         await _settingsService.SaveAsync(settings);
+    }
+
+    private async Task PersistSettingsSafeAsync()
+    {
+        try
+        {
+            await PersistSettingsAsync();
+        }
+        catch
+        {
+            // Non-blocking settings persistence for UI toggles.
+        }
     }
 
     private PackagingRequest BuildRequest()
@@ -987,6 +1199,7 @@ public partial class MainViewModel : ObservableObject
         {
             IntuneWinAppUtilPath = IntuneWinAppUtilPath,
             InstallerType = InstallerType,
+            UseLowImpactMode = UseLowImpactMode,
             Configuration = BuildConfiguration()
         };
     }
@@ -1031,6 +1244,56 @@ public partial class MainViewModel : ObservableObject
         OperationState = state;
         StatusTitle = title;
         StatusMessage = message;
+    }
+
+    private void SetPackagingProgress(string step, string detail, double percentage, bool isIndeterminate = false)
+    {
+        PackagingProgressStep = step;
+        PackagingProgressDetail = detail;
+        IsPackagingProgressIndeterminate = isIndeterminate;
+
+        if (!isIndeterminate)
+        {
+            PackagingProgressPercentage = Math.Clamp(percentage, 0, 100);
+        }
+    }
+
+    private void ApplyWorkflowProgressUpdate(PackagingProgressUpdate update)
+    {
+        if (update is null)
+        {
+            return;
+        }
+
+        void Apply()
+        {
+            if (!string.IsNullOrWhiteSpace(update.Step))
+            {
+                PackagingProgressStep = update.Step;
+            }
+
+            if (!string.IsNullOrWhiteSpace(update.Detail))
+            {
+                PackagingProgressDetail = update.Detail;
+            }
+
+            IsPackagingProgressIndeterminate = update.IsIndeterminate;
+
+            if (!update.IsIndeterminate)
+            {
+                var normalized = Math.Clamp(update.Percentage, 0, 100);
+                PackagingProgressPercentage = Math.Max(PackagingProgressPercentage, normalized);
+            }
+        }
+
+        var dispatcher = WpfApplication.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            Apply();
+            return;
+        }
+
+        _ = dispatcher.InvokeAsync(Apply);
     }
 
     private void AppendLog(string message)
@@ -1084,6 +1347,23 @@ public partial class MainViewModel : ObservableObject
         {
             _onReport(value);
         }
+    }
+
+    private static string ResolveCurrentVersion()
+    {
+        var informational = Assembly
+            .GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            var plusIndex = informational.IndexOf('+');
+            return plusIndex > 0 ? informational[..plusIndex] : informational;
+        }
+
+        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
+        return assemblyVersion?.ToString(3) ?? "1.0.0";
     }
 
     private string BuildDefaultProfileName()

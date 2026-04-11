@@ -16,6 +16,8 @@ internal static class DataPathProvider
 
     public static string HistoryFilePath => Path.Combine(BaseDirectory, "history.json");
 
+    public static string UpdatesDirectory => Path.Combine(BaseDirectory, "updates");
+
     public static void EnsureBaseDirectory()
     {
         Directory.CreateDirectory(BaseDirectory);

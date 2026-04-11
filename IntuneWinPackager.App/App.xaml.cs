@@ -30,6 +30,7 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<IHistoryService, HistoryService>();
                 services.AddSingleton<IToolLocatorService, ToolLocatorService>();
                 services.AddSingleton<IToolInstallerService, ToolInstallerService>();
+                services.AddSingleton<IAppUpdateService, AppUpdateService>();
 
                 services.AddSingleton<IDialogService, SystemDialogService>();
 

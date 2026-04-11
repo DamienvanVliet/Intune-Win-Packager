@@ -326,6 +326,13 @@
                                         Command="{Binding InstallToolCommand}" />
                             </WrapPanel>
 
+                            <CheckBox Content="Low Impact Packaging Mode (recommended)"
+                                      IsChecked="{Binding UseLowImpactMode}"
+                                      FontFamily="Segoe UI Variable Text"
+                                      FontSize="12"
+                                      Foreground="#FF425170"
+                                      Margin="0,0,0,12" />
+
                             <TextBlock Text="Profile Name" Style="{StaticResource BodyTextStyle}" />
                             <TextBox Text="{Binding ProfileName, UpdateSourceTrigger=PropertyChanged}"
                                      Margin="0,6,0,8" />
@@ -345,6 +352,50 @@
                                         Margin="8,0,0,0"
                                         Command="{Binding LoadProfileCommand}" />
                             </WrapPanel>
+
+                            <Separator Margin="0,14,0,12" />
+
+                            <TextBlock Text="App Updates" Style="{StaticResource SectionTitleTextStyle}" />
+                            <TextBlock Text="{Binding CurrentVersion, StringFormat=Current version: {0}}"
+                                       Style="{StaticResource BodyTextStyle}"
+                                       Margin="0,4,0,0" />
+                            <TextBlock Text="{Binding LatestVersion, StringFormat=Latest version: {0}}"
+                                       Style="{StaticResource BodyTextStyle}"
+                                       Margin="0,2,0,10" />
+
+                            <WrapPanel Margin="0,0,0,10">
+                                <Button Content="Check for Updates"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Command="{Binding CheckForUpdatesCommand}" />
+                                <Button Content="Install Update"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        Margin="8,0,0,0"
+                                        Command="{Binding InstallUpdateCommand}" />
+                            </WrapPanel>
+
+                            <Border CornerRadius="10"
+                                    Background="#FFF8FBFF"
+                                    BorderBrush="#FFD5E0EF"
+                                    BorderThickness="1"
+                                    Padding="10"
+                                    Margin="0,0,0,8">
+                                <TextBlock Text="{Binding UpdateStatus}"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           TextWrapping="Wrap" />
+                            </Border>
+
+                            <TextBlock Text="Changelog"
+                                       Style="{StaticResource BodyTextStyle}"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,6" />
+                            <TextBox Text="{Binding UpdateChangelog}"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Auto"
+                                     Height="120"
+                                     Background="#FFF8FAFD"
+                                     BorderBrush="#FFD5E0EF" />
                         </StackPanel>
                     </Border>
 
@@ -405,18 +456,29 @@
                                        TextWrapping="Wrap"
                                        Margin="0,6,0,8" />
 
-                            <ProgressBar IsIndeterminate="True">
-                                <ProgressBar.Style>
-                                    <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsBusy}" Value="True">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </ProgressBar.Style>
-                            </ProgressBar>
+                            <Border CornerRadius="10"
+                                    Background="#FFF8FBFF"
+                                    BorderBrush="#FFD5E0EF"
+                                    BorderThickness="1"
+                                    Padding="10"
+                                    Margin="0,0,0,8">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding PackagingProgressLabel}"
+                                               FontFamily="Segoe UI Variable Text"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FF27426B" />
+                                    <TextBlock Text="{Binding PackagingProgressDetail}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,2,0,8" />
+                                    <ProgressBar Minimum="0"
+                                                 Maximum="100"
+                                                 Value="{Binding PackagingProgressPercentage}"
+                                                 IsIndeterminate="{Binding IsPackagingProgressIndeterminate}"
+                                                 Height="12" />
+                                </StackPanel>
+                            </Border>
 
                             <TextBlock Text="Output Package" Style="{StaticResource BodyTextStyle}" Margin="0,10,0,4" />
                             <TextBox Text="{Binding ResultOutputPath}"

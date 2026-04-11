@@ -8,5 +8,7 @@ public sealed record PackagingRequest
 
     public InstallerType InstallerType { get; init; } = InstallerType.Unknown;
 
+    public bool UseLowImpactMode { get; init; } = true;
+
     public PackageConfiguration Configuration { get; init; } = new();
 }
