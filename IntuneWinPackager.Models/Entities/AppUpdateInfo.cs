@@ -4,9 +4,13 @@ public sealed record AppUpdateInfo
 {
     public bool IsUpdateAvailable { get; init; }
 
+    public bool CheckSucceeded { get; init; } = true;
+
     public string CurrentVersion { get; init; } = string.Empty;
 
     public string LatestVersion { get; init; } = string.Empty;
+
+    public string ReleaseTag { get; init; } = string.Empty;
 
     public string ReleaseName { get; init; } = string.Empty;
 

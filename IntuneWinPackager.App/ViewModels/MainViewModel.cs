@@ -125,6 +125,9 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool isUpdateAvailable;
 
+    [ObservableProperty]
+    private bool hasPackagingRun;
+
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
         IValidationService validationService,
@@ -736,8 +739,11 @@ public partial class MainViewModel : ObservableObject
 
     private async Task CheckForUpdatesAsync()
     {
+        var previousState = OperationState;
+        var previousTitle = StatusTitle;
+        var previousMessage = StatusMessage;
+
         IsBusy = true;
-        SetStatus(OperationState.Running, "Checking Updates", "Checking for a newer application version...");
         UpdateStatus = "Checking GitHub releases...";
         AppendLog("Checking for app updates...");
 
@@ -767,20 +773,31 @@ public partial class MainViewModel : ObservableObject
             }
             else
             {
-                SetStatus(
-                    OperationState.Idle,
-                    "Up To Date",
-                    string.IsNullOrWhiteSpace(updateInfo.Message)
-                        ? "You already have the latest version."
+                if (updateInfo.CheckSucceeded)
+                {
+                    SetStatus(
+                        previousState,
+                        previousTitle,
+                        previousMessage);
+                    AppendLog("No newer app update found.");
+                }
+                else
+                {
+                    SetStatus(
+                        previousState,
+                        previousTitle,
+                        previousMessage);
+                    AppendLog(string.IsNullOrWhiteSpace(updateInfo.Message)
+                        ? "Update check did not return a public release feed."
                         : updateInfo.Message);
-                AppendLog("No newer app update found.");
+                }
             }
         }
         catch (Exception ex)
         {
             UpdateStatus = $"Update check failed: {ex.Message}";
             IsUpdateAvailable = false;
-            SetStatus(OperationState.Error, "Update Check Failed", ex.Message);
+            SetStatus(previousState, previousTitle, previousMessage);
             AppendLog($"Update check failed: {ex.Message}");
         }
         finally
@@ -867,6 +884,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         IsBusy = true;
+        HasPackagingRun = true;
         ResultOutputPath = string.Empty;
         ClearLogs();
         SetPackagingProgress("Preparing", "Validating request and starting workflow.", 0);
@@ -1026,6 +1044,7 @@ public partial class MainViewModel : ObservableObject
             InstallerType = InstallerType.Unknown;
             MsiMetadataSummary = string.Empty;
             ResultOutputPath = string.Empty;
+            HasPackagingRun = false;
             PackagingProgressPercentage = 0;
             IsPackagingProgressIndeterminate = false;
             PackagingProgressStep = "Ready";

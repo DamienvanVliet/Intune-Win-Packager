@@ -455,6 +455,19 @@
                                        Style="{StaticResource BodyTextStyle}"
                                        TextWrapping="Wrap"
                                        Margin="0,6,0,8" />
+                            <TextBlock Text="Start packaging to show live progress."
+                                       Margin="0,0,0,8">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasPackagingRun}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
 
                             <Border CornerRadius="10"
                                     Background="#FFF8FBFF"
@@ -462,6 +475,16 @@
                                     BorderThickness="1"
                                     Padding="10"
                                     Margin="0,0,0,8">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasPackagingRun}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
                                 <StackPanel>
                                     <TextBlock Text="{Binding PackagingProgressLabel}"
                                                FontFamily="Segoe UI Variable Text"

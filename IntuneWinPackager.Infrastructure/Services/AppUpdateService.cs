@@ -9,6 +9,7 @@ namespace IntuneWinPackager.Infrastructure.Services;
 
 public sealed class AppUpdateService : IAppUpdateService
 {
+    private const string RepoFullName = "DamienvanVliet/Intune-Win-Packager";
     private const string LatestReleaseApiUrl = "https://api.github.com/repos/DamienvanVliet/Intune-Win-Packager/releases/latest";
 
     private readonly HttpClient _httpClient;
@@ -31,14 +32,38 @@ public sealed class AppUpdateService : IAppUpdateService
             currentVersion = "0.0.0";
         }
 
+        var currentNormalized = NormalizeVersion(currentVersion);
+
         try
         {
             using var response = await _httpClient.GetAsync(LatestReleaseApiUrl, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound
+                    || response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                    || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    var ghFallback = await TryCheckWithGhCliAsync(currentVersion, cancellationToken);
+                    if (ghFallback is not null)
+                    {
+                        return ghFallback;
+                    }
+
+                    return new AppUpdateInfo
+                    {
+                        CheckSucceeded = false,
+                        IsUpdateAvailable = false,
+                        CurrentVersion = currentNormalized,
+                        LatestVersion = currentNormalized,
+                        Message = "No public release feed found (HTTP 404). If this repository is private, auto-updates require GitHub CLI login on this machine."
+                    };
+                }
+
                 return new AppUpdateInfo
                 {
-                    CurrentVersion = NormalizeVersion(currentVersion),
+                    CheckSucceeded = false,
+                    CurrentVersion = currentNormalized,
+                    LatestVersion = currentNormalized,
                     Message = $"Update check failed (HTTP {(int)response.StatusCode})."
                 };
             }
@@ -53,7 +78,6 @@ public sealed class AppUpdateService : IAppUpdateService
             var publishedAt = TryGetDateTimeOffset(root, "published_at");
 
             var latestVersion = NormalizeVersion(tagName);
-            var currentNormalized = NormalizeVersion(currentVersion);
             var installerUrl = GetInstallerDownloadUrl(root);
 
             var updateAvailable = IsVersionGreater(latestVersion, currentNormalized);
@@ -64,6 +88,7 @@ public sealed class AppUpdateService : IAppUpdateService
                     IsUpdateAvailable = false,
                     CurrentVersion = currentNormalized,
                     LatestVersion = latestVersion,
+                    ReleaseTag = tagName,
                     ReleaseName = releaseName,
                     ReleaseNotes = releaseNotes,
                     InstallerDownloadUrl = installerUrl,
@@ -79,6 +104,7 @@ public sealed class AppUpdateService : IAppUpdateService
                     IsUpdateAvailable = false,
                     CurrentVersion = currentNormalized,
                     LatestVersion = latestVersion,
+                    ReleaseTag = tagName,
                     ReleaseName = releaseName,
                     ReleaseNotes = releaseNotes,
                     PublishedAtUtc = publishedAt,
@@ -91,6 +117,7 @@ public sealed class AppUpdateService : IAppUpdateService
                 IsUpdateAvailable = true,
                 CurrentVersion = currentNormalized,
                 LatestVersion = latestVersion,
+                ReleaseTag = tagName,
                 ReleaseName = releaseName,
                 ReleaseNotes = releaseNotes,
                 InstallerDownloadUrl = installerUrl,
@@ -104,9 +131,17 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
+            var ghFallback = await TryCheckWithGhCliAsync(currentVersion, cancellationToken);
+            if (ghFallback is not null)
+            {
+                return ghFallback;
+            }
+
             return new AppUpdateInfo
             {
-                CurrentVersion = NormalizeVersion(currentVersion),
+                CheckSucceeded = false,
+                CurrentVersion = currentNormalized,
+                LatestVersion = currentNormalized,
                 Message = $"Update check failed: {ex.Message}"
             };
         }
@@ -126,15 +161,6 @@ public sealed class AppUpdateService : IAppUpdateService
             };
         }
 
-        if (string.IsNullOrWhiteSpace(updateInfo.InstallerDownloadUrl))
-        {
-            return new AppUpdateInstallResult
-            {
-                Success = false,
-                Message = "No installer download URL is available for this release."
-            };
-        }
-
         try
         {
             DataPathProvider.EnsureBaseDirectory();
@@ -142,6 +168,21 @@ public sealed class AppUpdateService : IAppUpdateService
 
             var installerFileName = BuildInstallerFileName(updateInfo);
             var installerPath = Path.Combine(DataPathProvider.UpdatesDirectory, installerFileName);
+
+            if (string.IsNullOrWhiteSpace(updateInfo.InstallerDownloadUrl))
+            {
+                var ghDownloadResult = await TryDownloadWithGhCliAsync(updateInfo, logProgress, cancellationToken);
+                if (ghDownloadResult is not null)
+                {
+                    return ghDownloadResult;
+                }
+
+                return new AppUpdateInstallResult
+                {
+                    Success = false,
+                    Message = "No installer download URL is available for this release."
+                };
+            }
 
             logProgress?.Report($"Downloading update installer {installerFileName}...");
 
@@ -215,12 +256,179 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
+            var ghDownloadResult = await TryDownloadWithGhCliAsync(updateInfo, logProgress, cancellationToken);
+            if (ghDownloadResult is not null)
+            {
+                return ghDownloadResult;
+            }
+
             return new AppUpdateInstallResult
             {
                 Success = false,
                 Message = $"Update install failed: {ex.Message}"
             };
         }
+    }
+
+    private async Task<AppUpdateInfo?> TryCheckWithGhCliAsync(string currentVersion, CancellationToken cancellationToken)
+    {
+        var ghCliPath = ResolveGhCliPath();
+        if (ghCliPath is null)
+        {
+            return null;
+        }
+
+        var result = await RunProcessCaptureAsync(
+            ghCliPath,
+            $"release view --repo {RepoFullName} --json tagName,name,body,publishedAt,assets",
+            cancellationToken);
+
+        if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StdOut))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(result.StdOut);
+            var root = document.RootElement;
+
+            var tagName = GetString(root, "tagName");
+            var releaseName = GetString(root, "name");
+            var releaseNotes = GetString(root, "body");
+            var publishedAt = TryGetDateTimeOffset(root, "publishedAt");
+
+            var latestVersion = NormalizeVersion(tagName);
+            var currentNormalized = NormalizeVersion(currentVersion);
+            var installerUrl = GetInstallerDownloadUrl(root);
+            var isUpdateAvailable = IsVersionGreater(latestVersion, currentNormalized) && !string.IsNullOrWhiteSpace(installerUrl);
+
+            return new AppUpdateInfo
+            {
+                CheckSucceeded = true,
+                IsUpdateAvailable = isUpdateAvailable,
+                CurrentVersion = currentNormalized,
+                LatestVersion = string.IsNullOrWhiteSpace(latestVersion) ? currentNormalized : latestVersion,
+                ReleaseTag = tagName,
+                ReleaseName = releaseName,
+                ReleaseNotes = releaseNotes,
+                InstallerDownloadUrl = installerUrl,
+                PublishedAtUtc = publishedAt,
+                Message = isUpdateAvailable
+                    ? $"Update available: {latestVersion}"
+                    : "You already have the latest version."
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<AppUpdateInstallResult?> TryDownloadWithGhCliAsync(
+        AppUpdateInfo updateInfo,
+        IProgress<string>? logProgress,
+        CancellationToken cancellationToken)
+    {
+        var ghCliPath = ResolveGhCliPath();
+        if (ghCliPath is null)
+        {
+            return null;
+        }
+
+        DataPathProvider.EnsureBaseDirectory();
+        Directory.CreateDirectory(DataPathProvider.UpdatesDirectory);
+
+        var releaseTag = !string.IsNullOrWhiteSpace(updateInfo.ReleaseTag)
+            ? updateInfo.ReleaseTag
+            : $"v{NormalizeVersion(updateInfo.LatestVersion)}";
+
+        logProgress?.Report("Trying GitHub CLI fallback for private release download...");
+
+        var downloadResult = await RunProcessCaptureAsync(
+            ghCliPath,
+            $"release download {releaseTag} --repo {RepoFullName} --pattern \"*.exe\" --dir \"{DataPathProvider.UpdatesDirectory}\" --clobber",
+            cancellationToken);
+
+        if (downloadResult.ExitCode != 0)
+        {
+            return null;
+        }
+
+        var downloadedInstaller = Directory
+            .EnumerateFiles(DataPathProvider.UpdatesDirectory, "*.exe", SearchOption.TopDirectoryOnly)
+            .Select(path => new FileInfo(path))
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .FirstOrDefault();
+
+        if (downloadedInstaller is null || !downloadedInstaller.Exists)
+        {
+            return null;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = downloadedInstaller.FullName,
+            UseShellExecute = true
+        });
+
+        return new AppUpdateInstallResult
+        {
+            Success = true,
+            Message = "Installer launched successfully.",
+            InstallerPath = downloadedInstaller.FullName
+        };
+    }
+
+    private static string? ResolveGhCliPath()
+    {
+        var environmentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var candidates = environmentPath
+            .Split(';', StringSplitOptions.RemoveEmptyEntries)
+            .Select(path => path.Trim())
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => Path.Combine(path, "gh.exe"))
+            .Where(File.Exists)
+            .ToList();
+
+        if (candidates.Count > 0)
+        {
+            return candidates[0];
+        }
+
+        var knownPath = @"C:\Program Files\GitHub CLI\gh.exe";
+        return File.Exists(knownPath) ? knownPath : null;
+    }
+
+    private static async Task<(int ExitCode, string StdOut, string StdErr)> RunProcessCaptureAsync(
+        string fileName,
+        string arguments,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process
+        {
+            StartInfo = startInfo
+        };
+
+        process.Start();
+        var stdOutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stdErrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+
+        await process.WaitForExitAsync(cancellationToken);
+        var stdOut = await stdOutTask;
+        var stdErr = await stdErrTask;
+
+        return (process.ExitCode, stdOut, stdErr);
     }
 
     private static string BuildInstallerFileName(AppUpdateInfo updateInfo)
@@ -245,6 +453,10 @@ public sealed class AppUpdateService : IAppUpdateService
         {
             var name = GetString(asset, "name");
             var url = GetString(asset, "browser_download_url");
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                url = GetString(asset, "url");
+            }
 
             if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url))
             {
