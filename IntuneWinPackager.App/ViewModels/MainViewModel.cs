@@ -779,7 +779,7 @@ public partial class MainViewModel : ObservableObject
                         previousState,
                         previousTitle,
                         previousMessage);
-                    AppendLog("No newer app update found.");
+                    AppendLog($"No newer app update found. Current: {CurrentVersion}, Latest: {LatestVersion}.");
                 }
                 else
                 {

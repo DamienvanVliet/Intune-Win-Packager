@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [1.1.2] - 2026-04-12
+
+### Added
+- Added an MIT `LICENSE` file for clear open-source usage terms.
+
+### Fixed
+- Update checks now fall back to the public releases list endpoint when `releases/latest` is unavailable.
+- Improved release payload parsing so update detection works consistently across REST and GitHub CLI payload shapes.
+- Update logs now show both current and latest versions when no newer update is found.
+
 ## [1.1.1] - 2026-04-12
 
 ### Fixed

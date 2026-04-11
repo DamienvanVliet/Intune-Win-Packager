@@ -11,6 +11,7 @@ public sealed class AppUpdateService : IAppUpdateService
 {
     private const string RepoFullName = "DamienvanVliet/Intune-Win-Packager";
     private const string LatestReleaseApiUrl = "https://api.github.com/repos/DamienvanVliet/Intune-Win-Packager/releases/latest";
+    private const string ReleasesApiUrl = "https://api.github.com/repos/DamienvanVliet/Intune-Win-Packager/releases?per_page=20";
 
     private readonly HttpClient _httpClient;
 
@@ -43,6 +44,12 @@ public sealed class AppUpdateService : IAppUpdateService
                     || response.StatusCode == System.Net.HttpStatusCode.Unauthorized
                     || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
                 {
+                    var releasesApiFallback = await TryCheckWithPublicReleasesListAsync(currentNormalized, cancellationToken);
+                    if (releasesApiFallback is not null)
+                    {
+                        return releasesApiFallback;
+                    }
+
                     var ghFallback = await TryCheckWithGhCliAsync(currentVersion, cancellationToken);
                     if (ghFallback is not null)
                     {
@@ -70,60 +77,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-
-            var tagName = GetString(root, "tag_name");
-            var releaseName = GetString(root, "name");
-            var releaseNotes = GetString(root, "body");
-            var publishedAt = TryGetDateTimeOffset(root, "published_at");
-
-            var latestVersion = NormalizeVersion(tagName);
-            var installerUrl = GetInstallerDownloadUrl(root);
-
-            var updateAvailable = IsVersionGreater(latestVersion, currentNormalized);
-            if (!updateAvailable)
-            {
-                return new AppUpdateInfo
-                {
-                    IsUpdateAvailable = false,
-                    CurrentVersion = currentNormalized,
-                    LatestVersion = latestVersion,
-                    ReleaseTag = tagName,
-                    ReleaseName = releaseName,
-                    ReleaseNotes = releaseNotes,
-                    InstallerDownloadUrl = installerUrl,
-                    PublishedAtUtc = publishedAt,
-                    Message = "You already have the latest version."
-                };
-            }
-
-            if (string.IsNullOrWhiteSpace(installerUrl))
-            {
-                return new AppUpdateInfo
-                {
-                    IsUpdateAvailable = false,
-                    CurrentVersion = currentNormalized,
-                    LatestVersion = latestVersion,
-                    ReleaseTag = tagName,
-                    ReleaseName = releaseName,
-                    ReleaseNotes = releaseNotes,
-                    PublishedAtUtc = publishedAt,
-                    Message = "A newer release exists, but no installer asset was found."
-                };
-            }
-
-            return new AppUpdateInfo
-            {
-                IsUpdateAvailable = true,
-                CurrentVersion = currentNormalized,
-                LatestVersion = latestVersion,
-                ReleaseTag = tagName,
-                ReleaseName = releaseName,
-                ReleaseNotes = releaseNotes,
-                InstallerDownloadUrl = installerUrl,
-                PublishedAtUtc = publishedAt,
-                Message = $"Update available: {latestVersion}"
-            };
+            return BuildUpdateInfoFromReleasePayload(document.RootElement, currentNormalized);
         }
         catch (OperationCanceledException)
         {
@@ -131,6 +85,12 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
+            var releasesApiFallback = await TryCheckWithPublicReleasesListAsync(currentNormalized, cancellationToken);
+            if (releasesApiFallback is not null)
+            {
+                return releasesApiFallback;
+            }
+
             var ghFallback = await TryCheckWithGhCliAsync(currentVersion, cancellationToken);
             if (ghFallback is not null)
             {
@@ -291,33 +251,8 @@ public sealed class AppUpdateService : IAppUpdateService
         try
         {
             using var document = JsonDocument.Parse(result.StdOut);
-            var root = document.RootElement;
-
-            var tagName = GetString(root, "tagName");
-            var releaseName = GetString(root, "name");
-            var releaseNotes = GetString(root, "body");
-            var publishedAt = TryGetDateTimeOffset(root, "publishedAt");
-
-            var latestVersion = NormalizeVersion(tagName);
             var currentNormalized = NormalizeVersion(currentVersion);
-            var installerUrl = GetInstallerDownloadUrl(root);
-            var isUpdateAvailable = IsVersionGreater(latestVersion, currentNormalized) && !string.IsNullOrWhiteSpace(installerUrl);
-
-            return new AppUpdateInfo
-            {
-                CheckSucceeded = true,
-                IsUpdateAvailable = isUpdateAvailable,
-                CurrentVersion = currentNormalized,
-                LatestVersion = string.IsNullOrWhiteSpace(latestVersion) ? currentNormalized : latestVersion,
-                ReleaseTag = tagName,
-                ReleaseName = releaseName,
-                ReleaseNotes = releaseNotes,
-                InstallerDownloadUrl = installerUrl,
-                PublishedAtUtc = publishedAt,
-                Message = isUpdateAvailable
-                    ? $"Update available: {latestVersion}"
-                    : "You already have the latest version."
-            };
+            return BuildUpdateInfoFromReleasePayload(document.RootElement, currentNormalized);
         }
         catch
         {
@@ -482,6 +417,125 @@ public sealed class AppUpdateService : IAppUpdateService
         return fallbackExe ?? string.Empty;
     }
 
+    private async Task<AppUpdateInfo?> TryCheckWithPublicReleasesListAsync(string currentNormalized, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await _httpClient.GetAsync(ReleasesApiUrl, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            JsonElement? firstNonDraftStable = null;
+            JsonElement? firstNonDraft = null;
+
+            foreach (var release in document.RootElement.EnumerateArray())
+            {
+                var isDraft = TryGetBoolean(release, "draft");
+                if (isDraft)
+                {
+                    continue;
+                }
+
+                firstNonDraft ??= release;
+
+                var isPrerelease = TryGetBoolean(release, "prerelease");
+                if (!isPrerelease)
+                {
+                    firstNonDraftStable = release;
+                    break;
+                }
+            }
+
+            if (firstNonDraftStable is not null)
+            {
+                return BuildUpdateInfoFromReleasePayload(firstNonDraftStable.Value, currentNormalized);
+            }
+
+            if (firstNonDraft is not null)
+            {
+                return BuildUpdateInfoFromReleasePayload(firstNonDraft.Value, currentNormalized);
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static AppUpdateInfo BuildUpdateInfoFromReleasePayload(JsonElement root, string currentNormalized)
+    {
+        var tagName = GetStringWithFallback(root, "tag_name", "tagName");
+        var releaseName = GetString(root, "name");
+        var releaseNotes = GetString(root, "body");
+        var publishedAt = TryGetDateTimeOffsetWithFallback(root, "published_at", "publishedAt");
+        var latestVersion = NormalizeVersion(tagName);
+        var installerUrl = GetInstallerDownloadUrl(root);
+
+        if (string.IsNullOrWhiteSpace(latestVersion))
+        {
+            latestVersion = currentNormalized;
+        }
+
+        var updateAvailable = IsVersionGreater(latestVersion, currentNormalized);
+        if (!updateAvailable)
+        {
+            return new AppUpdateInfo
+            {
+                CheckSucceeded = true,
+                IsUpdateAvailable = false,
+                CurrentVersion = currentNormalized,
+                LatestVersion = latestVersion,
+                ReleaseTag = tagName,
+                ReleaseName = releaseName,
+                ReleaseNotes = releaseNotes,
+                InstallerDownloadUrl = installerUrl,
+                PublishedAtUtc = publishedAt,
+                Message = $"You already have the latest version ({currentNormalized})."
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(installerUrl))
+        {
+            return new AppUpdateInfo
+            {
+                CheckSucceeded = true,
+                IsUpdateAvailable = false,
+                CurrentVersion = currentNormalized,
+                LatestVersion = latestVersion,
+                ReleaseTag = tagName,
+                ReleaseName = releaseName,
+                ReleaseNotes = releaseNotes,
+                PublishedAtUtc = publishedAt,
+                Message = "A newer release exists, but no installer asset was found."
+            };
+        }
+
+        return new AppUpdateInfo
+        {
+            CheckSucceeded = true,
+            IsUpdateAvailable = true,
+            CurrentVersion = currentNormalized,
+            LatestVersion = latestVersion,
+            ReleaseTag = tagName,
+            ReleaseName = releaseName,
+            ReleaseNotes = releaseNotes,
+            InstallerDownloadUrl = installerUrl,
+            PublishedAtUtc = publishedAt,
+            Message = $"Update available: {latestVersion}"
+        };
+    }
+
     private static bool IsVersionGreater(string latestVersion, string currentVersion)
     {
         if (TryParseVersion(latestVersion, out var latest) && TryParseVersion(currentVersion, out var current))
@@ -538,6 +592,17 @@ public sealed class AppUpdateService : IAppUpdateService
         return property.GetString() ?? string.Empty;
     }
 
+    private static string GetStringWithFallback(JsonElement element, string primaryPropertyName, string secondaryPropertyName)
+    {
+        var primary = GetString(element, primaryPropertyName);
+        if (!string.IsNullOrWhiteSpace(primary))
+        {
+            return primary;
+        }
+
+        return GetString(element, secondaryPropertyName);
+    }
+
     private static DateTimeOffset? TryGetDateTimeOffset(JsonElement element, string propertyName)
     {
         if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String)
@@ -551,5 +616,26 @@ public sealed class AppUpdateService : IAppUpdateService
         }
 
         return null;
+    }
+
+    private static DateTimeOffset? TryGetDateTimeOffsetWithFallback(JsonElement element, string primaryPropertyName, string secondaryPropertyName)
+    {
+        var primary = TryGetDateTimeOffset(element, primaryPropertyName);
+        if (primary.HasValue)
+        {
+            return primary;
+        }
+
+        return TryGetDateTimeOffset(element, secondaryPropertyName);
+    }
+
+    private static bool TryGetBoolean(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        return property.ValueKind == JsonValueKind.True;
     }
 }

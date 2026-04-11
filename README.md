@@ -139,3 +139,8 @@ Do not keep in git:
 ```powershell
 dotnet test IntuneWinPackager.sln
 ```
+
+## License
+
+This project is licensed under the MIT License.
+See [LICENSE](LICENSE).
