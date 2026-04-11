@@ -1,0 +1,471 @@
+﻿<Window x:Class="IntuneWinPackager.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Intune Win Packager"
+        Icon="Assets/IntuneWinPackager.ico"
+        Height="900"
+        Width="1450"
+        MinHeight="760"
+        MinWidth="1180"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource PageBackgroundBrush}">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Padding="18"
+                Margin="0,0,0,16"
+                CornerRadius="16"
+                Background="#F2FFFFFF"
+                BorderBrush="#FFD6E1F0"
+                BorderThickness="1">
+            <DockPanel LastChildFill="True">
+                <StackPanel>
+                    <TextBlock Text="Intune Win Packager" Style="{StaticResource TitleTextStyle}" />
+                    <TextBlock Text="Convert .msi and .exe installers into .intunewin packages using Microsoft's official packaging utility."
+                               Style="{StaticResource BodyTextStyle}"
+                               Margin="0,4,0,0" />
+                </StackPanel>
+
+                <Border DockPanel.Dock="Right"
+                        Background="#FFEAF1FB"
+                        BorderBrush="#FFD0DEEF"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="12,8"
+                        MinWidth="230">
+                    <StackPanel>
+                        <TextBlock Text="{Binding StatusTitle}"
+                                   FontFamily="Segoe UI Variable Display"
+                                   FontWeight="SemiBold"
+                                   FontSize="13"
+                                   Foreground="{Binding StatusBrush}" />
+                        <TextBlock Text="{Binding StatusMessage}"
+                                   Style="{StaticResource BodyTextStyle}"
+                                   Margin="0,3,0,0"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </DockPanel>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*" />
+                    <ColumnDefinition Width="380" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                    <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Package Configuration" Style="{StaticResource SectionTitleTextStyle}" />
+                            <TextBlock Text="Drag-and-drop an installer or pick folders and file paths manually."
+                                       Style="{StaticResource BodyTextStyle}"
+                                       Margin="0,4,0,14" />
+
+                            <Border x:Name="DropZone"
+                                    Margin="0,0,0,16"
+                                    CornerRadius="14"
+                                    Background="#FFF5F9FF"
+                                    BorderBrush="#FFB8CAE6"
+                                    BorderThickness="2"
+                                    Padding="20"
+                                    AllowDrop="True"
+                                    DragEnter="DropZone_DragEnter"
+                                    DragOver="DropZone_DragOver"
+                                    DragLeave="DropZone_DragLeave"
+                                    Drop="DropZone_Drop">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <TextBlock Text="Drop .MSI or .EXE Here"
+                                               FontFamily="Segoe UI Variable Display"
+                                               FontSize="18"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FF20406B"
+                                               HorizontalAlignment="Center" />
+                                    <TextBlock Text="or browse below to pick source/output paths"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               HorizontalAlignment="Center"
+                                               Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="110" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Source Folder"
+                                           Style="{StaticResource BodyTextStyle}" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="1" Margin="8,0,8,8"
+                                         Text="{Binding SourceFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Row="0" Grid.Column="2" Margin="0,0,0,8"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Content="Browse"
+                                        Command="{Binding BrowseSourceFolderCommand}" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Setup File"
+                                           Style="{StaticResource BodyTextStyle}" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Margin="8,0,8,8"
+                                         Text="{Binding SetupFilePath, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Row="1" Grid.Column="2" Margin="0,0,0,8"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Content="Browse"
+                                        Command="{Binding BrowseSetupFileCommand}" />
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Output Folder"
+                                           Style="{StaticResource BodyTextStyle}" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Margin="8,0,8,0"
+                                         Text="{Binding OutputFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Row="2" Grid.Column="2"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Content="Browse"
+                                        Command="{Binding BrowseOutputFolderCommand}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <DockPanel LastChildFill="True" Margin="0,0,0,12">
+                                <TextBlock Text="Install Commands" Style="{StaticResource SectionTitleTextStyle}" />
+                                <Border DockPanel.Dock="Right"
+                                        CornerRadius="10"
+                                        Padding="10,4"
+                                        Background="#FFEEF4FE"
+                                        BorderBrush="#FFD2DEF1"
+                                        BorderThickness="1">
+                                    <TextBlock Text="{Binding InstallerTypeDisplay}"
+                                               FontFamily="Segoe UI Variable Text"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Foreground="{Binding InstallerTypeBrush}" />
+                                </Border>
+                            </DockPanel>
+
+                            <Border Margin="0,0,0,10"
+                                    Padding="10"
+                                    CornerRadius="10"
+                                    Background="#FFF8FBFF"
+                                    BorderBrush="#FFD8E5F4"
+                                    BorderThickness="1">
+                                <TextBlock Text="{Binding MsiMetadataSummary}"
+                                           TextWrapping="Wrap">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsMsiInstaller}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Border>
+
+                            <StackPanel Margin="0,0,0,10">
+                                <TextBlock Text="Silent Preset (EXE)" Style="{StaticResource BodyTextStyle}" />
+                                <DockPanel Margin="0,6,0,0">
+                                    <ComboBox ItemsSource="{Binding ExePresets}"
+                                              SelectedItem="{Binding SelectedPreset}"
+                                              DisplayMemberPath="Name"
+                                              MinHeight="36"
+                                              Margin="0,0,8,0" />
+                                    <Button DockPanel.Dock="Right"
+                                            Width="118"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Content="Apply Preset"
+                                            Command="{Binding ApplyPresetCommand}" />
+                                </DockPanel>
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsExeInstaller}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                            </StackPanel>
+
+                            <TextBlock Text="Install Command" Style="{StaticResource BodyTextStyle}" />
+                            <TextBox Text="{Binding InstallCommand, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="0,6,0,10"
+                                     MinHeight="40" />
+
+                            <TextBlock Text="Uninstall Command" Style="{StaticResource BodyTextStyle}" />
+                            <TextBox Text="{Binding UninstallCommand, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="0,6,0,16"
+                                     MinHeight="40" />
+
+                            <WrapPanel>
+                                <Button Style="{StaticResource PrimaryButtonStyle}"
+                                        Content="Start Packaging"
+                                        MinWidth="130"
+                                        Command="{Binding PackageCommand}" />
+                                <Button Style="{StaticResource SecondaryButtonStyle}"
+                                        Content="Fix For Me"
+                                        MinWidth="110"
+                                        Margin="10,0,0,0"
+                                        Command="{Binding QuickFixCommand}" />
+                                <Button Style="{StaticResource SecondaryButtonStyle}"
+                                        Content="Reset"
+                                        MinWidth="110"
+                                        Margin="10,0,0,0"
+                                        Command="{Binding ResetCommand}" />
+                                <Button Style="{StaticResource SecondaryButtonStyle}"
+                                        Content="Open Output"
+                                        MinWidth="130"
+                                        Margin="10,0,0,0"
+                                        Command="{Binding OpenOutputFolderCommand}" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,14">
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,10">
+                                <TextBlock Text="Packaging Logs" Style="{StaticResource SectionTitleTextStyle}" />
+                            </DockPanel>
+
+                            <Border CornerRadius="10"
+                                    Background="#FF111927"
+                                    BorderBrush="#FF0D1521"
+                                    BorderThickness="1"
+                                    Padding="10">
+                                <ListBox ItemsSource="{Binding Logs}"
+                                         BorderThickness="0"
+                                         Background="Transparent"
+                                         Foreground="#FFEAF1FE"
+                                         FontFamily="Consolas"
+                                         FontSize="12"
+                                         ScrollViewer.CanContentScroll="True"
+                                         VirtualizingPanel.IsVirtualizing="True"
+                                         VirtualizingPanel.VirtualizationMode="Recycling"
+                                         Height="220" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1">
+                    <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Guided Start" Style="{StaticResource SectionTitleTextStyle}" />
+                            <TextBlock Text="{Binding NextStepHint}"
+                                       Style="{StaticResource BodyTextStyle}"
+                                       Margin="0,6,0,10"
+                                       TextWrapping="Wrap" />
+
+                            <Border CornerRadius="10"
+                                    Background="#FFF8FBFF"
+                                    BorderBrush="#FFD6E1F0"
+                                    BorderThickness="1"
+                                    Padding="10"
+                                    Margin="0,0,0,10">
+                                <TextBlock Text="{Binding ReadinessSummary}"
+                                           FontFamily="Segoe UI Variable Text"
+                                           FontSize="12"
+                                           Foreground="#FF425170"
+                                           TextWrapping="Wrap" />
+                            </Border>
+
+                            <WrapPanel>
+                                <Button Content="Fix Common Issues"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Command="{Binding QuickFixCommand}" />
+                                <Button Content="Install Tool"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Margin="8,0,0,0"
+                                        Command="{Binding InstallToolCommand}" />
+                                <Button Content="Start Packaging"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        Margin="8,0,0,0"
+                                        Command="{Binding PackageCommand}" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Settings &amp; Profiles" Style="{StaticResource SectionTitleTextStyle}" />
+                            <TextBlock Text="Configure IntuneWinAppUtil.exe, auto-locate it, or install it in one click."
+                                       Style="{StaticResource BodyTextStyle}"
+                                       Margin="0,4,0,12" />
+
+                            <TextBlock Text="IntuneWinAppUtil Path" Style="{StaticResource BodyTextStyle}" />
+                            <TextBox Text="{Binding IntuneWinAppUtilPath, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="0,6,0,8" />
+
+                            <WrapPanel Margin="0,0,0,12">
+                                <Button Content="Browse Tool"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Command="{Binding BrowseToolPathCommand}" />
+                                <Button Content="Auto Locate"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Margin="8,0,0,0"
+                                        Command="{Binding AutoLocateToolCommand}" />
+                                <Button Content="Install Tool"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Margin="8,0,0,0"
+                                        Command="{Binding InstallToolCommand}" />
+                            </WrapPanel>
+
+                            <TextBlock Text="Profile Name" Style="{StaticResource BodyTextStyle}" />
+                            <TextBox Text="{Binding ProfileName, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="0,6,0,8" />
+
+                            <TextBlock Text="Saved Profiles" Style="{StaticResource BodyTextStyle}" />
+                            <ComboBox ItemsSource="{Binding AvailableProfiles}"
+                                      SelectedItem="{Binding SelectedProfileName}"
+                                      Margin="0,6,0,8"
+                                      MinHeight="36" />
+
+                            <WrapPanel>
+                                <Button Content="Save Profile"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Command="{Binding SaveProfileCommand}" />
+                                <Button Content="Load Profile"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Margin="8,0,0,0"
+                                        Command="{Binding LoadProfileCommand}" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Validation" Style="{StaticResource SectionTitleTextStyle}" />
+                            <TextBlock Text="Required fields are validated instantly before packaging starts."
+                                       Style="{StaticResource BodyTextStyle}"
+                                       Margin="0,4,0,10" />
+
+                            <ItemsControl ItemsSource="{Binding ValidationErrors}">
+                                <ItemsControl.Style>
+                                    <Style TargetType="ItemsControl">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasValidationErrors}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ItemsControl.Style>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StringFormat=• {0}}"
+                                                   Foreground="#FFB02A37"
+                                                   FontFamily="Segoe UI Variable Text"
+                                                   FontSize="12"
+                                                   Margin="0,3,0,0"
+                                                   TextWrapping="Wrap" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Text="All required fields are valid. Ready to package."
+                                       Foreground="{StaticResource SuccessBrush}"
+                                       FontFamily="Segoe UI Variable Text"
+                                       FontSize="12"
+                                       FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasValidationErrors}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Result" Style="{StaticResource SectionTitleTextStyle}" />
+                            <TextBlock Text="{Binding StatusMessage}"
+                                       Style="{StaticResource BodyTextStyle}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,6,0,8" />
+
+                            <ProgressBar IsIndeterminate="True">
+                                <ProgressBar.Style>
+                                    <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ProgressBar.Style>
+                            </ProgressBar>
+
+                            <TextBlock Text="Output Package" Style="{StaticResource BodyTextStyle}" Margin="0,10,0,4" />
+                            <TextBox Text="{Binding ResultOutputPath}"
+                                     IsReadOnly="True"
+                                     Background="#FFF8FAFD"
+                                     BorderBrush="#FFD5E0EF" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardBorderStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Recent Packages" Style="{StaticResource SectionTitleTextStyle}" />
+                            <TextBlock Text="Most recent local packaging runs."
+                                       Style="{StaticResource BodyTextStyle}"
+                                       Margin="0,4,0,10" />
+
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="220">
+                                <ItemsControl ItemsSource="{Binding RecentHistory}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border CornerRadius="10"
+                                                    BorderBrush="#FFD6E1F0"
+                                                    BorderThickness="1"
+                                                    Background="#FFF8FBFF"
+                                                    Padding="10"
+                                                    Margin="0,0,0,8">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding SetupFilePath}"
+                                                               FontFamily="Segoe UI Variable Text"
+                                                               FontSize="12"
+                                                               FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding TimestampUtc, StringFormat='{}{0:yyyy-MM-dd HH:mm:ss} UTC'}"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               Margin="0,2,0,0" />
+                                                    <TextBlock Text="{Binding Message}"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               TextWrapping="Wrap"
+                                                               Margin="0,2,0,0" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+    </Grid>
+</Window>
