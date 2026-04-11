@@ -121,29 +121,29 @@ public sealed class AppUpdateService : IAppUpdateService
             };
         }
 
-        try
+        DataPathProvider.EnsureBaseDirectory();
+        Directory.CreateDirectory(DataPathProvider.UpdatesDirectory);
+
+        var installerFileName = BuildInstallerFileName(updateInfo);
+        var installerPath = Path.Combine(DataPathProvider.UpdatesDirectory, installerFileName);
+
+        if (string.IsNullOrWhiteSpace(updateInfo.InstallerDownloadUrl))
         {
-            DataPathProvider.EnsureBaseDirectory();
-            Directory.CreateDirectory(DataPathProvider.UpdatesDirectory);
-
-            var installerFileName = BuildInstallerFileName(updateInfo);
-            var installerPath = Path.Combine(DataPathProvider.UpdatesDirectory, installerFileName);
-
-            if (string.IsNullOrWhiteSpace(updateInfo.InstallerDownloadUrl))
+            var ghDownloadResult = await TryDownloadWithGhCliAsync(updateInfo, logProgress, cancellationToken);
+            if (ghDownloadResult is not null)
             {
-                var ghDownloadResult = await TryDownloadWithGhCliAsync(updateInfo, logProgress, cancellationToken);
-                if (ghDownloadResult is not null)
-                {
-                    return ghDownloadResult;
-                }
-
-                return new AppUpdateInstallResult
-                {
-                    Success = false,
-                    Message = "No installer download URL is available for this release."
-                };
+                return ghDownloadResult;
             }
 
+            return new AppUpdateInstallResult
+            {
+                Success = false,
+                Message = "No installer download URL is available for this release."
+            };
+        }
+
+        try
+        {
             logProgress?.Report($"Downloading update installer {installerFileName}...");
 
             using var response = await _httpClient.GetAsync(
@@ -154,61 +154,37 @@ public sealed class AppUpdateService : IAppUpdateService
             response.EnsureSuccessStatusCode();
 
             var totalBytes = response.Content.Headers.ContentLength;
-            await using var sourceStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var targetStream = new FileStream(installerPath, FileMode.Create, FileAccess.Write, FileShare.None);
-
-            var buffer = new byte[81920];
-            long totalRead = 0;
-            var lastReportedPercent = -1;
-
-            while (true)
+            await using (var sourceStream = await response.Content.ReadAsStreamAsync(cancellationToken))
+            await using (var targetStream = new FileStream(installerPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                var read = await sourceStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
-                if (read == 0)
-                {
-                    break;
-                }
+                var buffer = new byte[81920];
+                long totalRead = 0;
+                var lastReportedPercent = -1;
 
-                await targetStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                totalRead += read;
-
-                if (totalBytes.HasValue && totalBytes.Value > 0)
+                while (true)
                 {
-                    var percent = (int)Math.Round((double)totalRead * 100d / totalBytes.Value);
-                    if (percent >= lastReportedPercent + 10)
+                    var read = await sourceStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+                    if (read == 0)
                     {
-                        lastReportedPercent = percent;
-                        logProgress?.Report($"Downloading installer... {percent}%");
+                        break;
+                    }
+
+                    await targetStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    totalRead += read;
+
+                    if (totalBytes.HasValue && totalBytes.Value > 0)
+                    {
+                        var percent = (int)Math.Round((double)totalRead * 100d / totalBytes.Value);
+                        if (percent >= lastReportedPercent + 10)
+                        {
+                            lastReportedPercent = percent;
+                            logProgress?.Report($"Downloading installer... {percent}%");
+                        }
                     }
                 }
+
+                await targetStream.FlushAsync(cancellationToken);
             }
-
-            await targetStream.FlushAsync(cancellationToken);
-
-            if (!File.Exists(installerPath))
-            {
-                return new AppUpdateInstallResult
-                {
-                    Success = false,
-                    Message = "Update installer download failed.",
-                    InstallerPath = installerPath
-                };
-            }
-
-            logProgress?.Report("Launching update installer...");
-
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = installerPath,
-                UseShellExecute = true
-            });
-
-            return new AppUpdateInstallResult
-            {
-                Success = true,
-                Message = "Installer launched successfully.",
-                InstallerPath = installerPath
-            };
         }
         catch (OperationCanceledException)
         {
@@ -225,7 +201,45 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateInstallResult
             {
                 Success = false,
-                Message = $"Update install failed: {ex.Message}"
+                Message = $"Update download failed: {ex.Message}",
+                InstallerPath = installerPath
+            };
+        }
+
+        if (!File.Exists(installerPath))
+        {
+            return new AppUpdateInstallResult
+            {
+                Success = false,
+                Message = "Update installer download failed.",
+                InstallerPath = installerPath
+            };
+        }
+
+        try
+        {
+            logProgress?.Report("Launching update installer...");
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = installerPath,
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory
+            });
+
+            return new AppUpdateInstallResult
+            {
+                Success = true,
+                Message = $"Installer launched successfully ({installerFileName}).",
+                InstallerPath = installerPath
+            };
+        }
+        catch (Exception ex)
+        {
+            return new AppUpdateInstallResult
+            {
+                Success = false,
+                Message = $"Installer could not be launched automatically. Open this file manually: {installerPath}. Details: {ex.Message}",
+                InstallerPath = installerPath
             };
         }
     }

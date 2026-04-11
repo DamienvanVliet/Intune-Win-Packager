@@ -13,6 +13,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Update checks now fall back to the public releases list endpoint when `releases/latest` is unavailable.
 - Improved release payload parsing so update detection works consistently across REST and GitHub CLI payload shapes.
 - Update logs now show both current and latest versions when no newer update is found.
+- Fixed updater installer launch flow by fully closing the downloaded file before launch (prevents stall at `Launching update installer...`).
 
 ## [1.1.1] - 2026-04-12
 
