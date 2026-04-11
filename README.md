@@ -8,10 +8,10 @@ Intune Win Packager is a local Windows desktop utility that converts `.msi` and 
 2. Go to the project folder:
 
 ```powershell
-cd "C:\Users\Damien\Documents\Github Projecten\Package Helper"
+cd "C:\path\to\Intune-Win-Packager"
 ```
 
-If you cloned from GitHub to a different location, use your clone path instead.
+Use the folder where `IntuneWinPackager.sln` exists.
 
 3. Build:
 
