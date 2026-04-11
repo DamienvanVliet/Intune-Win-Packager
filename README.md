@@ -41,6 +41,29 @@ dotnet build IntuneWinPackager.sln
 dotnet run --project IntuneWinPackager.App
 ```
 
+## Build A Real Windows Installer (Setup.exe)
+
+Use this when you want to install and run the app like a normal desktop application from Start Menu.
+
+1. Open PowerShell in the repo folder.
+2. Run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
+```
+
+What this script does:
+- Publishes a self-contained `win-x64` build (no local .NET runtime required for users).
+- Auto-installs Inno Setup via `winget` if missing.
+- Builds a Windows installer executable (`Setup.exe`).
+
+Installer output:
+- `artifacts\installer\IntuneWinPackager-Setup-<version>.exe`
+
+After installing:
+- Launch from Start Menu: `Intune Win Packager`
+- Optional Desktop shortcut can be created during setup.
+
 ## First-Time Setup In The App
 
 1. Click `Auto Locate` to find `IntuneWinAppUtil.exe`.
