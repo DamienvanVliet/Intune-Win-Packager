@@ -1,55 +1,83 @@
 # Intune Win Packager
 
-Intune Win Packager is a local Windows desktop utility that converts `.msi` and `.exe` installers into `.intunewin` packages using Microsoft's official `IntuneWinAppUtil.exe`.
+Intune Win Packager is a local Windows desktop app that converts `.msi` and `.exe` installers into `.intunewin` packages by calling Microsoft's official `IntuneWinAppUtil.exe`.
 
-## Super Easy Run Guide
+## Quick Start (Beginner Friendly)
 
-1. Open PowerShell.
-2. Go to the project folder:
+### 1) Prerequisites
+
+- Windows 10 or 11
+- .NET 8 SDK
+- Git (only needed if you want to clone)
+
+Install missing tools with `winget`:
 
 ```powershell
-cd "C:\path\to\Intune-Win-Packager"
+winget install --id Microsoft.DotNet.SDK.8 --source winget
+winget install --id Git.Git --source winget
 ```
 
-Use the folder where `IntuneWinPackager.sln` exists.
+### 2) Clone the repository
 
-3. Build:
+Open PowerShell and run:
 
 ```powershell
+git clone https://github.com/DamienvanVliet/Intune-Win-Packager.git
+cd Intune-Win-Packager
+```
+
+If you do not use Git, download the ZIP from GitHub and extract it, then open PowerShell in that extracted folder.
+
+### 3) Build the solution
+
+```powershell
+dotnet restore
 dotnet build IntuneWinPackager.sln
 ```
 
-4. Start the app:
+### 4) Run the desktop app
 
 ```powershell
 dotnet run --project IntuneWinPackager.App
 ```
 
-5. In the app:
-- Click `Install Tool` (or `Auto Locate`) to configure `IntuneWinAppUtil.exe`.
-- Drop/select your installer (`.msi` or `.exe`).
-- Check source/output folders.
-- Click `Start Packaging`.
+## First-Time Setup In The App
 
-## Projects
+1. Click `Auto Locate` to find `IntuneWinAppUtil.exe`.
+2. If not found, click `Install Tool` for one-click setup.
+3. If needed, click `Browse Tool` and select `IntuneWinAppUtil.exe` manually.
+4. Select or drag/drop your installer (`.msi` or `.exe`).
+5. Confirm the Source folder, Setup file, and Output folder.
+6. Review install/uninstall commands.
+7. Click `Start Packaging`.
+8. After success, click `Open Output Folder`.
 
-- `IntuneWinPackager.App` - WPF UI (MVVM)
-- `IntuneWinPackager.Core` - validation + workflow logic
-- `IntuneWinPackager.Infrastructure` - process execution, persistence, inspection
-- `IntuneWinPackager.Models` - models/DTOs/enums
-- `IntuneWinPackager.Tests` - unit tests
+## Common Problems And Fixes
 
-## Tests
+- `dotnet` command not found: install .NET 8 SDK, then reopen PowerShell.
+- `git` command not found: install Git with `winget`, then reopen PowerShell.
+- Packaging tool missing: use `Auto Locate` or `Install Tool` in the app settings section.
+- Output folder permission error: choose a writable folder (for example under `C:\Users\<you>\Documents`).
+
+## Project Structure
+
+- `IntuneWinPackager.App` - WPF UI (MVVM), views/viewmodels, DI composition
+- `IntuneWinPackager.Core` - business rules, validation, workflow services
+- `IntuneWinPackager.Infrastructure` - process runner, persistence, tool locate/install, MSI inspection
+- `IntuneWinPackager.Models` - entities, DTOs, enums
+- `IntuneWinPackager.Tests` - unit tests for core logic
+
+## Run Tests
 
 ```powershell
 dotnet test IntuneWinPackager.sln
 ```
 
-## Local Data
+## Local App Data
 
-Saved under:
+Saved in:
 
-`%LOCALAPPDATA%\\IntuneWinPackager`
+`%LOCALAPPDATA%\IntuneWinPackager`
 
 - `settings.json`
 - `profiles.json`
