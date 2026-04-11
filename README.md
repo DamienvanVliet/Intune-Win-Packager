@@ -4,20 +4,28 @@ Intune Win Packager is a local Windows desktop utility that converts `.msi` and 
 
 ## Super Easy Run Guide
 
-1. Open PowerShell in this folder.
-2. Build:
+1. Open PowerShell.
+2. Go to the project folder:
+
+```powershell
+cd "C:\Users\Damien\Documents\Github Projecten\Package Helper"
+```
+
+If you cloned from GitHub to a different location, use your clone path instead.
+
+3. Build:
 
 ```powershell
 dotnet build IntuneWinPackager.sln
 ```
 
-3. Start the app:
+4. Start the app:
 
 ```powershell
 dotnet run --project IntuneWinPackager.App
 ```
 
-4. In the app:
+5. In the app:
 - Click `Install Tool` (or `Auto Locate`) to configure `IntuneWinAppUtil.exe`.
 - Drop/select your installer (`.msi` or `.exe`).
 - Check source/output folders.
