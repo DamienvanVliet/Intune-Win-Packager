@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [1.1.1] - 2026-04-12
+
+### Fixed
+- Update checks no longer override packaging progress/status in the Result panel.
+- Result panel no longer appears as stuck on `Ready (0%)` before a packaging run starts.
+- Improved update-check resilience for private/non-public release feeds with GitHub CLI fallback.
+
+### Changed
+- Refined update messaging and logging behavior so non-packaging actions keep the previous workflow state.
+- Improved README clarity for end users and developers, including run/install flow and repository cleanup guidance.
+
 ## [1.1.0] - 2026-04-11
 
 ### Added
