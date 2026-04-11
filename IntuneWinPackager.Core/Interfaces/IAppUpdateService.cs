@@ -9,5 +9,6 @@ public interface IAppUpdateService
     Task<AppUpdateInstallResult> DownloadAndLaunchInstallerAsync(
         AppUpdateInfo updateInfo,
         IProgress<string>? logProgress = null,
+        bool silentInstall = false,
         CancellationToken cancellationToken = default);
 }

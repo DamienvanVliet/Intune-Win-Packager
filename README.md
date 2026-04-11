@@ -28,6 +28,9 @@ This app gives admins one polished screen to:
 - Auto-locate tool path + one-click tool install
 - Low Impact Packaging Mode (less CPU pressure)
 - In-app updates with changelog + installer launch
+- SHA-256 integrity verification before update install
+- Retry/backoff for transient update network errors
+- Optional silent update install mode for managed environments
 
 ## UI Walkthrough (Current Build)
 
@@ -83,6 +86,7 @@ Common causes:
 - no published release yet
 
 The app now avoids overriding packaging progress status when update checks fail or return no update.
+Update installs are hash-verified (SHA-256) before launch, and transient network failures use retry with backoff.
 
 ## Build Installer
 
@@ -97,7 +101,7 @@ Output:
 ## Publish Release + Changelog
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\publish-update.ps1 -Version 1.1.1 -ReleaseNotes "Your release notes here"
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-update.ps1 -Version 1.1.3 -ReleaseNotes "Your release notes here"
 ```
 
 This workflow updates app versioning, keeps changelog aligned, and publishes installer assets used by in-app updates.

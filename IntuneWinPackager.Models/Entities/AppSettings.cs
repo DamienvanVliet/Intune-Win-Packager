@@ -11,4 +11,6 @@ public sealed record AppSettings
     public string LastSetupFilePath { get; init; } = string.Empty;
 
     public bool UseLowImpactMode { get; init; } = true;
+
+    public bool EnableSilentAppUpdates { get; init; }
 }

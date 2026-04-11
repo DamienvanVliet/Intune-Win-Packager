@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
+using System.Security.Cryptography;
 using System.Text.Json;
 using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Infrastructure.Support;
@@ -12,6 +14,7 @@ public sealed class AppUpdateService : IAppUpdateService
     private const string RepoFullName = "DamienvanVliet/Intune-Win-Packager";
     private const string LatestReleaseApiUrl = "https://api.github.com/repos/DamienvanVliet/Intune-Win-Packager/releases/latest";
     private const string ReleasesApiUrl = "https://api.github.com/repos/DamienvanVliet/Intune-Win-Packager/releases?per_page=20";
+    private const int MaxHttpAttempts = 3;
 
     private readonly HttpClient _httpClient;
 
@@ -37,12 +40,18 @@ public sealed class AppUpdateService : IAppUpdateService
 
         try
         {
-            using var response = await _httpClient.GetAsync(LatestReleaseApiUrl, cancellationToken);
+            using var response = await GetWithRetryAsync(
+                LatestReleaseApiUrl,
+                HttpCompletionOption.ResponseContentRead,
+                operationCodePrefix: "UPD-CHK",
+                progress: null,
+                cancellationToken);
+
             if (!response.IsSuccessStatusCode)
             {
-                if (response.StatusCode == System.Net.HttpStatusCode.NotFound
-                    || response.StatusCode == System.Net.HttpStatusCode.Unauthorized
-                    || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                if (response.StatusCode == HttpStatusCode.NotFound
+                    || response.StatusCode == HttpStatusCode.Unauthorized
+                    || response.StatusCode == HttpStatusCode.Forbidden)
                 {
                     var releasesApiFallback = await TryCheckWithPublicReleasesListAsync(currentNormalized, cancellationToken);
                     if (releasesApiFallback is not null)
@@ -62,7 +71,7 @@ public sealed class AppUpdateService : IAppUpdateService
                         IsUpdateAvailable = false,
                         CurrentVersion = currentNormalized,
                         LatestVersion = currentNormalized,
-                        Message = "No public release feed found (HTTP 404). If this repository is private, auto-updates require GitHub CLI login on this machine."
+                        Message = WithCode("UPD-CHK-FEED", "No public release feed found. If this repository is private, auto-updates require GitHub CLI login on this machine.")
                     };
                 }
 
@@ -71,7 +80,7 @@ public sealed class AppUpdateService : IAppUpdateService
                     CheckSucceeded = false,
                     CurrentVersion = currentNormalized,
                     LatestVersion = currentNormalized,
-                    Message = $"Update check failed (HTTP {(int)response.StatusCode})."
+                    Message = WithCode($"UPD-CHK-HTTP-{(int)response.StatusCode}", $"Update check failed (HTTP {(int)response.StatusCode}).")
                 };
             }
 
@@ -102,7 +111,7 @@ public sealed class AppUpdateService : IAppUpdateService
                 CheckSucceeded = false,
                 CurrentVersion = currentNormalized,
                 LatestVersion = currentNormalized,
-                Message = $"Update check failed: {ex.Message}"
+                Message = WithCode("UPD-CHK-EX", $"Update check failed: {ex.Message}")
             };
         }
     }
@@ -110,6 +119,7 @@ public sealed class AppUpdateService : IAppUpdateService
     public async Task<AppUpdateInstallResult> DownloadAndLaunchInstallerAsync(
         AppUpdateInfo updateInfo,
         IProgress<string>? logProgress = null,
+        bool silentInstall = false,
         CancellationToken cancellationToken = default)
     {
         if (updateInfo is null)
@@ -117,7 +127,7 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateInstallResult
             {
                 Success = false,
-                Message = "No update metadata was provided."
+                Message = WithCode("UPD-DL-NODATA", "No update metadata was provided.")
             };
         }
 
@@ -129,7 +139,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
         if (string.IsNullOrWhiteSpace(updateInfo.InstallerDownloadUrl))
         {
-            var ghDownloadResult = await TryDownloadWithGhCliAsync(updateInfo, logProgress, cancellationToken);
+            var ghDownloadResult = await TryDownloadWithGhCliAsync(updateInfo, logProgress, silentInstall, cancellationToken);
             if (ghDownloadResult is not null)
             {
                 return ghDownloadResult;
@@ -138,7 +148,7 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateInstallResult
             {
                 Success = false,
-                Message = "No installer download URL is available for this release."
+                Message = WithCode("UPD-DL-NOURL", "No installer download URL is available for this release.")
             };
         }
 
@@ -146,9 +156,11 @@ public sealed class AppUpdateService : IAppUpdateService
         {
             logProgress?.Report($"Downloading update installer {installerFileName}...");
 
-            using var response = await _httpClient.GetAsync(
+            using var response = await GetWithRetryAsync(
                 updateInfo.InstallerDownloadUrl,
                 HttpCompletionOption.ResponseHeadersRead,
+                operationCodePrefix: "UPD-DL",
+                progress: logProgress,
                 cancellationToken);
 
             response.EnsureSuccessStatusCode();
@@ -192,7 +204,7 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            var ghDownloadResult = await TryDownloadWithGhCliAsync(updateInfo, logProgress, cancellationToken);
+            var ghDownloadResult = await TryDownloadWithGhCliAsync(updateInfo, logProgress, silentInstall, cancellationToken);
             if (ghDownloadResult is not null)
             {
                 return ghDownloadResult;
@@ -201,7 +213,7 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateInstallResult
             {
                 Success = false,
-                Message = $"Update download failed: {ex.Message}",
+                Message = WithCode("UPD-DL-EX", $"Update download failed: {ex.Message}"),
                 InstallerPath = installerPath
             };
         }
@@ -211,25 +223,56 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateInstallResult
             {
                 Success = false,
-                Message = "Update installer download failed.",
+                Message = WithCode("UPD-DL-MISSING", "Update installer download failed."),
                 InstallerPath = installerPath
             };
         }
 
+        logProgress?.Report("Verifying installer integrity (SHA-256)...");
+        var hashVerification = await VerifyInstallerHashAsync(installerPath, updateInfo.InstallerSha256, cancellationToken);
+        if (!hashVerification.Success)
+        {
+            return new AppUpdateInstallResult
+            {
+                Success = false,
+                Message = hashVerification.Message,
+                InstallerPath = installerPath
+            };
+        }
+        logProgress?.Report("Installer hash verified.");
+
+        return TryLaunchInstaller(installerPath, installerFileName, silentInstall, logProgress);
+    }
+
+    private AppUpdateInstallResult TryLaunchInstaller(
+        string installerPath,
+        string installerFileName,
+        bool silentInstall,
+        IProgress<string>? logProgress)
+    {
         try
         {
             logProgress?.Report("Launching update installer...");
-            Process.Start(new ProcessStartInfo
+            var startInfo = new ProcessStartInfo
             {
                 FileName = installerPath,
                 UseShellExecute = true,
                 WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory
-            });
+            };
+
+            if (silentInstall)
+            {
+                startInfo.Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS";
+            }
+
+            Process.Start(startInfo);
 
             return new AppUpdateInstallResult
             {
                 Success = true,
-                Message = $"Installer launched successfully ({installerFileName}).",
+                Message = silentInstall
+                    ? $"Silent installer launched successfully ({installerFileName})."
+                    : $"Installer launched successfully ({installerFileName}).",
                 InstallerPath = installerPath
             };
         }
@@ -238,7 +281,9 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateInstallResult
             {
                 Success = false,
-                Message = $"Installer could not be launched automatically. Open this file manually: {installerPath}. Details: {ex.Message}",
+                Message = WithCode(
+                    "UPD-LAUNCH-EX",
+                    $"Installer could not be launched automatically. Open this file manually: {installerPath}. Details: {ex.Message}"),
                 InstallerPath = installerPath
             };
         }
@@ -277,6 +322,7 @@ public sealed class AppUpdateService : IAppUpdateService
     private async Task<AppUpdateInstallResult?> TryDownloadWithGhCliAsync(
         AppUpdateInfo updateInfo,
         IProgress<string>? logProgress,
+        bool silentInstall,
         CancellationToken cancellationToken)
     {
         var ghCliPath = ResolveGhCliPath();
@@ -315,18 +361,22 @@ public sealed class AppUpdateService : IAppUpdateService
             return null;
         }
 
-        Process.Start(new ProcessStartInfo
+        var hashVerification = await VerifyInstallerHashAsync(downloadedInstaller.FullName, updateInfo.InstallerSha256, cancellationToken);
+        if (!hashVerification.Success)
         {
-            FileName = downloadedInstaller.FullName,
-            UseShellExecute = true
-        });
+            return new AppUpdateInstallResult
+            {
+                Success = false,
+                Message = hashVerification.Message,
+                InstallerPath = downloadedInstaller.FullName
+            };
+        }
 
-        return new AppUpdateInstallResult
-        {
-            Success = true,
-            Message = "Installer launched successfully.",
-            InstallerPath = downloadedInstaller.FullName
-        };
+        return TryLaunchInstaller(
+            downloadedInstaller.FullName,
+            downloadedInstaller.Name,
+            silentInstall,
+            logProgress);
     }
 
     private static string? ResolveGhCliPath()
@@ -389,14 +439,14 @@ public sealed class AppUpdateService : IAppUpdateService
         return $"IntuneWinPackager-Setup-{safeVersion}.exe";
     }
 
-    private static string GetInstallerDownloadUrl(JsonElement root)
+    private static (string DownloadUrl, string Sha256, string FileName) GetInstallerAssetMetadata(JsonElement root)
     {
         if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
         {
-            return string.Empty;
+            return (string.Empty, string.Empty, string.Empty);
         }
 
-        string? fallbackExe = null;
+        (string DownloadUrl, string Sha256, string FileName)? fallbackExe = null;
 
         foreach (var asset in assets.EnumerateArray())
         {
@@ -417,25 +467,34 @@ public sealed class AppUpdateService : IAppUpdateService
                 continue;
             }
 
+            var digest = GetString(asset, "digest");
+            var sha256 = NormalizeSha256Digest(digest);
+            var metadata = (url, sha256, name);
+
             if (fallbackExe is null)
             {
-                fallbackExe = url;
+                fallbackExe = metadata;
             }
 
             if (name.Contains("setup", StringComparison.OrdinalIgnoreCase))
             {
-                return url;
+                return metadata;
             }
         }
 
-        return fallbackExe ?? string.Empty;
+        return fallbackExe ?? (string.Empty, string.Empty, string.Empty);
     }
 
     private async Task<AppUpdateInfo?> TryCheckWithPublicReleasesListAsync(string currentNormalized, CancellationToken cancellationToken)
     {
         try
         {
-            using var response = await _httpClient.GetAsync(ReleasesApiUrl, cancellationToken);
+            using var response = await GetWithRetryAsync(
+                ReleasesApiUrl,
+                HttpCompletionOption.ResponseContentRead,
+                operationCodePrefix: "UPD-CHK-LIST",
+                progress: null,
+                cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -494,7 +553,9 @@ public sealed class AppUpdateService : IAppUpdateService
         var releaseNotes = GetString(root, "body");
         var publishedAt = TryGetDateTimeOffsetWithFallback(root, "published_at", "publishedAt");
         var latestVersion = NormalizeVersion(tagName);
-        var installerUrl = GetInstallerDownloadUrl(root);
+        var installerAsset = GetInstallerAssetMetadata(root);
+        var installerUrl = installerAsset.DownloadUrl;
+        var installerSha256 = installerAsset.Sha256;
 
         if (string.IsNullOrWhiteSpace(latestVersion))
         {
@@ -514,6 +575,7 @@ public sealed class AppUpdateService : IAppUpdateService
                 ReleaseName = releaseName,
                 ReleaseNotes = releaseNotes,
                 InstallerDownloadUrl = installerUrl,
+                InstallerSha256 = installerSha256,
                 PublishedAtUtc = publishedAt,
                 Message = $"You already have the latest version ({currentNormalized})."
             };
@@ -530,8 +592,29 @@ public sealed class AppUpdateService : IAppUpdateService
                 ReleaseTag = tagName,
                 ReleaseName = releaseName,
                 ReleaseNotes = releaseNotes,
+                InstallerSha256 = installerSha256,
                 PublishedAtUtc = publishedAt,
                 Message = "A newer release exists, but no installer asset was found."
+            };
+        }
+
+        if (!IsValidSha256(installerSha256))
+        {
+            return new AppUpdateInfo
+            {
+                CheckSucceeded = true,
+                IsUpdateAvailable = false,
+                CurrentVersion = currentNormalized,
+                LatestVersion = latestVersion,
+                ReleaseTag = tagName,
+                ReleaseName = releaseName,
+                ReleaseNotes = releaseNotes,
+                InstallerDownloadUrl = installerUrl,
+                InstallerSha256 = installerSha256,
+                PublishedAtUtc = publishedAt,
+                Message = WithCode(
+                    "UPD-HASH-MISSING",
+                    "A newer release exists, but SHA-256 digest metadata is missing. Auto-install is blocked for safety.")
             };
         }
 
@@ -545,8 +628,168 @@ public sealed class AppUpdateService : IAppUpdateService
             ReleaseName = releaseName,
             ReleaseNotes = releaseNotes,
             InstallerDownloadUrl = installerUrl,
+            InstallerSha256 = installerSha256,
             PublishedAtUtc = publishedAt,
             Message = $"Update available: {latestVersion}"
+        };
+    }
+
+    private static string WithCode(string code, string message)
+    {
+        return $"[{code}] {message}";
+    }
+
+    private static bool IsValidSha256(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length != 64)
+        {
+            return false;
+        }
+
+        foreach (var character in value)
+        {
+            var isHex = (character >= '0' && character <= '9')
+                || (character >= 'a' && character <= 'f')
+                || (character >= 'A' && character <= 'F');
+
+            if (!isHex)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string NormalizeSha256Digest(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[7..];
+        }
+
+        return normalized.ToLowerInvariant();
+    }
+
+    private static async Task<(bool Success, string Message)> VerifyInstallerHashAsync(
+        string installerPath,
+        string expectedSha256,
+        CancellationToken cancellationToken)
+    {
+        var normalizedExpected = NormalizeSha256Digest(expectedSha256);
+        if (!IsValidSha256(normalizedExpected))
+        {
+            return (
+                false,
+                WithCode(
+                    "UPD-HASH-MISSING",
+                    "Release SHA-256 digest is missing or invalid. Auto-install is blocked for safety."));
+        }
+
+        await using var fileStream = new FileStream(installerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var sha256 = SHA256.Create();
+        var hashBytes = await sha256.ComputeHashAsync(fileStream, cancellationToken);
+        var actualHash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+
+        if (!string.Equals(actualHash, normalizedExpected, StringComparison.OrdinalIgnoreCase))
+        {
+            return (
+                false,
+                WithCode(
+                    "UPD-HASH-MISMATCH",
+                    $"Installer hash mismatch. Expected {normalizedExpected}, got {actualHash}."));
+        }
+
+        return (true, "Installer hash verified.");
+    }
+
+    private async Task<HttpResponseMessage> GetWithRetryAsync(
+        string requestUri,
+        HttpCompletionOption completionOption,
+        string operationCodePrefix,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        Exception? lastException = null;
+
+        for (var attempt = 1; attempt <= MaxHttpAttempts; attempt++)
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync(requestUri, completionOption, cancellationToken);
+
+                if (IsTransientStatusCode(response.StatusCode) && attempt < MaxHttpAttempts)
+                {
+                    var delayMs = GetRetryDelayMilliseconds(attempt);
+                    progress?.Report(
+                        WithCode(
+                            $"{operationCodePrefix}-RETRY",
+                            $"Transient HTTP {(int)response.StatusCode}. Retrying in {delayMs} ms."));
+
+                    response.Dispose();
+                    await Task.Delay(delayMs, cancellationToken);
+                    continue;
+                }
+
+                return response;
+            }
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && attempt < MaxHttpAttempts)
+            {
+                lastException = ex;
+                var delayMs = GetRetryDelayMilliseconds(attempt);
+                progress?.Report(
+                    WithCode(
+                        $"{operationCodePrefix}-RETRY",
+                        $"Network timeout while calling update endpoint. Retrying in {delayMs} ms."));
+                await Task.Delay(delayMs, cancellationToken);
+            }
+            catch (Exception ex) when (IsTransientException(ex) && attempt < MaxHttpAttempts)
+            {
+                lastException = ex;
+                var delayMs = GetRetryDelayMilliseconds(attempt);
+                progress?.Report(
+                    WithCode(
+                        $"{operationCodePrefix}-RETRY",
+                        $"Transient network error. Retrying in {delayMs} ms."));
+                await Task.Delay(delayMs, cancellationToken);
+            }
+        }
+
+        throw new HttpRequestException(
+            WithCode(
+                $"{operationCodePrefix}-NET",
+                $"Network operation failed after {MaxHttpAttempts} attempts."),
+            lastException);
+    }
+
+    private static bool IsTransientStatusCode(HttpStatusCode statusCode)
+    {
+        var code = (int)statusCode;
+        return statusCode == HttpStatusCode.RequestTimeout
+            || code == 429
+            || code >= 500;
+    }
+
+    private static bool IsTransientException(Exception exception)
+    {
+        return exception is HttpRequestException
+            || exception is IOException
+            || exception is TaskCanceledException;
+    }
+
+    private static int GetRetryDelayMilliseconds(int attempt)
+    {
+        return attempt switch
+        {
+            1 => 900,
+            2 => 1800,
+            _ => 3200
         };
     }
 

@@ -18,6 +18,8 @@ public sealed record AppUpdateInfo
 
     public string InstallerDownloadUrl { get; init; } = string.Empty;
 
+    public string InstallerSha256 { get; init; } = string.Empty;
+
     public DateTimeOffset? PublishedAtUtc { get; init; }
 
     public string Message { get; init; } = string.Empty;

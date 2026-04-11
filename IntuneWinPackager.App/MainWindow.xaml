@@ -363,6 +363,17 @@
                                        Style="{StaticResource BodyTextStyle}"
                                        Margin="0,2,0,10" />
 
+                            <CheckBox Content="Silent update install mode (policy)"
+                                      IsChecked="{Binding EnableSilentAppUpdates}"
+                                      FontFamily="Segoe UI Variable Text"
+                                      FontSize="12"
+                                      Foreground="#FF425170"
+                                      Margin="0,0,0,8" />
+                            <TextBlock Text="Uses installer silent flags for managed/internal environments."
+                                       Style="{StaticResource BodyTextStyle}"
+                                       FontSize="11"
+                                       Margin="0,0,0,10" />
+
                             <WrapPanel Margin="0,0,0,10">
                                 <Button Content="Check for Updates"
                                         Style="{StaticResource SecondaryButtonStyle}"

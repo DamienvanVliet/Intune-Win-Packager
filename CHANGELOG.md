@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [1.1.3] - 2026-04-12
+
+### Added
+- Added silent update install policy toggle in settings for managed/internal environments.
+
+### Fixed
+- Added SHA-256 verification for downloaded update installers before launch.
+- Added retry with backoff for update network requests (check and download endpoints).
+- Improved updater errors with clearer technical error codes for troubleshooting.
+
 ## [1.1.2] - 2026-04-12
 
 ### Added

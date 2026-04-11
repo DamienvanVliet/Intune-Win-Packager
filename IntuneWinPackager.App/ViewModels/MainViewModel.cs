@@ -99,6 +99,9 @@ public partial class MainViewModel : ObservableObject
     private bool useLowImpactMode = true;
 
     [ObservableProperty]
+    private bool enableSilentAppUpdates;
+
+    [ObservableProperty]
     private double packagingProgressPercentage;
 
     [ObservableProperty]
@@ -455,6 +458,11 @@ public partial class MainViewModel : ObservableObject
         _ = PersistSettingsSafeAsync();
     }
 
+    partial void OnEnableSilentAppUpdatesChanged(bool value)
+    {
+        _ = PersistSettingsSafeAsync();
+    }
+
     private async Task LoadSettingsAsync()
     {
         var settings = await _settingsService.LoadAsync();
@@ -463,6 +471,7 @@ public partial class MainViewModel : ObservableObject
         SourceFolder = settings.LastSourceFolder;
         OutputFolder = settings.LastOutputFolder;
         UseLowImpactMode = settings.UseLowImpactMode;
+        EnableSilentAppUpdates = settings.EnableSilentAppUpdates;
 
         if (File.Exists(settings.LastSetupFilePath))
         {
@@ -779,7 +788,16 @@ public partial class MainViewModel : ObservableObject
                         previousState,
                         previousTitle,
                         previousMessage);
-                    AppendLog($"No newer app update found. Current: {CurrentVersion}, Latest: {LatestVersion}.");
+                    if (!string.IsNullOrWhiteSpace(updateInfo.Message)
+                        && (updateInfo.Message.Contains("UPD-HASH", StringComparison.OrdinalIgnoreCase)
+                            || updateInfo.Message.Contains("newer release", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        AppendLog(updateInfo.Message);
+                    }
+                    else
+                    {
+                        AppendLog($"No newer app update found. Current: {CurrentVersion}, Latest: {LatestVersion}.");
+                    }
                 }
                 else
                 {
@@ -820,14 +838,20 @@ public partial class MainViewModel : ObservableObject
         }
 
         IsBusy = true;
-        SetStatus(OperationState.Running, "Installing Update", "Downloading and launching update installer...");
+        SetStatus(
+            OperationState.Running,
+            "Installing Update",
+            EnableSilentAppUpdates
+                ? "Downloading update and starting silent installer..."
+                : "Downloading and launching update installer...");
         AppendLog($"Starting update install to version {_latestUpdateInfo.LatestVersion}...");
 
         try
         {
             var installResult = await _appUpdateService.DownloadAndLaunchInstallerAsync(
                 _latestUpdateInfo,
-                new InlineProgress<string>(AppendLog));
+                new InlineProgress<string>(AppendLog),
+                silentInstall: EnableSilentAppUpdates);
 
             if (!installResult.Success)
             {
@@ -836,8 +860,15 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            SetStatus(OperationState.Success, "Update Installer Started", "Installer launched. Finish setup, then reopen this app.");
-            UpdateStatus = "Update installer started.";
+            SetStatus(
+                OperationState.Success,
+                "Update Installer Started",
+                EnableSilentAppUpdates
+                    ? "Silent update started. The app will close so setup can replace files."
+                    : "Installer launched. Finish setup, then reopen this app.");
+            UpdateStatus = EnableSilentAppUpdates
+                ? "Silent update installer started."
+                : "Update installer started.";
             AppendLog("Installer launched. Closing app to allow update installation...");
 
             await Task.Delay(700);
@@ -1194,7 +1225,8 @@ public partial class MainViewModel : ObservableObject
             LastSourceFolder = SourceFolder,
             LastOutputFolder = OutputFolder,
             LastSetupFilePath = SetupFilePath,
-            UseLowImpactMode = UseLowImpactMode
+            UseLowImpactMode = UseLowImpactMode,
+            EnableSilentAppUpdates = EnableSilentAppUpdates
         };
 
         await _settingsService.SaveAsync(settings);
