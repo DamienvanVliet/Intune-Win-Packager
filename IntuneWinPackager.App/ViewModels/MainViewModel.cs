@@ -28,6 +28,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IHistoryService _historyService;
     private readonly IToolLocatorService _toolLocatorService;
     private readonly IToolInstallerService _toolInstallerService;
+    private readonly IPreflightService _preflightService;
     private readonly IAppUpdateService _appUpdateService;
     private readonly IDialogService _dialogService;
 
@@ -131,6 +132,12 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool hasPackagingRun;
 
+    [ObservableProperty]
+    private bool hasPreflightRun;
+
+    [ObservableProperty]
+    private string preflightSummary = "Run preflight checks to verify tool health, folders, permissions, and disk space.";
+
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
         IValidationService validationService,
@@ -141,6 +148,7 @@ public partial class MainViewModel : ObservableObject
         IHistoryService historyService,
         IToolLocatorService toolLocatorService,
         IToolInstallerService toolInstallerService,
+        IPreflightService preflightService,
         IAppUpdateService appUpdateService,
         IDialogService dialogService)
     {
@@ -153,6 +161,7 @@ public partial class MainViewModel : ObservableObject
         _historyService = historyService;
         _toolLocatorService = toolLocatorService;
         _toolInstallerService = toolInstallerService;
+        _preflightService = preflightService;
         _appUpdateService = appUpdateService;
         _dialogService = dialogService;
 
@@ -175,6 +184,13 @@ public partial class MainViewModel : ObservableObject
             }
         };
 
+        PreflightChecks.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasPreflightErrors));
+            OnPropertyChanged(nameof(HasPreflightWarnings));
+            OnPropertyChanged(nameof(IsPreflightReady));
+        };
+
         foreach (var preset in _installerCommandService.GetExeSilentPresets())
         {
             ExePresets.Add(preset);
@@ -190,6 +206,7 @@ public partial class MainViewModel : ObservableObject
         InstallToolCommand = new AsyncRelayCommand(InstallToolAsync, () => !IsBusy);
         ApplyPresetCommand = new RelayCommand(ApplySelectedPreset);
         PackageCommand = new AsyncRelayCommand(PackageAsync, CanPackage);
+        RunPreflightCommand = new AsyncRelayCommand(RunPreflightAsync, () => !IsBusy);
         QuickFixCommand = new AsyncRelayCommand(ApplyQuickFixesAsync, () => !IsBusy);
         ResetCommand = new RelayCommand(ResetConfiguration, () => !IsBusy);
         OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder, CanOpenOutputFolder);
@@ -210,6 +227,8 @@ public partial class MainViewModel : ObservableObject
 
     public ObservableCollection<string> AvailableProfiles { get; } = new();
 
+    public ObservableCollection<PreflightCheck> PreflightChecks { get; } = new();
+
     public ReadOnlyObservableCollection<string> Logs => _readonlyLogs;
 
     public bool IsMsiInstaller => InstallerType == InstallerType.Msi;
@@ -219,6 +238,12 @@ public partial class MainViewModel : ObservableObject
     public bool HasValidationErrors => ValidationErrors.Count > 0;
 
     public bool IsConfigurationValid => !HasValidationErrors;
+
+    public bool HasPreflightErrors => PreflightChecks.Any(check => !check.Passed && check.Severity == PreflightSeverity.Error);
+
+    public bool HasPreflightWarnings => PreflightChecks.Any(check => !check.Passed && check.Severity == PreflightSeverity.Warning);
+
+    public bool IsPreflightReady => HasPreflightRun && !HasPreflightErrors;
 
     public string InstallerTypeDisplay => InstallerType switch
     {
@@ -285,6 +310,14 @@ public partial class MainViewModel : ObservableObject
                 return ValidationErrors.FirstOrDefault() ?? "Resolve the remaining validation errors.";
             }
 
+            if (HasPreflightRun && HasPreflightErrors)
+            {
+                var blocking = PreflightChecks.FirstOrDefault(check => !check.Passed && check.Severity == PreflightSeverity.Error);
+                return blocking is null
+                    ? "Run preflight again to verify packaging readiness."
+                    : $"Preflight blocked: {blocking.Title}. {blocking.Message}";
+            }
+
             return "Everything is ready. Click Start Packaging.";
         }
     }
@@ -308,6 +341,8 @@ public partial class MainViewModel : ObservableObject
     public IRelayCommand ApplyPresetCommand { get; }
 
     public IAsyncRelayCommand PackageCommand { get; }
+
+    public IAsyncRelayCommand RunPreflightCommand { get; }
 
     public IAsyncRelayCommand QuickFixCommand { get; }
 
@@ -358,12 +393,14 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSourceFolderChanged(string value)
     {
+        InvalidatePreflightIfNeeded();
         UpdateValidation();
         NotifyReadinessChanged();
     }
 
     partial void OnOutputFolderChanged(string value)
     {
+        InvalidatePreflightIfNeeded();
         UpdateValidation();
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
         NotifyReadinessChanged();
@@ -371,24 +408,28 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnInstallCommandChanged(string value)
     {
+        InvalidatePreflightIfNeeded();
         UpdateValidation();
         NotifyReadinessChanged();
     }
 
     partial void OnUninstallCommandChanged(string value)
     {
+        InvalidatePreflightIfNeeded();
         UpdateValidation();
         NotifyReadinessChanged();
     }
 
     partial void OnIntuneWinAppUtilPathChanged(string value)
     {
+        InvalidatePreflightIfNeeded();
         UpdateValidation();
         NotifyReadinessChanged();
     }
 
     partial void OnSetupFilePathChanged(string value)
     {
+        InvalidatePreflightIfNeeded();
         NotifyReadinessChanged();
 
         if (_suppressSetupRefresh)
@@ -401,6 +442,7 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnInstallerTypeChanged(InstallerType value)
     {
+        InvalidatePreflightIfNeeded();
         OnPropertyChanged(nameof(IsMsiInstaller));
         OnPropertyChanged(nameof(IsExeInstaller));
         OnPropertyChanged(nameof(InstallerTypeDisplay));
@@ -417,6 +459,7 @@ public partial class MainViewModel : ObservableObject
     partial void OnIsBusyChanged(bool value)
     {
         PackageCommand.NotifyCanExecuteChanged();
+        RunPreflightCommand.NotifyCanExecuteChanged();
         InstallToolCommand.NotifyCanExecuteChanged();
         QuickFixCommand.NotifyCanExecuteChanged();
         ResetCommand.NotifyCanExecuteChanged();
@@ -450,6 +493,12 @@ public partial class MainViewModel : ObservableObject
     partial void OnIsUpdateAvailableChanged(bool value)
     {
         InstallUpdateCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnHasPreflightRunChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsPreflightReady));
+        OnPropertyChanged(nameof(NextStepHint));
     }
 
     partial void OnUseLowImpactModeChanged(bool value)
@@ -575,8 +624,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (IsToolPathValid)
         {
-            SetStatus(OperationState.Idle, "Tool Already Installed", "IntuneWinAppUtil.exe is already configured.");
-            return;
+            AppendLog("Configured tool path found. Verifying tool health...");
         }
 
         IsBusy = true;
@@ -634,6 +682,94 @@ public partial class MainViewModel : ObservableObject
         UninstallCommand = suggestion.UninstallCommand;
 
         SetStatus(OperationState.Idle, "Preset Applied", $"Applied preset: {SelectedPreset?.Name ?? "Custom"}.");
+    }
+
+    private async Task RunPreflightAsync()
+    {
+        IsBusy = true;
+        AppendLog("Running preflight checks...");
+
+        try
+        {
+            var result = await RunPreflightCoreAsync();
+
+            if (result.HasErrors)
+            {
+                SetStatus(OperationState.Error, "Preflight Failed", "Fix the blocking preflight issues before packaging.");
+            }
+            else if (result.HasWarnings)
+            {
+                SetStatus(OperationState.Idle, "Preflight Complete", "Preflight passed with warnings. Review the notes before packaging.");
+            }
+            else
+            {
+                SetStatus(OperationState.Success, "Preflight Passed", "All critical preflight checks passed.");
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus(OperationState.Error, "Preflight Error", ex.Message);
+            AppendLog($"Preflight error: {ex.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task<PreflightResult> RunPreflightCoreAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await _preflightService.RunAsync(BuildRequest(), cancellationToken);
+        ApplyPreflightResult(result);
+        return result;
+    }
+
+    private void ApplyPreflightResult(PreflightResult result)
+    {
+        HasPreflightRun = true;
+        PreflightChecks.Clear();
+
+        foreach (var check in result.Checks)
+        {
+            PreflightChecks.Add(check);
+
+            var label = check.Passed
+                ? "PRECHECK OK"
+                : check.Severity == PreflightSeverity.Warning
+                    ? "PRECHECK WARN"
+                    : "PRECHECK ERROR";
+
+            AppendLog($"{label} | {check.Title}: {check.Message}");
+        }
+
+        PreflightSummary = BuildPreflightSummary(result);
+        OnPropertyChanged(nameof(HasPreflightErrors));
+        OnPropertyChanged(nameof(HasPreflightWarnings));
+        OnPropertyChanged(nameof(IsPreflightReady));
+        OnPropertyChanged(nameof(NextStepHint));
+    }
+
+    private static string BuildPreflightSummary(PreflightResult result)
+    {
+        if (result.TotalCount == 0)
+        {
+            return "No preflight checks were executed.";
+        }
+
+        var warnings = result.Checks.Count(check => !check.Passed && check.Severity == PreflightSeverity.Warning);
+        var errors = result.Checks.Count(check => !check.Passed && check.Severity == PreflightSeverity.Error);
+
+        if (errors > 0)
+        {
+            return $"{result.PassedCount}/{result.TotalCount} checks passed. {errors} blocking issue(s), {warnings} warning(s).";
+        }
+
+        if (warnings > 0)
+        {
+            return $"{result.PassedCount}/{result.TotalCount} checks passed with {warnings} warning(s).";
+        }
+
+        return $"{result.PassedCount}/{result.TotalCount} checks passed. Ready to package.";
     }
 
     private async Task ApplyQuickFixesAsync()
@@ -720,6 +856,7 @@ public partial class MainViewModel : ObservableObject
 
             UpdateValidation();
             NotifyReadinessChanged();
+            await RunPreflightCoreAsync();
 
             if (fixes.Count == 0)
             {
@@ -926,6 +1063,24 @@ public partial class MainViewModel : ObservableObject
         try
         {
             await PersistSettingsAsync();
+            SetPackagingProgress("Preflight", "Running readiness checks before packaging.", 8);
+            var preflight = await RunPreflightCoreAsync();
+            if (preflight.HasErrors)
+            {
+                SetStatus(OperationState.Error, "Preflight Failed", "Resolve preflight errors before starting package creation.");
+                SetPackagingProgress("Preflight Failed", "Fix blocking issues and run packaging again.", 100);
+                AppendLog("Packaging stopped because preflight reported blocking issues.");
+                return;
+            }
+
+            if (preflight.HasWarnings)
+            {
+                AppendLog("Preflight passed with warnings. Packaging continues.");
+            }
+            else
+            {
+                AppendLog("Preflight checks passed.");
+            }
 
             var request = BuildRequest();
             var logProgress = new InlineProgress<string>(AppendLog);
@@ -1076,6 +1231,9 @@ public partial class MainViewModel : ObservableObject
             MsiMetadataSummary = string.Empty;
             ResultOutputPath = string.Empty;
             HasPackagingRun = false;
+            HasPreflightRun = false;
+            PreflightSummary = "Run preflight checks to verify tool health, folders, permissions, and disk space.";
+            PreflightChecks.Clear();
             PackagingProgressPercentage = 0;
             IsPackagingProgressIndeterminate = false;
             PackagingProgressStep = "Ready";
@@ -1288,6 +1446,18 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsOutputFolderValid));
         OnPropertyChanged(nameof(ReadinessSummary));
         OnPropertyChanged(nameof(NextStepHint));
+    }
+
+    private void InvalidatePreflightIfNeeded()
+    {
+        if (!HasPreflightRun)
+        {
+            return;
+        }
+
+        HasPreflightRun = false;
+        PreflightSummary = "Configuration changed. Run preflight checks again.";
+        PreflightChecks.Clear();
     }
 
     private void SetStatus(OperationState state, string title, string message)

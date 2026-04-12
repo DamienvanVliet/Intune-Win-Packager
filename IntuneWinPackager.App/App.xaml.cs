@@ -22,6 +22,7 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<IValidationService, PackagingValidationService>();
                 services.AddSingleton<IInstallerCommandService, InstallerCommandService>();
                 services.AddSingleton<IPackagingWorkflowService, PackagingWorkflowService>();
+                services.AddSingleton<IPreflightService, PreflightService>();
 
                 services.AddSingleton<IProcessRunner, ProcessRunnerService>();
                 services.AddSingleton<IMsiInspectorService, MsiInspectorService>();

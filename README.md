@@ -26,6 +26,9 @@ This app gives admins one polished screen to:
 - Result panel with output path and quick open
 - Local JSON settings/profiles/history
 - Auto-locate tool path + one-click tool install
+- Tool health verification after auto-locate/install (ensures executable is usable)
+- Preflight checks panel (tool/paths/access/disk/commands) with clear pass/warn/error output
+- Automatic preflight gate before packaging starts
 - Low Impact Packaging Mode (less CPU pressure)
 - In-app updates with changelog + installer launch
 - SHA-256 integrity verification before update install
@@ -42,10 +45,11 @@ Based on the current UI screens:
 4. Guided Start card (readiness + quick actions)
 5. Settings & Profiles card (tool path, profiles, low-impact mode)
 6. App Updates card (check, install, changelog)
-7. Validation card (instant required-field checks)
-8. Result card (status + progress)
-9. Packaging Logs panel (timestamped output)
-10. Recent Packages card (local run history)
+7. Preflight Checks card (readiness + blocking issues)
+8. Validation card (instant required-field checks)
+9. Result card (status + progress)
+10. Packaging Logs panel (timestamped output)
+11. Recent Packages card (local run history)
 
 ## Install (End Users)
 
@@ -72,10 +76,11 @@ dotnet run --project IntuneWinPackager.App
 1. Set `IntuneWinAppUtil.exe` path (`Auto Locate`, `Install Tool`, or `Browse Tool`)
 2. Drop/select installer file
 3. Confirm source/setup/output
-4. Check install/uninstall command fields
-5. Click `Start Packaging`
-6. Follow progress and logs
-7. Open output folder after success
+4. Run `Preflight` (or let it run automatically when packaging starts)
+5. Check install/uninstall command fields
+6. Click `Start Packaging`
+7. Follow progress and logs
+8. Open output folder after success
 
 ## Update Check Notes
 
@@ -101,7 +106,7 @@ Output:
 ## Publish Release + Changelog
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\publish-update.ps1 -Version 1.1.3 -ReleaseNotes "Your release notes here"
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-update.ps1 -Version 1.1.4 -ReleaseNotes "Your release notes here"
 ```
 
 This workflow updates app versioning, keeps changelog aligned, and publishes installer assets used by in-app updates.

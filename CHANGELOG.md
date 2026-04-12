@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [1.1.4] - 2026-04-12
+
+### Added
+- Added a full in-app preflight system (Option 7) with one-click run:
+  - tool health probe
+  - source/setup/output checks
+  - output write-permission test
+  - output drive free-space check
+  - install/uninstall command checks
+- Added a dedicated **Preflight Checks** panel and a **Run Preflight** action in Guided Start.
+- Added automatic preflight execution before packaging begins, with clear blocking/warning messages in logs and UI.
+- Added preflight unit tests for blocking and passing scenarios.
+
+### Changed
+- One-click tool install now verifies that IntuneWinAppUtil.exe is executable after locate/install (health check), not only present on disk.
+- If a preflight was already run and configuration changes, preflight is invalidated and asks for a rerun to avoid stale readiness state.
+
 ## [1.1.3] - 2026-04-12
 
 ### Added
