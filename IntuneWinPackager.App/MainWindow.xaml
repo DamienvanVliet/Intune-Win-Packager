@@ -29,7 +29,7 @@
             <DockPanel LastChildFill="True">
                 <StackPanel>
                     <TextBlock Text="Intune Win Packager" Style="{StaticResource TitleTextStyle}" />
-                    <TextBlock Text="Convert .msi and .exe installers into .intunewin packages using Microsoft's official packaging utility."
+                    <TextBlock Text="Convert MSI, EXE, APPX/MSIX, and script-based installers into .intunewin packages using Microsoft's official packaging utility."
                                Style="{StaticResource BodyTextStyle}"
                                Margin="0,4,0,0" />
                 </StackPanel>
@@ -67,7 +67,7 @@
                     <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
                         <StackPanel>
                             <TextBlock Text="Package Configuration" Style="{StaticResource SectionTitleTextStyle}" />
-                            <TextBlock Text="Drag-and-drop an installer or pick folders and file paths manually."
+                            <TextBlock Text="Drag-and-drop a setup package or pick folders and file paths manually."
                                        Style="{StaticResource BodyTextStyle}"
                                        Margin="0,4,0,14" />
 
@@ -84,13 +84,13 @@
                                     DragLeave="DropZone_DragLeave"
                                     Drop="DropZone_Drop">
                                 <StackPanel HorizontalAlignment="Center">
-                                    <TextBlock Text="Drop .MSI or .EXE Here"
+                                    <TextBlock Text="Drop Setup Package Here"
                                                FontFamily="Segoe UI Variable Display"
                                                FontSize="18"
                                                FontWeight="SemiBold"
                                                Foreground="#FF20406B"
                                                HorizontalAlignment="Center" />
-                                    <TextBlock Text="or browse below to pick source/output paths"
+                                    <TextBlock Text="Supported: .msi, .exe, .appx/.msix (.bundle), .ps1, .cmd, .bat, .vbs"
                                                Style="{StaticResource BodyTextStyle}"
                                                HorizontalAlignment="Center"
                                                Margin="0,4,0,0" />
@@ -204,6 +204,33 @@
                                 </StackPanel.Style>
                             </StackPanel>
 
+                            <Border Margin="0,0,0,10"
+                                    Padding="10"
+                                    CornerRadius="10"
+                                    Background="#FFF8FBFF"
+                                    BorderBrush="#FFD8E5F4"
+                                    BorderThickness="1">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding AppliedTemplateName}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding AppliedTemplateName, StringFormat=Command profile: {0}}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding TemplateGuidance}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,4,0,0"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
                             <TextBlock Text="Install Command" Style="{StaticResource BodyTextStyle}" />
                             <TextBox Text="{Binding InstallCommand, UpdateSourceTrigger=PropertyChanged}"
                                      Margin="0,6,0,10"
@@ -211,8 +238,401 @@
 
                             <TextBlock Text="Uninstall Command" Style="{StaticResource BodyTextStyle}" />
                             <TextBox Text="{Binding UninstallCommand, UpdateSourceTrigger=PropertyChanged}"
-                                     Margin="0,6,0,16"
+                                     Margin="0,6,0,10"
                                      MinHeight="40" />
+
+                            <CheckBox Content="Silent switches verified for this EXE build"
+                                      IsChecked="{Binding SilentSwitchesVerified}"
+                                      FontFamily="Segoe UI Variable Text"
+                                      FontSize="12"
+                                      Foreground="#FF425170"
+                                      Margin="0,0,0,10">
+                                <CheckBox.Style>
+                                    <Style TargetType="CheckBox">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsSilentSwitchReviewVisible}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </CheckBox.Style>
+                            </CheckBox>
+
+                            <CheckBox Content="Use smart source staging (prevents recursive output packaging)"
+                                      IsChecked="{Binding UseSmartSourceStaging}"
+                                      FontFamily="Segoe UI Variable Text"
+                                      FontSize="12"
+                                      Foreground="#FF425170"
+                                      Margin="0,0,0,12" />
+
+                            <TextBlock Text="Intune Install Rules" Style="{StaticResource SectionTitleTextStyle}" Margin="0,2,0,8" />
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0"
+                                           Text="Install Context"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <ComboBox Grid.Row="0" Grid.Column="1"
+                                          ItemsSource="{Binding InstallContexts}"
+                                          SelectedItem="{Binding InstallContext}"
+                                          MinHeight="34"
+                                          Margin="8,0,0,8" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0"
+                                           Text="Restart Behavior"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <ComboBox Grid.Row="1" Grid.Column="1"
+                                          ItemsSource="{Binding RestartBehaviors}"
+                                          SelectedItem="{Binding RestartBehavior}"
+                                          MinHeight="34"
+                                          Margin="8,0,0,8" />
+
+                                <TextBlock Grid.Row="2" Grid.Column="0"
+                                           Text="Max Run Time"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <DockPanel Grid.Row="2" Grid.Column="1" Margin="8,0,0,0">
+                                    <TextBox Text="{Binding MaxRunTimeMinutes, UpdateSourceTrigger=PropertyChanged}"
+                                             Width="90"
+                                             VerticalContentAlignment="Center" />
+                                    <TextBlock Text="minutes"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="8,6,0,0" />
+                                </DockPanel>
+                            </Grid>
+
+                            <TextBlock Text="Intune Requirements" Style="{StaticResource SectionTitleTextStyle}" Margin="0,0,0,8" />
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="160" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0"
+                                           Text="OS Architecture"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <ComboBox Grid.Row="0" Grid.Column="1"
+                                          ItemsSource="{Binding RequirementArchitectures}"
+                                          SelectedItem="{Binding RequirementOperatingSystemArchitecture}"
+                                          Margin="8,0,0,8"
+                                          MinHeight="34" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0"
+                                           Text="Minimum OS"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <ComboBox Grid.Row="1" Grid.Column="1"
+                                          ItemsSource="{Binding MinimumOperatingSystemOptions}"
+                                          SelectedItem="{Binding RequirementMinimumOperatingSystem}"
+                                          Margin="8,0,0,8"
+                                          MinHeight="34" />
+
+                                <TextBlock Grid.Row="2" Grid.Column="0"
+                                           Text="Disk (MB)"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="2" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding RequirementMinimumFreeDiskSpaceMb, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="3" Grid.Column="0"
+                                           Text="Memory (MB)"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="3" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding RequirementMinimumMemoryMb, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="4" Grid.Column="0"
+                                           Text="CPU (MHz)"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="4" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding RequirementMinimumCpuSpeedMhz, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="5" Grid.Column="0"
+                                           Text="Processors"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="5" Grid.Column="1"
+                                         Margin="8,0,0,0"
+                                         Text="{Binding RequirementMinimumLogicalProcessors, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+
+                            <TextBlock Text="Requirement Script (optional)" Style="{StaticResource BodyTextStyle}" />
+                            <TextBox Text="{Binding RequirementScriptBody, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="0,6,0,8"
+                                     MinHeight="90"
+                                     AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Auto"
+                                     TextWrapping="Wrap"
+                                     FontFamily="Consolas"
+                                     FontSize="12" />
+                            <WrapPanel Margin="0,0,0,10">
+                                <CheckBox Content="Run requirement script as 32-bit process on 64-bit clients"
+                                          IsChecked="{Binding RequirementScriptRunAs32BitOn64System}"
+                                          FontFamily="Segoe UI Variable Text"
+                                          FontSize="12"
+                                          Foreground="#FF425170" />
+                                <CheckBox Content="Enforce requirement script signature check"
+                                          IsChecked="{Binding RequirementScriptEnforceSignatureCheck}"
+                                          FontFamily="Segoe UI Variable Text"
+                                          FontSize="12"
+                                          Foreground="#FF425170"
+                                          Margin="14,0,0,0" />
+                            </WrapPanel>
+
+                            <TextBlock Text="Intune Detection Rule" Style="{StaticResource SectionTitleTextStyle}" Margin="0,0,0,8" />
+                            <TextBlock Text="Rule Type" Style="{StaticResource BodyTextStyle}" />
+                            <ComboBox ItemsSource="{Binding DetectionRuleTypes}"
+                                      SelectedItem="{Binding DetectionRuleType}"
+                                      Margin="0,6,0,10"
+                                      MinHeight="36" />
+
+                            <Grid Margin="0,0,0,10">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsMsiDetectionRule}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0"
+                                           Text="Product Code"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding DetectionMsiProductCode, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0"
+                                           Text="Product Version"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1"
+                                         Margin="8,0,0,0"
+                                         Text="{Binding DetectionMsiProductVersion, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+
+                            <Grid Margin="0,0,0,10">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsFileDetectionRule}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0"
+                                           Text="Folder Path"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="0" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding DetectionFilePath, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0"
+                                           Text="File/Folder"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding DetectionFileOrFolderName, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="2" Grid.Column="0"
+                                           Text="Operator"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <ComboBox Grid.Row="2" Grid.Column="1"
+                                          ItemsSource="{Binding DetectionOperators}"
+                                          SelectedItem="{Binding DetectionFileOperator}"
+                                          MinHeight="34"
+                                          Margin="8,0,0,8" />
+
+                                <TextBlock Grid.Row="3" Grid.Column="0"
+                                           Text="Value"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="3" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding DetectionFileValue, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <CheckBox Grid.Row="4" Grid.Column="1"
+                                          Content="Check 32-bit path on 64-bit clients"
+                                          IsChecked="{Binding DetectionFileCheck32BitOn64System}"
+                                          FontFamily="Segoe UI Variable Text"
+                                          FontSize="12"
+                                          Foreground="#FF425170"
+                                          Margin="8,0,0,0" />
+                            </Grid>
+
+                            <Grid Margin="0,0,0,16">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsRegistryDetectionRule}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0"
+                                           Text="Hive"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <ComboBox Grid.Row="0" Grid.Column="1"
+                                          ItemsSource="{Binding RegistryHives}"
+                                          SelectedItem="{Binding DetectionRegistryHive}"
+                                          MinHeight="34"
+                                          Margin="8,0,0,8" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0"
+                                           Text="Key Path"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding DetectionRegistryKeyPath, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="2" Grid.Column="0"
+                                           Text="Value Name"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="2" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding DetectionRegistryValueName, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="3" Grid.Column="0"
+                                           Text="Operator"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <ComboBox Grid.Row="3" Grid.Column="1"
+                                          ItemsSource="{Binding DetectionOperators}"
+                                          SelectedItem="{Binding DetectionRegistryOperator}"
+                                          MinHeight="34"
+                                          Margin="8,0,0,8" />
+
+                                <TextBlock Grid.Row="4" Grid.Column="0"
+                                           Text="Value"
+                                           Style="{StaticResource BodyTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Row="4" Grid.Column="1"
+                                         Margin="8,0,0,8"
+                                         Text="{Binding DetectionRegistryValue, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <CheckBox Grid.Row="5" Grid.Column="1"
+                                          Content="Use 32-bit registry on 64-bit clients"
+                                          IsChecked="{Binding DetectionRegistryCheck32BitOn64System}"
+                                          FontFamily="Segoe UI Variable Text"
+                                          FontSize="12"
+                                          Foreground="#FF425170"
+                                          Margin="8,0,0,0" />
+                            </Grid>
+
+                            <Grid Margin="0,0,0,16">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsScriptDetectionRule}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0"
+                                           Text="Detection Script"
+                                           Style="{StaticResource BodyTextStyle}" />
+                                <TextBox Grid.Row="1"
+                                         Text="{Binding DetectionScriptBody, UpdateSourceTrigger=PropertyChanged}"
+                                         Margin="0,6,0,8"
+                                         MinHeight="120"
+                                         AcceptsReturn="True"
+                                         VerticalScrollBarVisibility="Auto"
+                                         TextWrapping="Wrap"
+                                         FontFamily="Consolas"
+                                         FontSize="12" />
+                                <WrapPanel Grid.Row="2">
+                                    <CheckBox Content="Run script as 32-bit process on 64-bit clients"
+                                              IsChecked="{Binding DetectionScriptRunAs32BitOn64System}"
+                                              FontFamily="Segoe UI Variable Text"
+                                              FontSize="12"
+                                              Foreground="#FF425170" />
+                                    <CheckBox Content="Enforce signature check"
+                                              IsChecked="{Binding DetectionScriptEnforceSignatureCheck}"
+                                              FontFamily="Segoe UI Variable Text"
+                                              FontSize="12"
+                                              Foreground="#FF425170"
+                                              Margin="14,0,0,0" />
+                                </WrapPanel>
+                            </Grid>
 
                             <WrapPanel>
                                 <Button Style="{StaticResource PrimaryButtonStyle}"
@@ -331,7 +751,7 @@
                                         Command="{Binding InstallToolCommand}" />
                             </WrapPanel>
 
-                            <CheckBox Content="Low Impact Packaging Mode (recommended)"
+                            <CheckBox Content="Low Impact Packaging Mode (less CPU, slower)"
                                       IsChecked="{Binding UseLowImpactMode}"
                                       FontFamily="Segoe UI Variable Text"
                                       FontSize="12"
@@ -593,6 +1013,28 @@
                                      IsReadOnly="True"
                                      Background="#FFF8FAFD"
                                      BorderBrush="#FFD5E0EF" />
+
+                            <TextBlock Text="Intune Metadata" Style="{StaticResource BodyTextStyle}" Margin="0,10,0,4" />
+                            <TextBox Text="{Binding ResultMetadataPath}"
+                                     IsReadOnly="True"
+                                     Background="#FFF8FAFD"
+                                     BorderBrush="#FFD5E0EF" />
+
+                            <TextBlock Text="Intune Checklist" Style="{StaticResource BodyTextStyle}" Margin="0,10,0,4" />
+                            <TextBox Text="{Binding ResultChecklistPath}"
+                                     IsReadOnly="True"
+                                     Background="#FFF8FAFD"
+                                     BorderBrush="#FFD5E0EF" />
+
+                            <TextBlock Text="Portal Steps Preview" Style="{StaticResource BodyTextStyle}" Margin="0,10,0,4" />
+                            <TextBox Text="{Binding IntunePortalChecklist}"
+                                     IsReadOnly="True"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     Height="220"
+                                     Background="#FFF8FAFD"
+                                     BorderBrush="#FFD5E0EF" />
                         </StackPanel>
                     </Border>
 
@@ -639,3 +1081,4 @@
         </ScrollViewer>
     </Grid>
 </Window>
+

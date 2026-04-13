@@ -4,5 +4,7 @@ public enum InstallerType
 {
     Unknown = 0,
     Exe = 1,
-    Msi = 2
+    Msi = 2,
+    AppxMsix = 3,
+    Script = 4
 }

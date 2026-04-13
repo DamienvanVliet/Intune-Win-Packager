@@ -11,8 +11,8 @@ public sealed class SystemDialogService : IDialogService
     {
         var dialog = new WpfOpenFileDialog
         {
-            Filter = "Installer Files (*.msi;*.exe)|*.msi;*.exe|MSI files (*.msi)|*.msi|EXE files (*.exe)|*.exe",
-            Title = "Select setup installer",
+            Filter = "Setup Packages (*.msi;*.exe;*.appx;*.appxbundle;*.msix;*.msixbundle;*.ps1;*.cmd;*.bat;*.vbs;*.wsf)|*.msi;*.exe;*.appx;*.appxbundle;*.msix;*.msixbundle;*.ps1;*.cmd;*.bat;*.vbs;*.wsf|MSI files (*.msi)|*.msi|EXE files (*.exe)|*.exe|APPX/MSIX files (*.appx;*.appxbundle;*.msix;*.msixbundle)|*.appx;*.appxbundle;*.msix;*.msixbundle|Script files (*.ps1;*.cmd;*.bat;*.vbs;*.wsf)|*.ps1;*.cmd;*.bat;*.vbs;*.wsf",
+            Title = "Select setup package",
             CheckFileExists = true,
             Multiselect = false,
             InitialDirectory = NormalizeInitialDirectory(initialDirectory)

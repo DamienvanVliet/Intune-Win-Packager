@@ -36,7 +36,20 @@ public class PackagingWorkflowServiceTests
                 SetupFilePath = setupFilePath,
                 OutputFolder = outputFolder,
                 InstallCommand = "\"ClientSetup.exe\" /quiet",
-                UninstallCommand = "\"ClientSetup.exe\" /uninstall /quiet"
+                UninstallCommand = "\"ClientSetup.exe\" /uninstall /quiet",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.File,
+                        File = new FileDetectionRule
+                        {
+                            Path = @"%ProgramFiles%\\Contoso",
+                            FileOrFolderName = "ClientSetup.exe",
+                            Operator = IntuneDetectionOperator.Exists
+                        }
+                    }
+                }
             }
         };
 
@@ -48,6 +61,11 @@ public class PackagingWorkflowServiceTests
 
         Assert.True(result.Success);
         Assert.Equal(expectedOutput, result.OutputPackagePath);
+        Assert.False(string.IsNullOrWhiteSpace(result.OutputMetadataPath));
+        Assert.True(File.Exists(result.OutputMetadataPath));
+        Assert.False(string.IsNullOrWhiteSpace(result.OutputChecklistPath));
+        Assert.True(File.Exists(result.OutputChecklistPath));
+        Assert.Contains("Manual Portal Steps", result.IntunePortalChecklist, StringComparison.Ordinal);
 
         Directory.Delete(tempRoot, recursive: true);
     }
@@ -78,7 +96,20 @@ public class PackagingWorkflowServiceTests
                 SetupFilePath = setupFilePath,
                 OutputFolder = outputFolder,
                 InstallCommand = "\"ClientSetup.exe\" /quiet",
-                UninstallCommand = "\"ClientSetup.exe\" /uninstall /quiet"
+                UninstallCommand = "\"ClientSetup.exe\" /uninstall /quiet",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.File,
+                        File = new FileDetectionRule
+                        {
+                            Path = @"%ProgramFiles%\\Contoso",
+                            FileOrFolderName = "ClientSetup.exe",
+                            Operator = IntuneDetectionOperator.Exists
+                        }
+                    }
+                }
             }
         };
 
@@ -90,6 +121,9 @@ public class PackagingWorkflowServiceTests
 
         Assert.False(result.Success);
         Assert.Contains("no .intunewin", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(result.OutputMetadataPath);
+        Assert.Null(result.OutputChecklistPath);
+        Assert.Equal(string.Empty, result.IntunePortalChecklist);
 
         Directory.Delete(tempRoot, recursive: true);
     }

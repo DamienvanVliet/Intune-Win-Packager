@@ -11,4 +11,8 @@ public sealed record PackageConfiguration
     public string InstallCommand { get; init; } = string.Empty;
 
     public string UninstallCommand { get; init; } = string.Empty;
+
+    public bool UseSmartSourceStaging { get; init; } = true;
+
+    public IntuneWin32AppRules IntuneRules { get; init; } = new();
 }

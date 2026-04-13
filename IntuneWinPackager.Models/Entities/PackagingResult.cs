@@ -8,6 +8,12 @@ public sealed record PackagingResult
 
     public string? OutputPackagePath { get; init; }
 
+    public string? OutputMetadataPath { get; init; }
+
+    public string? OutputChecklistPath { get; init; }
+
+    public string IntunePortalChecklist { get; init; } = string.Empty;
+
     public int ExitCode { get; init; }
 
     public DateTimeOffset StartedAtUtc { get; init; }

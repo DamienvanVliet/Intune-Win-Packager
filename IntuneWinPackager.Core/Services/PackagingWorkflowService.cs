@@ -1,13 +1,22 @@
 using System.IO;
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Models.Entities;
+using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
 
 namespace IntuneWinPackager.Core.Services;
 
 public sealed class PackagingWorkflowService : IPackagingWorkflowService
 {
+    private static readonly JsonSerializerOptions MetadataSerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
+
     private readonly IValidationService _validationService;
     private readonly IProcessRunner _processRunner;
 
@@ -46,7 +55,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             });
         }
 
-        ReportProgress(5, "Validating Input", "Checking source, setup, output, and tool path.");
+        ReportProgress(5, "Validating Input", "Checking source, setup, output, and Intune rules.");
 
         var validation = _validationService.Validate(request);
         if (!validation.IsValid)
@@ -65,71 +74,423 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
 
         ReportProgress(15, "Preparing Output", "Ensuring output folder exists.");
         Directory.CreateDirectory(request.Configuration.OutputFolder);
+
         if (request.UseLowImpactMode)
         {
             ReportProgress(18, "Performance Mode", "Low impact mode is enabled to keep your PC responsive.");
             logProgress?.Report("Low impact mode enabled: packaging process priority will be reduced.");
         }
 
-        var setupFileName = Path.GetFileName(request.Configuration.SetupFilePath);
-        var arguments = $"-c {Quote(request.Configuration.SourceFolder)} -s {Quote(setupFileName)} -o {Quote(request.Configuration.OutputFolder)} -q";
+        PreparedSourceContext? preparedSource = null;
 
-        ReportProgress(25, "Starting Packager", "Launching IntuneWinAppUtil.exe.");
-        logProgress?.Report($"Starting packaging for {setupFileName}");
-        logProgress?.Report($"Running: {Path.GetFileName(request.IntuneWinAppUtilPath)} {arguments}");
-
-        var processResult = await _processRunner.RunAsync(
-            new ProcessRunRequest
-            {
-                FileName = request.IntuneWinAppUtilPath,
-                Arguments = arguments,
-                WorkingDirectory = request.Configuration.SourceFolder,
-                PreferLowImpact = request.UseLowImpactMode
-            },
-            new Progress<ProcessOutputLine>(line =>
-            {
-                if (!string.IsNullOrWhiteSpace(line.Text))
-                {
-                    logProgress?.Report(line.Text);
-                    TryReportProgressFromToolOutput(line.Text, ReportProgress);
-                }
-            }),
-            cancellationToken);
-
-        ReportProgress(92, "Resolving Output", "Locating generated .intunewin package.");
-        var outputPackagePath = ResolveOutputPackagePath(request.Configuration.OutputFolder, setupFileName, startedAtUtc);
-
-        var completedAtUtc = DateTimeOffset.UtcNow;
-        if (processResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(outputPackagePath))
+        try
         {
-            ReportProgress(100, "Completed", "Packaging completed successfully.");
+            ReportProgress(20, "Preparing Source", "Evaluating source optimization and setup path.");
+            preparedSource = PrepareSourceContext(request, startedAtUtc, logProgress, cancellationToken);
+
+            var arguments = $"-c {Quote(preparedSource.PackagingSourceFolder)} -s {Quote(preparedSource.SetupRelativePath)} -o {Quote(request.Configuration.OutputFolder)} -q";
+
+            ReportProgress(28, "Starting Packager", "Launching IntuneWinAppUtil.exe.");
+            logProgress?.Report($"Starting packaging for {Path.GetFileName(preparedSource.SetupRelativePath)}");
+            logProgress?.Report($"Running: {Path.GetFileName(request.IntuneWinAppUtilPath)} {arguments}");
+
+            var processResult = await _processRunner.RunAsync(
+                new ProcessRunRequest
+                {
+                    FileName = request.IntuneWinAppUtilPath,
+                    Arguments = arguments,
+                    WorkingDirectory = preparedSource.PackagingSourceFolder,
+                    PreferLowImpact = request.UseLowImpactMode
+                },
+                new Progress<ProcessOutputLine>(line =>
+                {
+                    if (!string.IsNullOrWhiteSpace(line.Text))
+                    {
+                        logProgress?.Report(line.Text);
+                        TryReportProgressFromToolOutput(line.Text, ReportProgress);
+                    }
+                }),
+                cancellationToken);
+
+            ReportProgress(92, "Resolving Output", "Locating generated .intunewin package.");
+            var outputPackagePath = ResolveOutputPackagePath(
+                request.Configuration.OutputFolder,
+                Path.GetFileName(preparedSource.SetupRelativePath),
+                startedAtUtc);
+
+            var completedAtUtc = DateTimeOffset.UtcNow;
+            if (processResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(outputPackagePath))
+            {
+                var metadataPath = await WriteMetadataFileAsync(
+                    request,
+                    preparedSource,
+                    outputPackagePath,
+                    logProgress,
+                    cancellationToken);
+
+                var checklist = BuildIntunePortalChecklist(request, outputPackagePath, metadataPath);
+                var checklistPath = await WriteChecklistFileAsync(
+                    outputPackagePath,
+                    checklist,
+                    logProgress,
+                    cancellationToken);
+
+                ReportProgress(100, "Completed", "Packaging completed successfully.");
+
+                return new PackagingResult
+                {
+                    Success = true,
+                    Message = "Packaging completed successfully. Intune preparation artifacts exported.",
+                    OutputPackagePath = outputPackagePath,
+                    OutputMetadataPath = metadataPath,
+                    OutputChecklistPath = checklistPath,
+                    IntunePortalChecklist = checklist,
+                    ExitCode = processResult.ExitCode,
+                    StartedAtUtc = startedAtUtc,
+                    CompletedAtUtc = completedAtUtc
+                };
+            }
+
+            var failureMessage = processResult.ExitCode == 0
+                ? "IntuneWinAppUtil finished but no .intunewin file was found in the output folder."
+                : $"Packaging failed with exit code {processResult.ExitCode}.";
+
+            ReportProgress(100, "Failed", failureMessage);
 
             return new PackagingResult
             {
-                Success = true,
-                Message = "Packaging completed successfully.",
+                Success = false,
+                Message = failureMessage,
                 OutputPackagePath = outputPackagePath,
                 ExitCode = processResult.ExitCode,
                 StartedAtUtc = startedAtUtc,
                 CompletedAtUtc = completedAtUtc
             };
         }
-
-        var failureMessage = processResult.ExitCode == 0
-            ? "IntuneWinAppUtil finished but no .intunewin file was found in the output folder."
-            : $"Packaging failed with exit code {processResult.ExitCode}.";
-
-        ReportProgress(100, "Failed", failureMessage);
-
-        return new PackagingResult
+        finally
         {
-            Success = false,
-            Message = failureMessage,
-            OutputPackagePath = outputPackagePath,
-            ExitCode = processResult.ExitCode,
-            StartedAtUtc = startedAtUtc,
-            CompletedAtUtc = completedAtUtc
+            if (preparedSource?.StagingRootFolder is not null)
+            {
+                TryCleanupStaging(preparedSource.StagingRootFolder, logProgress);
+            }
+        }
+    }
+
+    private static PreparedSourceContext PrepareSourceContext(
+        PackagingRequest request,
+        DateTimeOffset startedAtUtc,
+        IProgress<string>? logProgress,
+        CancellationToken cancellationToken)
+    {
+        var sourceFolder = Path.GetFullPath(request.Configuration.SourceFolder);
+        var setupFilePath = Path.GetFullPath(request.Configuration.SetupFilePath);
+        var setupRelativePath = Path.GetRelativePath(sourceFolder, setupFilePath);
+
+        if (setupRelativePath.StartsWith("..", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Setup file must be inside the selected source folder.");
+        }
+
+        var outputFolder = Path.GetFullPath(request.Configuration.OutputFolder);
+        var outputInsideSource = IsPathInsideFolder(outputFolder, sourceFolder);
+        var sourceContainsPackages = SourceContainsPackageArtifacts(sourceFolder);
+
+        var shouldStage = request.Configuration.UseSmartSourceStaging &&
+            (outputInsideSource || sourceContainsPackages);
+
+        if (!shouldStage)
+        {
+            return new PreparedSourceContext
+            {
+                PackagingSourceFolder = sourceFolder,
+                SetupRelativePath = setupRelativePath,
+                StagingRootFolder = null,
+                StagedFileCount = 0,
+                StagedBytes = 0
+            };
+        }
+
+        var stagingRoot = Path.Combine(
+            Path.GetTempPath(),
+            "IntuneWinPackager",
+            "staging",
+            startedAtUtc.ToUnixTimeMilliseconds().ToString(),
+            Guid.NewGuid().ToString("N"));
+        var stagingSource = Path.Combine(stagingRoot, "source");
+        Directory.CreateDirectory(stagingSource);
+
+        logProgress?.Report(outputInsideSource
+            ? "Smart staging enabled: output folder is inside source."
+            : "Smart staging enabled: previous .intunewin artifacts detected in source.");
+
+        var copiedFileCount = 0;
+        long copiedBytes = 0;
+
+        CopyDirectoryTree(
+            sourceFolder,
+            stagingSource,
+            outputInsideSource ? outputFolder : null,
+            ref copiedFileCount,
+            ref copiedBytes,
+            cancellationToken);
+
+        logProgress?.Report($"Staged {copiedFileCount} file(s), {FormatBytes(copiedBytes)} copied to isolated source.");
+
+        return new PreparedSourceContext
+        {
+            PackagingSourceFolder = stagingSource,
+            SetupRelativePath = setupRelativePath,
+            StagingRootFolder = stagingRoot,
+            StagedFileCount = copiedFileCount,
+            StagedBytes = copiedBytes
         };
+    }
+
+    private static void CopyDirectoryTree(
+        string sourceFolder,
+        string destinationFolder,
+        string? excludedOutputFolder,
+        ref int copiedFileCount,
+        ref long copiedBytes,
+        CancellationToken cancellationToken)
+    {
+        var stack = new Stack<(string Source, string Destination)>();
+        stack.Push((sourceFolder, destinationFolder));
+
+        while (stack.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var current = stack.Pop();
+            Directory.CreateDirectory(current.Destination);
+
+            foreach (var directory in Directory.EnumerateDirectories(current.Source))
+            {
+                if (ShouldSkipDirectory(directory, excludedOutputFolder))
+                {
+                    continue;
+                }
+
+                var targetDirectory = Path.Combine(current.Destination, Path.GetFileName(directory));
+                stack.Push((directory, targetDirectory));
+            }
+
+            foreach (var file in Directory.EnumerateFiles(current.Source))
+            {
+                if (ShouldSkipFile(file))
+                {
+                    continue;
+                }
+
+                var destinationFile = Path.Combine(current.Destination, Path.GetFileName(file));
+                File.Copy(file, destinationFile, overwrite: true);
+
+                copiedFileCount++;
+                copiedBytes += new FileInfo(file).Length;
+            }
+        }
+    }
+
+    private static bool ShouldSkipDirectory(string directoryPath, string? excludedOutputFolder)
+    {
+        if (string.IsNullOrWhiteSpace(excludedOutputFolder))
+        {
+            return false;
+        }
+
+        var normalizedDirectory = Path.GetFullPath(directoryPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedExcluded = Path.GetFullPath(excludedOutputFolder)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        return normalizedDirectory.Equals(normalizedExcluded, StringComparison.OrdinalIgnoreCase) ||
+               normalizedDirectory.StartsWith(
+                   normalizedExcluded + Path.DirectorySeparatorChar,
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldSkipFile(string filePath)
+    {
+        var extension = Path.GetExtension(filePath);
+        return extension.Equals(".intunewin", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".intune.json", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".md", StringComparison.OrdinalIgnoreCase) &&
+               Path.GetFileName(filePath).EndsWith(".intune-checklist.md", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<string?> WriteMetadataFileAsync(
+        PackagingRequest request,
+        PreparedSourceContext preparedSource,
+        string outputPackagePath,
+        IProgress<string>? logProgress,
+        CancellationToken cancellationToken)
+    {
+        var metadataPath = Path.ChangeExtension(outputPackagePath, ".intune.json");
+
+        var metadata = new
+        {
+            generatedAtUtc = DateTimeOffset.UtcNow,
+            packageFile = Path.GetFileName(outputPackagePath),
+            sourceFolder = request.Configuration.SourceFolder,
+            setupFile = request.Configuration.SetupFilePath,
+            setupRelativePath = preparedSource.SetupRelativePath,
+            installerType = request.InstallerType.ToString(),
+            installCommand = request.Configuration.InstallCommand,
+            uninstallCommand = request.Configuration.UninstallCommand,
+            intuneRules = request.Configuration.IntuneRules,
+            packagingOptions = new
+            {
+                request.UseLowImpactMode,
+                request.Configuration.UseSmartSourceStaging,
+                usedIsolatedStaging = preparedSource.StagingRootFolder is not null,
+                stagedFileCount = preparedSource.StagedFileCount,
+                stagedBytes = preparedSource.StagedBytes
+            }
+        };
+
+        try
+        {
+            await using var stream = File.Create(metadataPath);
+            await JsonSerializer.SerializeAsync(stream, metadata, MetadataSerializerOptions, cancellationToken);
+            logProgress?.Report($"Exported Intune metadata: {metadataPath}");
+            return metadataPath;
+        }
+        catch (Exception ex)
+        {
+            logProgress?.Report($"Warning: package succeeded but metadata export failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static async Task<string?> WriteChecklistFileAsync(
+        string outputPackagePath,
+        string checklist,
+        IProgress<string>? logProgress,
+        CancellationToken cancellationToken)
+    {
+        var checklistPath = Path.ChangeExtension(outputPackagePath, ".intune-checklist.md");
+        try
+        {
+            await File.WriteAllTextAsync(checklistPath, checklist, cancellationToken);
+            logProgress?.Report($"Exported Intune checklist: {checklistPath}");
+            return checklistPath;
+        }
+        catch (Exception ex)
+        {
+            logProgress?.Report($"Warning: package succeeded but checklist export failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string BuildIntunePortalChecklist(
+        PackagingRequest request,
+        string outputPackagePath,
+        string? metadataPath)
+    {
+        var rules = request.Configuration.IntuneRules;
+        var requirements = rules.Requirements;
+        var detectionSummary = BuildDetectionSummary(rules.DetectionRule);
+
+        var builder = new StringBuilder();
+        builder.AppendLine("# Intune Win32 App - Manual Portal Steps");
+        builder.AppendLine();
+        builder.AppendLine("Use this checklist to create the app in Intune after generating the package.");
+        builder.AppendLine();
+        builder.AppendLine("## 1. App Package");
+        builder.AppendLine($"- App type: Windows app (Win32)");
+        builder.AppendLine($"- Select package file: `{outputPackagePath}`");
+        if (!string.IsNullOrWhiteSpace(metadataPath))
+        {
+            builder.AppendLine($"- Optional reference metadata: `{metadataPath}`");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("## 2. Program");
+        builder.AppendLine($"- Install command: `{request.Configuration.InstallCommand}`");
+        builder.AppendLine($"- Uninstall command: `{request.Configuration.UninstallCommand}`");
+        builder.AppendLine($"- Install behavior: `{rules.InstallContext}`");
+        builder.AppendLine($"- Device restart behavior: `{rules.RestartBehavior}`");
+        builder.AppendLine($"- Max run time (minutes): `{rules.MaxRunTimeMinutes}`");
+
+        builder.AppendLine();
+        builder.AppendLine("## 3. Requirements");
+        builder.AppendLine($"- OS architecture: `{requirements.OperatingSystemArchitecture}`");
+        builder.AppendLine($"- Minimum OS: `{requirements.MinimumOperatingSystem}`");
+        builder.AppendLine($"- Minimum free disk space (MB): `{FormatOptionalRequirement(requirements.MinimumFreeDiskSpaceMb)}`");
+        builder.AppendLine($"- Minimum memory (MB): `{FormatOptionalRequirement(requirements.MinimumMemoryMb)}`");
+        builder.AppendLine($"- Minimum CPU speed (MHz): `{FormatOptionalRequirement(requirements.MinimumCpuSpeedMhz)}`");
+        builder.AppendLine($"- Minimum logical processors: `{FormatOptionalRequirement(requirements.MinimumLogicalProcessors)}`");
+
+        if (!string.IsNullOrWhiteSpace(requirements.RequirementScriptBody))
+        {
+            builder.AppendLine("- Requirement script: configured below");
+            builder.AppendLine("```powershell");
+            builder.AppendLine(requirements.RequirementScriptBody.Trim());
+            builder.AppendLine("```");
+            builder.AppendLine($"- Requirement script 32-bit on 64-bit: `{requirements.RequirementScriptRunAs32BitOn64System}`");
+            builder.AppendLine($"- Requirement script signature check: `{requirements.RequirementScriptEnforceSignatureCheck}`");
+        }
+        else
+        {
+            builder.AppendLine("- Requirement script: `Not configured`");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("## 4. Detection Rules");
+        builder.AppendLine(detectionSummary);
+
+        builder.AppendLine();
+        builder.AppendLine("## 5. Manual Verification Before Create");
+        builder.AppendLine("- Confirm app info fields (name, description, publisher, version, icon).");
+        builder.AppendLine("- Confirm assignments and availability scope.");
+        builder.AppendLine("- Confirm return codes, dependencies, and supersedence where required.");
+        builder.AppendLine("- Run pilot assignment before broad production rollout.");
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatOptionalRequirement(int value)
+    {
+        return value > 0 ? value.ToString() : "Not configured";
+    }
+
+    private static string BuildDetectionSummary(IntuneDetectionRule detectionRule)
+    {
+        return detectionRule.RuleType switch
+        {
+            IntuneDetectionRuleType.MsiProductCode =>
+                $"- Type: `MSI`\n- Product code: `{detectionRule.Msi.ProductCode}`\n- Product version: `{(string.IsNullOrWhiteSpace(detectionRule.Msi.ProductVersion) ? "Not configured" : detectionRule.Msi.ProductVersion)}`",
+
+            IntuneDetectionRuleType.File =>
+                $"- Type: `File`\n- Path: `{detectionRule.File.Path}`\n- File/Folder: `{detectionRule.File.FileOrFolderName}`\n- Operator: `{detectionRule.File.Operator}`\n- Value: `{(string.IsNullOrWhiteSpace(detectionRule.File.Value) ? "Not configured" : detectionRule.File.Value)}`\n- 32-bit on 64-bit: `{detectionRule.File.Check32BitOn64System}`",
+
+            IntuneDetectionRuleType.Registry =>
+                $"- Type: `Registry`\n- Hive: `{detectionRule.Registry.Hive}`\n- Key path: `{detectionRule.Registry.KeyPath}`\n- Value name: `{(string.IsNullOrWhiteSpace(detectionRule.Registry.ValueName) ? "Not configured" : detectionRule.Registry.ValueName)}`\n- Operator: `{detectionRule.Registry.Operator}`\n- Value: `{(string.IsNullOrWhiteSpace(detectionRule.Registry.Value) ? "Not configured" : detectionRule.Registry.Value)}`\n- 32-bit on 64-bit: `{detectionRule.Registry.Check32BitOn64System}`",
+
+            IntuneDetectionRuleType.Script =>
+                "- Type: `Script`\n- Script content: configured below\n```powershell\n" +
+                detectionRule.Script.ScriptBody.Trim() +
+                "\n```\n" +
+                $"- 32-bit on 64-bit: `{detectionRule.Script.RunAs32BitOn64System}`\n" +
+                $"- Signature check: `{detectionRule.Script.EnforceSignatureCheck}`",
+
+            _ => "- Type: `Not configured`"
+        };
+    }
+
+    private static void TryCleanupStaging(string stagingRootFolder, IProgress<string>? logProgress)
+    {
+        try
+        {
+            if (Directory.Exists(stagingRootFolder))
+            {
+                Directory.Delete(stagingRootFolder, recursive: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            logProgress?.Report($"Warning: could not clean staging folder '{stagingRootFolder}': {ex.Message}");
+        }
     }
 
     private static void TryReportProgressFromToolOutput(
@@ -146,44 +507,44 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         var percentMatch = Regex.Match(lowered, @"\b(?<p>\d{1,3})\s*%");
         if (percentMatch.Success && int.TryParse(percentMatch.Groups["p"].Value, out var parsedPercent))
         {
-            var mapped = Math.Clamp(25 + (parsedPercent * 0.65), 25, 95);
+            var mapped = Math.Clamp(28 + (parsedPercent * 0.64), 28, 95);
             reportProgress(mapped, "Packaging", line.Trim(), false);
             return;
         }
 
         if (lowered.Contains("validating parameters"))
         {
-            reportProgress(35, "Validating Parameters", line.Trim(), false);
+            reportProgress(38, "Validating Parameters", line.Trim(), false);
             return;
         }
 
         if (lowered.Contains("validated parameters"))
         {
-            reportProgress(42, "Parameters Validated", line.Trim(), false);
+            reportProgress(45, "Parameters Validated", line.Trim(), false);
             return;
         }
 
         if (lowered.Contains("compressing the source folder"))
         {
-            reportProgress(58, "Compressing Files", line.Trim(), false);
+            reportProgress(60, "Compressing Files", line.Trim(), false);
             return;
         }
 
         if (lowered.Contains("calculated size"))
         {
-            reportProgress(66, "Analyzing Contents", line.Trim(), false);
+            reportProgress(68, "Analyzing Contents", line.Trim(), false);
             return;
         }
 
         if (lowered.Contains("encrypt"))
         {
-            reportProgress(78, "Encrypting Package", line.Trim(), false);
+            reportProgress(80, "Encrypting Package", line.Trim(), false);
             return;
         }
 
         if (lowered.Contains("catalog") || lowered.Contains("detection.xml") || lowered.Contains("manifest"))
         {
-            reportProgress(88, "Finalizing Package", line.Trim(), false);
+            reportProgress(89, "Finalizing Package", line.Trim(), false);
             return;
         }
 
@@ -215,5 +576,63 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             .OrderByDescending(file => file.LastWriteTimeUtc)
             .Select(file => file.FullName)
             .FirstOrDefault();
+    }
+
+    private static bool IsPathInsideFolder(string fileOrFolderPath, string parentFolderPath)
+    {
+        var parentPath = Path.GetFullPath(parentFolderPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var path = Path.GetFullPath(fileOrFolderPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        return path.Equals(parentPath, StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith(parentPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0)
+        {
+            return "0 B";
+        }
+
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)bytes;
+        var unitIndex = 0;
+
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+
+        return $"{value:0.#} {units[unitIndex]}";
+    }
+
+    private static bool SourceContainsPackageArtifacts(string sourceFolder)
+    {
+        try
+        {
+            return Directory
+                .EnumerateFiles(sourceFolder, "*.intunewin", SearchOption.AllDirectories)
+                .Any();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private sealed record PreparedSourceContext
+    {
+        public string PackagingSourceFolder { get; init; } = string.Empty;
+
+        public string SetupRelativePath { get; init; } = string.Empty;
+
+        public string? StagingRootFolder { get; init; }
+
+        public int StagedFileCount { get; init; }
+
+        public long StagedBytes { get; init; }
     }
 }

@@ -64,6 +64,108 @@ public partial class MainViewModel : ObservableObject
     private InstallerType installerType = InstallerType.Unknown;
 
     [ObservableProperty]
+    private bool useSmartSourceStaging = true;
+
+    [ObservableProperty]
+    private IntuneInstallContext installContext = IntuneInstallContext.System;
+
+    [ObservableProperty]
+    private IntuneRestartBehavior restartBehavior = IntuneRestartBehavior.DetermineBehaviorBasedOnReturnCodes;
+
+    [ObservableProperty]
+    private int maxRunTimeMinutes = 60;
+
+    [ObservableProperty]
+    private string appliedTemplateName = string.Empty;
+
+    [ObservableProperty]
+    private string templateGuidance = string.Empty;
+
+    [ObservableProperty]
+    private bool requireSilentSwitchReview;
+
+    [ObservableProperty]
+    private bool silentSwitchesVerified;
+
+    [ObservableProperty]
+    private IntuneDetectionRuleType detectionRuleType = IntuneDetectionRuleType.None;
+
+    [ObservableProperty]
+    private string detectionMsiProductCode = string.Empty;
+
+    [ObservableProperty]
+    private string detectionMsiProductVersion = string.Empty;
+
+    [ObservableProperty]
+    private string detectionFilePath = string.Empty;
+
+    [ObservableProperty]
+    private string detectionFileOrFolderName = string.Empty;
+
+    [ObservableProperty]
+    private bool detectionFileCheck32BitOn64System;
+
+    [ObservableProperty]
+    private IntuneDetectionOperator detectionFileOperator = IntuneDetectionOperator.Exists;
+
+    [ObservableProperty]
+    private string detectionFileValue = string.Empty;
+
+    [ObservableProperty]
+    private string detectionRegistryHive = "HKEY_LOCAL_MACHINE";
+
+    [ObservableProperty]
+    private string detectionRegistryKeyPath = string.Empty;
+
+    [ObservableProperty]
+    private string detectionRegistryValueName = string.Empty;
+
+    [ObservableProperty]
+    private bool detectionRegistryCheck32BitOn64System;
+
+    [ObservableProperty]
+    private IntuneDetectionOperator detectionRegistryOperator = IntuneDetectionOperator.Exists;
+
+    [ObservableProperty]
+    private string detectionRegistryValue = string.Empty;
+
+    [ObservableProperty]
+    private string detectionScriptBody = string.Empty;
+
+    [ObservableProperty]
+    private bool detectionScriptRunAs32BitOn64System;
+
+    [ObservableProperty]
+    private bool detectionScriptEnforceSignatureCheck;
+
+    [ObservableProperty]
+    private string requirementOperatingSystemArchitecture = "x64";
+
+    [ObservableProperty]
+    private string requirementMinimumOperatingSystem = "Windows 10 1607";
+
+    [ObservableProperty]
+    private int requirementMinimumFreeDiskSpaceMb;
+
+    [ObservableProperty]
+    private int requirementMinimumMemoryMb;
+
+    [ObservableProperty]
+    private int requirementMinimumCpuSpeedMhz;
+
+    [ObservableProperty]
+    private int requirementMinimumLogicalProcessors;
+
+    [ObservableProperty]
+    private string requirementScriptBody = string.Empty;
+
+    [ObservableProperty]
+    private bool requirementScriptRunAs32BitOn64System;
+
+    [ObservableProperty]
+    private bool requirementScriptEnforceSignatureCheck;
+
+    [ObservableProperty]
     private string msiMetadataSummary = string.Empty;
 
     [ObservableProperty]
@@ -97,7 +199,16 @@ public partial class MainViewModel : ObservableObject
     private string resultOutputPath = string.Empty;
 
     [ObservableProperty]
-    private bool useLowImpactMode = true;
+    private string resultMetadataPath = string.Empty;
+
+    [ObservableProperty]
+    private string resultChecklistPath = string.Empty;
+
+    [ObservableProperty]
+    private string intunePortalChecklist = string.Empty;
+
+    [ObservableProperty]
+    private bool useLowImpactMode = false;
 
     [ObservableProperty]
     private bool enableSilentAppUpdates;
@@ -231,9 +342,63 @@ public partial class MainViewModel : ObservableObject
 
     public ReadOnlyObservableCollection<string> Logs => _readonlyLogs;
 
+    public IReadOnlyList<IntuneDetectionRuleType> DetectionRuleTypes { get; } = Enum.GetValues<IntuneDetectionRuleType>();
+
+    public IReadOnlyList<IntuneDetectionOperator> DetectionOperators { get; } = Enum.GetValues<IntuneDetectionOperator>();
+
+    public IReadOnlyList<IntuneInstallContext> InstallContexts { get; } = Enum.GetValues<IntuneInstallContext>();
+
+    public IReadOnlyList<IntuneRestartBehavior> RestartBehaviors { get; } = Enum.GetValues<IntuneRestartBehavior>();
+
+    public IReadOnlyList<string> RegistryHives { get; } =
+    [
+        "HKEY_LOCAL_MACHINE",
+        "HKEY_CURRENT_USER",
+        "HKEY_CLASSES_ROOT",
+        "HKEY_USERS",
+        "HKEY_CURRENT_CONFIG"
+    ];
+
+    public IReadOnlyList<string> RequirementArchitectures { get; } =
+    [
+        "x64",
+        "x86",
+        "Both"
+    ];
+
+    public IReadOnlyList<string> MinimumOperatingSystemOptions { get; } =
+    [
+        "Windows 10 1607",
+        "Windows 10 1703",
+        "Windows 10 1709",
+        "Windows 10 1803",
+        "Windows 10 1809",
+        "Windows 10 1903",
+        "Windows 10 1909",
+        "Windows 10 2004",
+        "Windows 10 20H2",
+        "Windows 10 21H1",
+        "Windows 10 21H2",
+        "Windows 10 22H2",
+        "Windows 11 21H2",
+        "Windows 11 22H2",
+        "Windows 11 23H2",
+        "Windows 11 24H2"
+    ];
+
     public bool IsMsiInstaller => InstallerType == InstallerType.Msi;
 
     public bool IsExeInstaller => InstallerType == InstallerType.Exe;
+
+    public bool IsMsiDetectionRule => DetectionRuleType == IntuneDetectionRuleType.MsiProductCode;
+
+    public bool IsFileDetectionRule => DetectionRuleType == IntuneDetectionRuleType.File;
+
+    public bool IsRegistryDetectionRule => DetectionRuleType == IntuneDetectionRuleType.Registry;
+
+    public bool IsScriptDetectionRule => DetectionRuleType == IntuneDetectionRuleType.Script;
+
+    public bool IsSilentSwitchReviewVisible => InstallerType == InstallerType.Exe && RequireSilentSwitchReview;
 
     public bool HasValidationErrors => ValidationErrors.Count > 0;
 
@@ -249,6 +414,8 @@ public partial class MainViewModel : ObservableObject
     {
         InstallerType.Msi => "MSI detected",
         InstallerType.Exe => "EXE detected",
+        InstallerType.AppxMsix => "APPX/MSIX detected",
+        InstallerType.Script => "Script installer detected",
         _ => "No installer selected"
     };
 
@@ -256,6 +423,8 @@ public partial class MainViewModel : ObservableObject
     {
         InstallerType.Msi => new WpfSolidColorBrush(WpfColor.FromRgb(15, 122, 87)),
         InstallerType.Exe => new WpfSolidColorBrush(WpfColor.FromRgb(33, 92, 176)),
+        InstallerType.AppxMsix => new WpfSolidColorBrush(WpfColor.FromRgb(120, 76, 12)),
+        InstallerType.Script => new WpfSolidColorBrush(WpfColor.FromRgb(79, 62, 148)),
         _ => new WpfSolidColorBrush(WpfColor.FromRgb(98, 107, 128))
     };
 
@@ -279,7 +448,9 @@ public partial class MainViewModel : ObservableObject
         $"Tool path: {(IsToolPathValid ? "Ready" : "Missing")}{Environment.NewLine}" +
         $"Installer file: {(IsSetupFileValid ? "Ready" : "Missing")}{Environment.NewLine}" +
         $"Source folder: {(IsSourceFolderValid ? "Ready" : "Missing")}{Environment.NewLine}" +
-        $"Output folder: {(IsOutputFolderValid ? "Ready" : "Missing")}";
+        $"Output folder: {(IsOutputFolderValid ? "Ready" : "Missing")}{Environment.NewLine}" +
+        $"Detection rule: {(DetectionRuleType == IntuneDetectionRuleType.None ? "Missing" : "Configured")}{Environment.NewLine}" +
+        $"Smart staging: {(UseSmartSourceStaging ? "Enabled" : "Disabled")}";
 
     public string NextStepHint
     {
@@ -292,7 +463,7 @@ public partial class MainViewModel : ObservableObject
 
             if (!IsSetupFileValid)
             {
-                return "Drop or browse a .msi/.exe installer file.";
+                return "Drop or browse a supported setup file (.msi, .exe, .appx/.msix/.bundle, .ps1, .cmd, .bat).";
             }
 
             if (!IsSourceFolderValid)
@@ -303,6 +474,16 @@ public partial class MainViewModel : ObservableObject
             if (!IsOutputFolderValid)
             {
                 return "Set the output folder for the generated .intunewin.";
+            }
+
+            if (DetectionRuleType == IntuneDetectionRuleType.None)
+            {
+                return "Configure an Intune detection rule before packaging.";
+            }
+
+            if (IsSilentSwitchReviewVisible && !SilentSwitchesVerified)
+            {
+                return "Review and confirm EXE silent switches before packaging.";
             }
 
             if (HasValidationErrors)
@@ -384,7 +565,7 @@ public partial class MainViewModel : ObservableObject
         var installer = FindDroppedInstaller(droppedPaths);
         if (installer is null)
         {
-            SetStatus(OperationState.Error, "Unsupported Drop", "Drop a valid .msi or .exe installer file.");
+            SetStatus(OperationState.Error, "Unsupported Drop", "Drop a supported setup file (.msi, .exe, .appx/.msix/.bundle, .ps1, .cmd, .bat).");
             return;
         }
 
@@ -420,6 +601,240 @@ public partial class MainViewModel : ObservableObject
         NotifyReadinessChanged();
     }
 
+    partial void OnUseSmartSourceStagingChanged(bool value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnInstallContextChanged(IntuneInstallContext value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRestartBehaviorChanged(IntuneRestartBehavior value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnMaxRunTimeMinutesChanged(int value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequireSilentSwitchReviewChanged(bool value)
+    {
+        if (!value)
+        {
+            SilentSwitchesVerified = true;
+        }
+
+        InvalidatePreflightIfNeeded();
+        OnPropertyChanged(nameof(IsSilentSwitchReviewVisible));
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnSilentSwitchesVerifiedChanged(bool value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionRuleTypeChanged(IntuneDetectionRuleType value)
+    {
+        InvalidatePreflightIfNeeded();
+        OnPropertyChanged(nameof(IsMsiDetectionRule));
+        OnPropertyChanged(nameof(IsFileDetectionRule));
+        OnPropertyChanged(nameof(IsRegistryDetectionRule));
+        OnPropertyChanged(nameof(IsScriptDetectionRule));
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionMsiProductCodeChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionMsiProductVersionChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionFilePathChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionFileOrFolderNameChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionFileCheck32BitOn64SystemChanged(bool value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionFileOperatorChanged(IntuneDetectionOperator value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionFileValueChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionRegistryHiveChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionRegistryKeyPathChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionRegistryValueNameChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionRegistryCheck32BitOn64SystemChanged(bool value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionRegistryOperatorChanged(IntuneDetectionOperator value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionRegistryValueChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionScriptBodyChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionScriptRunAs32BitOn64SystemChanged(bool value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnDetectionScriptEnforceSignatureCheckChanged(bool value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequirementOperatingSystemArchitectureChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequirementMinimumOperatingSystemChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequirementMinimumFreeDiskSpaceMbChanged(int value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequirementMinimumMemoryMbChanged(int value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequirementMinimumCpuSpeedMhzChanged(int value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequirementMinimumLogicalProcessorsChanged(int value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequirementScriptBodyChanged(string value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequirementScriptRunAs32BitOn64SystemChanged(bool value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    partial void OnRequirementScriptEnforceSignatureCheckChanged(bool value)
+    {
+        InvalidatePreflightIfNeeded();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
     partial void OnIntuneWinAppUtilPathChanged(string value)
     {
         InvalidatePreflightIfNeeded();
@@ -445,6 +860,7 @@ public partial class MainViewModel : ObservableObject
         InvalidatePreflightIfNeeded();
         OnPropertyChanged(nameof(IsMsiInstaller));
         OnPropertyChanged(nameof(IsExeInstaller));
+        OnPropertyChanged(nameof(IsSilentSwitchReviewVisible));
         OnPropertyChanged(nameof(InstallerTypeDisplay));
         OnPropertyChanged(nameof(InstallerTypeBrush));
         UpdateValidation();
@@ -471,6 +887,16 @@ public partial class MainViewModel : ObservableObject
     }
 
     partial void OnResultOutputPathChanged(string value)
+    {
+        OpenOutputFolderCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnResultMetadataPathChanged(string value)
+    {
+        OpenOutputFolderCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnResultChecklistPathChanged(string value)
     {
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
     }
@@ -584,7 +1010,7 @@ public partial class MainViewModel : ObservableObject
 
         if (string.IsNullOrWhiteSpace(OutputFolder))
         {
-            OutputFolder = Path.Combine(folder, "IntuneWinOutput");
+            OutputFolder = BuildDefaultOutputFolder(folder);
         }
     }
 
@@ -677,9 +1103,7 @@ public partial class MainViewModel : ObservableObject
             SetupFilePath,
             InstallerType.Exe,
             preset: SelectedPreset);
-
-        InstallCommand = suggestion.InstallCommand;
-        UninstallCommand = suggestion.UninstallCommand;
+        ApplySuggestion(suggestion);
 
         SetStatus(OperationState.Idle, "Preset Applied", $"Applied preset: {SelectedPreset?.Name ?? "Custom"}.");
     }
@@ -823,12 +1247,14 @@ public partial class MainViewModel : ObservableObject
 
                 if (!IsOutputFolderValid)
                 {
-                    OutputFolder = Path.Combine(SourceFolder, "IntuneWinOutput");
+                    OutputFolder = BuildDefaultOutputFolder(SourceFolder);
                     fixes.Add("Default output folder created.");
                 }
 
                 InstallerType = _installerCommandService.DetectInstallerType(SetupFilePath);
-                if (string.IsNullOrWhiteSpace(InstallCommand) || string.IsNullOrWhiteSpace(UninstallCommand))
+                if (string.IsNullOrWhiteSpace(InstallCommand) ||
+                    string.IsNullOrWhiteSpace(UninstallCommand) ||
+                    DetectionRuleType == IntuneDetectionRuleType.None)
                 {
                     var metadata = InstallerType == InstallerType.Msi
                         ? await _msiInspectorService.InspectAsync(SetupFilePath)
@@ -837,20 +1263,13 @@ public partial class MainViewModel : ObservableObject
                     var suggestion = _installerCommandService.CreateSuggestion(
                         SetupFilePath,
                         InstallerType,
-                        metadata,
-                        SelectedPreset);
+                        metadata);
+                    ApplySuggestion(
+                        suggestion,
+                        overwriteCommands: string.IsNullOrWhiteSpace(InstallCommand) || string.IsNullOrWhiteSpace(UninstallCommand),
+                        overwriteRules: DetectionRuleType == IntuneDetectionRuleType.None);
 
-                    if (string.IsNullOrWhiteSpace(InstallCommand))
-                    {
-                        InstallCommand = suggestion.InstallCommand;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(UninstallCommand))
-                    {
-                        UninstallCommand = suggestion.UninstallCommand;
-                    }
-
-                    fixes.Add("Install and uninstall commands filled automatically.");
+                    fixes.Add("Install/uninstall and Intune rules were completed from installer template data.");
                 }
             }
 
@@ -1040,6 +1459,16 @@ public partial class MainViewModel : ObservableObject
             return true;
         }
 
+        if (!string.IsNullOrWhiteSpace(ResultMetadataPath) && File.Exists(ResultMetadataPath))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ResultChecklistPath) && File.Exists(ResultChecklistPath))
+        {
+            return true;
+        }
+
         return !string.IsNullOrWhiteSpace(OutputFolder) && Directory.Exists(OutputFolder);
     }
 
@@ -1054,6 +1483,9 @@ public partial class MainViewModel : ObservableObject
         IsBusy = true;
         HasPackagingRun = true;
         ResultOutputPath = string.Empty;
+        ResultMetadataPath = string.Empty;
+        ResultChecklistPath = string.Empty;
+        IntunePortalChecklist = string.Empty;
         ClearLogs();
         SetPackagingProgress("Preparing", "Validating request and starting workflow.", 0);
 
@@ -1091,6 +1523,9 @@ public partial class MainViewModel : ObservableObject
                 logProgress: logProgress,
                 progressUpdate: workflowProgress);
             ResultOutputPath = result.OutputPackagePath ?? string.Empty;
+            ResultMetadataPath = result.OutputMetadataPath ?? string.Empty;
+            ResultChecklistPath = result.OutputChecklistPath ?? string.Empty;
+            IntunePortalChecklist = result.IntunePortalChecklist;
 
             var historyEntry = new PackageHistoryEntry
             {
@@ -1199,6 +1634,8 @@ public partial class MainViewModel : ObservableObject
             OutputFolder = profile.Configuration.OutputFolder;
             InstallCommand = profile.Configuration.InstallCommand;
             UninstallCommand = profile.Configuration.UninstallCommand;
+            UseSmartSourceStaging = profile.Configuration.UseSmartSourceStaging;
+            ApplyIntuneRules(profile.Configuration.IntuneRules);
             InstallerType = profile.InstallerType != InstallerType.Unknown
                 ? profile.InstallerType
                 : _installerCommandService.DetectInstallerType(profile.Configuration.SetupFilePath);
@@ -1228,8 +1665,45 @@ public partial class MainViewModel : ObservableObject
             InstallCommand = string.Empty;
             UninstallCommand = string.Empty;
             InstallerType = InstallerType.Unknown;
+            UseSmartSourceStaging = true;
+            InstallContext = IntuneInstallContext.System;
+            RestartBehavior = IntuneRestartBehavior.DetermineBehaviorBasedOnReturnCodes;
+            MaxRunTimeMinutes = 60;
+            AppliedTemplateName = string.Empty;
+            TemplateGuidance = string.Empty;
+            RequireSilentSwitchReview = false;
+            SilentSwitchesVerified = false;
+            DetectionRuleType = IntuneDetectionRuleType.None;
+            DetectionMsiProductCode = string.Empty;
+            DetectionMsiProductVersion = string.Empty;
+            DetectionFilePath = string.Empty;
+            DetectionFileOrFolderName = string.Empty;
+            DetectionFileCheck32BitOn64System = false;
+            DetectionFileOperator = IntuneDetectionOperator.Exists;
+            DetectionFileValue = string.Empty;
+            DetectionRegistryHive = "HKEY_LOCAL_MACHINE";
+            DetectionRegistryKeyPath = string.Empty;
+            DetectionRegistryValueName = string.Empty;
+            DetectionRegistryCheck32BitOn64System = false;
+            DetectionRegistryOperator = IntuneDetectionOperator.Exists;
+            DetectionRegistryValue = string.Empty;
+            DetectionScriptBody = string.Empty;
+            DetectionScriptRunAs32BitOn64System = false;
+            DetectionScriptEnforceSignatureCheck = false;
+            RequirementOperatingSystemArchitecture = "x64";
+            RequirementMinimumOperatingSystem = "Windows 10 1607";
+            RequirementMinimumFreeDiskSpaceMb = 0;
+            RequirementMinimumMemoryMb = 0;
+            RequirementMinimumCpuSpeedMhz = 0;
+            RequirementMinimumLogicalProcessors = 0;
+            RequirementScriptBody = string.Empty;
+            RequirementScriptRunAs32BitOn64System = false;
+            RequirementScriptEnforceSignatureCheck = false;
             MsiMetadataSummary = string.Empty;
             ResultOutputPath = string.Empty;
+            ResultMetadataPath = string.Empty;
+            ResultChecklistPath = string.Empty;
+            IntunePortalChecklist = string.Empty;
             HasPackagingRun = false;
             HasPreflightRun = false;
             PreflightSummary = "Run preflight checks to verify tool health, folders, permissions, and disk space.";
@@ -1267,6 +1741,28 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
+        var metadataToOpen = ResultMetadataPath;
+        if (!string.IsNullOrWhiteSpace(metadataToOpen) && File.Exists(metadataToOpen))
+        {
+            var metadataParent = Path.GetDirectoryName(metadataToOpen);
+            if (!string.IsNullOrWhiteSpace(metadataParent))
+            {
+                _dialogService.OpenFolder(metadataParent);
+                return;
+            }
+        }
+
+        var checklistToOpen = ResultChecklistPath;
+        if (!string.IsNullOrWhiteSpace(checklistToOpen) && File.Exists(checklistToOpen))
+        {
+            var checklistParent = Path.GetDirectoryName(checklistToOpen);
+            if (!string.IsNullOrWhiteSpace(checklistParent))
+            {
+                _dialogService.OpenFolder(checklistParent);
+                return;
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(OutputFolder))
         {
             _dialogService.OpenFolder(OutputFolder);
@@ -1289,7 +1785,7 @@ public partial class MainViewModel : ObservableObject
 
         if (updateOutputWhenEmpty && string.IsNullOrWhiteSpace(OutputFolder) && !string.IsNullOrWhiteSpace(SourceFolder))
         {
-            OutputFolder = Path.Combine(SourceFolder, "IntuneWinOutput");
+            OutputFolder = BuildDefaultOutputFolder(SourceFolder);
         }
 
         await HandleSetupFileChangedAsync(filePath);
@@ -1313,17 +1809,20 @@ public partial class MainViewModel : ObservableObject
 
             var metadata = await _msiInspectorService.InspectAsync(filePath);
             var suggestion = _installerCommandService.CreateSuggestion(filePath, InstallerType.Msi, metadata);
-
-            InstallCommand = suggestion.InstallCommand;
-            UninstallCommand = suggestion.UninstallCommand;
+            ApplySuggestion(suggestion);
         }
-        else if (InstallerType == InstallerType.Exe)
+        else if (InstallerType != InstallerType.Unknown)
         {
             MsiMetadataSummary = string.Empty;
 
-            var suggestion = _installerCommandService.CreateSuggestion(filePath, InstallerType.Exe, preset: SelectedPreset);
-            InstallCommand = suggestion.InstallCommand;
-            UninstallCommand = suggestion.UninstallCommand;
+            var suggestion = _installerCommandService.CreateSuggestion(filePath, InstallerType);
+            ApplySuggestion(suggestion);
+        }
+        else
+        {
+            MsiMetadataSummary = string.Empty;
+            InstallCommand = string.Empty;
+            UninstallCommand = string.Empty;
         }
 
         UpdateValidation();
@@ -1421,8 +1920,148 @@ public partial class MainViewModel : ObservableObject
             SetupFilePath = SetupFilePath,
             OutputFolder = OutputFolder,
             InstallCommand = InstallCommand,
-            UninstallCommand = UninstallCommand
+            UninstallCommand = UninstallCommand,
+            UseSmartSourceStaging = UseSmartSourceStaging,
+            IntuneRules = BuildIntuneRules()
         };
+    }
+
+    private IntuneWin32AppRules BuildIntuneRules()
+    {
+        return new IntuneWin32AppRules
+        {
+            InstallContext = InstallContext,
+            RestartBehavior = RestartBehavior,
+            MaxRunTimeMinutes = MaxRunTimeMinutes,
+            RequireSilentSwitchReview = RequireSilentSwitchReview,
+            SilentSwitchesVerified = RequireSilentSwitchReview ? SilentSwitchesVerified : true,
+            AppliedTemplateName = AppliedTemplateName,
+            TemplateGuidance = TemplateGuidance,
+            Requirements = BuildRequirementRules(),
+            DetectionRule = BuildDetectionRule()
+        };
+    }
+
+    private IntuneRequirementRules BuildRequirementRules()
+    {
+        return new IntuneRequirementRules
+        {
+            OperatingSystemArchitecture = RequirementOperatingSystemArchitecture,
+            MinimumOperatingSystem = RequirementMinimumOperatingSystem,
+            MinimumFreeDiskSpaceMb = RequirementMinimumFreeDiskSpaceMb,
+            MinimumMemoryMb = RequirementMinimumMemoryMb,
+            MinimumCpuSpeedMhz = RequirementMinimumCpuSpeedMhz,
+            MinimumLogicalProcessors = RequirementMinimumLogicalProcessors,
+            RequirementScriptBody = RequirementScriptBody,
+            RequirementScriptRunAs32BitOn64System = RequirementScriptRunAs32BitOn64System,
+            RequirementScriptEnforceSignatureCheck = RequirementScriptEnforceSignatureCheck
+        };
+    }
+
+    private IntuneDetectionRule BuildDetectionRule()
+    {
+        return new IntuneDetectionRule
+        {
+            RuleType = DetectionRuleType,
+            Msi = new MsiDetectionRule
+            {
+                ProductCode = DetectionMsiProductCode,
+                ProductVersion = DetectionMsiProductVersion
+            },
+            File = new FileDetectionRule
+            {
+                Path = DetectionFilePath,
+                FileOrFolderName = DetectionFileOrFolderName,
+                Check32BitOn64System = DetectionFileCheck32BitOn64System,
+                Operator = DetectionFileOperator,
+                Value = DetectionFileValue
+            },
+            Registry = new RegistryDetectionRule
+            {
+                Hive = DetectionRegistryHive,
+                KeyPath = DetectionRegistryKeyPath,
+                ValueName = DetectionRegistryValueName,
+                Check32BitOn64System = DetectionRegistryCheck32BitOn64System,
+                Operator = DetectionRegistryOperator,
+                Value = DetectionRegistryValue
+            },
+            Script = new ScriptDetectionRule
+            {
+                ScriptBody = DetectionScriptBody,
+                RunAs32BitOn64System = DetectionScriptRunAs32BitOn64System,
+                EnforceSignatureCheck = DetectionScriptEnforceSignatureCheck
+            }
+        };
+    }
+
+    private void ApplySuggestion(
+        CommandSuggestion suggestion,
+        bool overwriteCommands = true,
+        bool overwriteRules = true)
+    {
+        if (overwriteCommands)
+        {
+            InstallCommand = suggestion.InstallCommand;
+            UninstallCommand = suggestion.UninstallCommand;
+        }
+
+        if (overwriteRules)
+        {
+            ApplyIntuneRules(suggestion.SuggestedRules);
+        }
+    }
+
+    private void ApplyIntuneRules(IntuneWin32AppRules rules)
+    {
+        InstallContext = rules.InstallContext;
+        RestartBehavior = rules.RestartBehavior;
+        MaxRunTimeMinutes = rules.MaxRunTimeMinutes;
+        RequireSilentSwitchReview = rules.RequireSilentSwitchReview;
+        SilentSwitchesVerified = rules.RequireSilentSwitchReview ? rules.SilentSwitchesVerified : true;
+        AppliedTemplateName = rules.AppliedTemplateName;
+        TemplateGuidance = rules.TemplateGuidance;
+        ApplyRequirementRules(rules.Requirements);
+        ApplyDetectionRule(rules.DetectionRule);
+    }
+
+    private void ApplyRequirementRules(IntuneRequirementRules requirements)
+    {
+        RequirementOperatingSystemArchitecture = string.IsNullOrWhiteSpace(requirements.OperatingSystemArchitecture)
+            ? "x64"
+            : requirements.OperatingSystemArchitecture;
+        RequirementMinimumOperatingSystem = string.IsNullOrWhiteSpace(requirements.MinimumOperatingSystem)
+            ? "Windows 10 1607"
+            : requirements.MinimumOperatingSystem;
+        RequirementMinimumFreeDiskSpaceMb = requirements.MinimumFreeDiskSpaceMb;
+        RequirementMinimumMemoryMb = requirements.MinimumMemoryMb;
+        RequirementMinimumCpuSpeedMhz = requirements.MinimumCpuSpeedMhz;
+        RequirementMinimumLogicalProcessors = requirements.MinimumLogicalProcessors;
+        RequirementScriptBody = requirements.RequirementScriptBody;
+        RequirementScriptRunAs32BitOn64System = requirements.RequirementScriptRunAs32BitOn64System;
+        RequirementScriptEnforceSignatureCheck = requirements.RequirementScriptEnforceSignatureCheck;
+    }
+
+    private void ApplyDetectionRule(IntuneDetectionRule detectionRule)
+    {
+        DetectionRuleType = detectionRule.RuleType;
+        DetectionMsiProductCode = detectionRule.Msi.ProductCode;
+        DetectionMsiProductVersion = detectionRule.Msi.ProductVersion;
+        DetectionFilePath = detectionRule.File.Path;
+        DetectionFileOrFolderName = detectionRule.File.FileOrFolderName;
+        DetectionFileCheck32BitOn64System = detectionRule.File.Check32BitOn64System;
+        DetectionFileOperator = detectionRule.File.Operator;
+        DetectionFileValue = detectionRule.File.Value;
+        DetectionRegistryHive = string.IsNullOrWhiteSpace(detectionRule.Registry.Hive)
+            ? "HKEY_LOCAL_MACHINE"
+            : detectionRule.Registry.Hive;
+        DetectionRegistryKeyPath = detectionRule.Registry.KeyPath;
+        DetectionRegistryValueName = detectionRule.Registry.ValueName;
+        DetectionRegistryCheck32BitOn64System = detectionRule.Registry.Check32BitOn64System;
+        DetectionRegistryOperator = detectionRule.Registry.Operator;
+        DetectionRegistryValue = detectionRule.Registry.Value;
+        DetectionScriptBody = detectionRule.Script.ScriptBody;
+        DetectionScriptRunAs32BitOn64System = detectionRule.Script.RunAs32BitOn64System;
+        DetectionScriptEnforceSignatureCheck = detectionRule.Script.EnforceSignatureCheck;
     }
 
     private void UpdateValidation()
@@ -1598,19 +2237,35 @@ public partial class MainViewModel : ObservableObject
         return $"{installerName}-profile";
     }
 
-    private static bool IsSupportedInstallerFile(string path)
+    private static string BuildDefaultOutputFolder(string sourceFolder)
+    {
+        if (string.IsNullOrWhiteSpace(sourceFolder))
+        {
+            return string.Empty;
+        }
+
+        var fullSource = Path.GetFullPath(sourceFolder);
+        var parent = Path.GetDirectoryName(fullSource);
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            return Path.Combine(fullSource, "IntuneWinOutput");
+        }
+
+        var folderName = Path.GetFileName(fullSource.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        return Path.Combine(parent, $"{folderName}-IntuneWinOutput");
+    }
+
+    private bool IsSupportedInstallerFile(string path)
     {
         if (!File.Exists(path))
         {
             return false;
         }
 
-        var extension = Path.GetExtension(path);
-        return string.Equals(extension, ".msi", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(extension, ".exe", StringComparison.OrdinalIgnoreCase);
+        return _installerCommandService.DetectInstallerType(path) != InstallerType.Unknown;
     }
 
-    private static string? FindDroppedInstaller(IEnumerable<string> droppedPaths)
+    private string? FindDroppedInstaller(IEnumerable<string> droppedPaths)
     {
         foreach (var droppedPath in droppedPaths)
         {
@@ -1623,7 +2278,7 @@ public partial class MainViewModel : ObservableObject
             {
                 var installerFromFolder = Directory
                     .EnumerateFiles(droppedPath, "*.*", SearchOption.TopDirectoryOnly)
-                    .FirstOrDefault(IsSupportedInstallerFile);
+                    .FirstOrDefault(file => IsSupportedInstallerFile(file));
 
                 if (!string.IsNullOrWhiteSpace(installerFromFolder))
                 {
@@ -1651,6 +2306,7 @@ public partial class MainViewModel : ObservableObject
         return fileFullPath.StartsWith(folderFullPath, StringComparison.OrdinalIgnoreCase);
     }
 }
+
 
 
 

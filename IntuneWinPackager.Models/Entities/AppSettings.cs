@@ -1,4 +1,4 @@
-namespace IntuneWinPackager.Models.Entities;
+﻿namespace IntuneWinPackager.Models.Entities;
 
 public sealed record AppSettings
 {
@@ -10,7 +10,8 @@ public sealed record AppSettings
 
     public string LastSetupFilePath { get; init; } = string.Empty;
 
-    public bool UseLowImpactMode { get; init; } = true;
+    public bool UseLowImpactMode { get; init; } = false;
 
     public bool EnableSilentAppUpdates { get; init; }
 }
+

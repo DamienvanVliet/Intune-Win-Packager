@@ -1,4 +1,5 @@
-using System.IO;
+﻿using System.IO;
+using System.Text.RegularExpressions;
 using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
@@ -10,6 +11,29 @@ public sealed class PreflightService : IPreflightService
 {
     private const long RecommendedFreeSpaceBytes = 2L * 1024 * 1024 * 1024;
     private const int ToolProbeTimeoutSeconds = 8;
+    private static readonly Regex ProductCodeRegex = new("^\\{[0-9A-Fa-f\\-]{36}\\}$", RegexOptions.Compiled);
+    private static readonly Regex PlaceholderRegex = new("<[^>]+>", RegexOptions.Compiled);
+    private static readonly HashSet<string> SupportedArchitectures = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "x64",
+        "x86",
+        "Both"
+    };
+
+    private static readonly HashSet<string> SupportedExtensions =
+    [
+        ".msi",
+        ".exe",
+        ".appx",
+        ".appxbundle",
+        ".msix",
+        ".msixbundle",
+        ".ps1",
+        ".cmd",
+        ".bat",
+        ".vbs",
+        ".wsf"
+    ];
 
     private readonly IProcessRunner _processRunner;
 
@@ -29,10 +53,11 @@ public sealed class PreflightService : IPreflightService
         }
 
         await AddToolChecksAsync(request.IntuneWinAppUtilPath, checks, cancellationToken);
-        AddSourceChecks(request.Configuration.SourceFolder, checks);
+        AddSourceChecks(request.Configuration.SourceFolder, request.Configuration.UseSmartSourceStaging, checks);
         AddSetupChecks(request.Configuration.SetupFilePath, request.Configuration.SourceFolder, checks);
-        AddOutputChecks(request.Configuration.OutputFolder, checks);
+        AddOutputChecks(request.Configuration.OutputFolder, request.Configuration.SourceFolder, request.Configuration.UseSmartSourceStaging, checks);
         AddCommandChecks(request.Configuration.InstallCommand, request.Configuration.UninstallCommand, checks);
+        AddIntuneRuleChecks(request.InstallerType, request.Configuration.IntuneRules, checks);
 
         return new PreflightResult { Checks = checks };
     }
@@ -87,7 +112,7 @@ public sealed class PreflightService : IPreflightService
             : Error("tool-exec", "Tool Execution", probe.Message));
     }
 
-    private void AddSourceChecks(string sourceFolder, ICollection<PreflightCheck> checks)
+    private static void AddSourceChecks(string sourceFolder, bool useSmartSourceStaging, ICollection<PreflightCheck> checks)
     {
         if (string.IsNullOrWhiteSpace(sourceFolder))
         {
@@ -102,9 +127,34 @@ public sealed class PreflightService : IPreflightService
         }
 
         checks.Add(Pass("source-folder", "Source Folder", "Source folder exists."));
+
+        var packageArtifacts = Directory
+            .EnumerateFiles(sourceFolder, "*.intunewin", SearchOption.AllDirectories)
+            .Take(5)
+            .ToList();
+
+        if (packageArtifacts.Count == 0)
+        {
+            checks.Add(Pass("source-artifacts", "Source Artifacts", "No existing .intunewin files found in source tree."));
+            return;
+        }
+
+        if (useSmartSourceStaging)
+        {
+            checks.Add(Pass(
+                "source-artifacts",
+                "Source Artifacts",
+                $"{packageArtifacts.Count}+ existing .intunewin artifact(s) detected; smart source staging will isolate packaging."));
+            return;
+        }
+
+        checks.Add(Warning(
+            "source-artifacts",
+            "Source Artifacts",
+            "Existing .intunewin files in source can slow packaging. Enable smart source staging."));
     }
 
-    private void AddSetupChecks(string setupFilePath, string sourceFolder, ICollection<PreflightCheck> checks)
+    private static void AddSetupChecks(string setupFilePath, string sourceFolder, ICollection<PreflightCheck> checks)
     {
         if (string.IsNullOrWhiteSpace(setupFilePath))
         {
@@ -120,15 +170,14 @@ public sealed class PreflightService : IPreflightService
 
         checks.Add(Pass("setup-file", "Setup File", "Setup file exists."));
 
-        var extension = Path.GetExtension(setupFilePath);
-        if (string.Equals(extension, ".msi", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(extension, ".exe", StringComparison.OrdinalIgnoreCase))
+        var extension = Path.GetExtension(setupFilePath).ToLowerInvariant();
+        if (SupportedExtensions.Contains(extension))
         {
-            checks.Add(Pass("setup-type", "Installer Type", $"Detected supported installer extension '{extension}'."));
+            checks.Add(Pass("setup-type", "Installer Type", $"Detected supported setup extension '{extension}'."));
         }
         else
         {
-            checks.Add(Error("setup-type", "Installer Type", "Only .msi and .exe setup files are supported."));
+            checks.Add(Error("setup-type", "Installer Type", "Unsupported setup extension. Use .msi, .exe, .appx/.msix, or supported script types."));
         }
 
         if (string.IsNullOrWhiteSpace(sourceFolder) || !Directory.Exists(sourceFolder))
@@ -147,7 +196,11 @@ public sealed class PreflightService : IPreflightService
         }
     }
 
-    private void AddOutputChecks(string outputFolder, ICollection<PreflightCheck> checks)
+    private static void AddOutputChecks(
+        string outputFolder,
+        string sourceFolder,
+        bool useSmartSourceStaging,
+        ICollection<PreflightCheck> checks)
     {
         if (string.IsNullOrWhiteSpace(outputFolder))
         {
@@ -175,6 +228,27 @@ public sealed class PreflightService : IPreflightService
         {
             checks.Add(Error("output-folder", "Output Folder", $"Could not create output folder: {ex.Message}"));
             return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(sourceFolder) && Directory.Exists(sourceFolder))
+        {
+            var fullSourcePath = Path.GetFullPath(sourceFolder);
+            if (IsPathInsideFolder(fullOutputPath, fullSourcePath))
+            {
+                checks.Add(useSmartSourceStaging
+                    ? Pass(
+                        "output-source-overlap",
+                        "Output vs Source",
+                        "Output folder is inside source, but smart source staging will prevent recursive packaging.")
+                    : Error(
+                        "output-source-overlap",
+                        "Output vs Source",
+                        "Output folder is inside source. Enable smart source staging or move output outside source to avoid recursion and slow packaging."));
+            }
+            else
+            {
+                checks.Add(Pass("output-source-overlap", "Output vs Source", "Output folder is separated from source folder."));
+            }
         }
 
         var writeProbePath = Path.Combine(fullOutputPath, $".iwp-preflight-{Guid.NewGuid():N}.tmp");
@@ -220,15 +294,189 @@ public sealed class PreflightService : IPreflightService
         }
     }
 
-    private void AddCommandChecks(string installCommand, string uninstallCommand, ICollection<PreflightCheck> checks)
+    private static void AddCommandChecks(string installCommand, string uninstallCommand, ICollection<PreflightCheck> checks)
     {
         checks.Add(string.IsNullOrWhiteSpace(installCommand)
             ? Error("install-command", "Install Command", "Install command is required.")
-            : Pass("install-command", "Install Command", "Install command is configured."));
+            : ContainsPlaceholder(installCommand)
+                ? Error("install-command", "Install Command", "Install command still contains placeholders.")
+                : Pass("install-command", "Install Command", "Install command is configured."));
 
         checks.Add(string.IsNullOrWhiteSpace(uninstallCommand)
             ? Error("uninstall-command", "Uninstall Command", "Uninstall command is required.")
-            : Pass("uninstall-command", "Uninstall Command", "Uninstall command is configured."));
+            : ContainsPlaceholder(uninstallCommand)
+                ? Error("uninstall-command", "Uninstall Command", "Uninstall command still contains placeholders.")
+                : Pass("uninstall-command", "Uninstall Command", "Uninstall command is configured."));
+    }
+
+    private static void AddIntuneRuleChecks(
+        InstallerType installerType,
+        IntuneWin32AppRules rules,
+        ICollection<PreflightCheck> checks)
+    {
+        checks.Add(rules.MaxRunTimeMinutes is >= 1 and <= 1440
+            ? Pass("intune-runtime", "Intune Runtime", $"Max run time is set to {rules.MaxRunTimeMinutes} minute(s).")
+            : Error("intune-runtime", "Intune Runtime", "Max run time must be between 1 and 1440 minutes."));
+
+        if (installerType == InstallerType.Exe && rules.RequireSilentSwitchReview && !rules.SilentSwitchesVerified)
+        {
+            checks.Add(Error(
+                "intune-switch-review",
+                "EXE Silent Switch Review",
+                "This EXE profile requires switch verification. Review vendor switches and confirm before packaging."));
+        }
+        else
+        {
+            checks.Add(Pass("intune-switch-review", "EXE Silent Switch Review", "Silent switch verification requirements are satisfied."));
+        }
+
+        AddRequirementChecks(rules.Requirements, checks);
+
+        var detection = rules.DetectionRule;
+        if (detection.RuleType == IntuneDetectionRuleType.None)
+        {
+            checks.Add(Error("detection-type", "Detection Rule", "No detection rule configured. Configure MSI, file, registry, or script detection."));
+            return;
+        }
+
+        checks.Add(Pass("detection-type", "Detection Rule", $"Detection type '{detection.RuleType}' configured."));
+
+        switch (detection.RuleType)
+        {
+            case IntuneDetectionRuleType.MsiProductCode:
+                if (installerType != InstallerType.Msi)
+                {
+                    checks.Add(Error("detection-msi-installer", "MSI Detection", "MSI product code detection can only be used for MSI installers."));
+                }
+
+                if (string.IsNullOrWhiteSpace(detection.Msi.ProductCode))
+                {
+                    checks.Add(Error("detection-msi-code", "MSI Detection", "Product code is required for MSI detection."));
+                }
+                else if (!ProductCodeRegex.IsMatch(detection.Msi.ProductCode.Trim()))
+                {
+                    checks.Add(Error("detection-msi-code", "MSI Detection", "MSI product code format is invalid."));
+                }
+                else
+                {
+                    checks.Add(Pass("detection-msi-code", "MSI Detection", "MSI product code is configured."));
+                }
+                break;
+
+            case IntuneDetectionRuleType.File:
+                if (string.IsNullOrWhiteSpace(detection.File.Path) || string.IsNullOrWhiteSpace(detection.File.FileOrFolderName))
+                {
+                    checks.Add(Error("detection-file", "File Detection", "File detection requires both path and file/folder name."));
+                }
+                else
+                {
+                    checks.Add(Pass("detection-file", "File Detection", "File detection path and file/folder are configured."));
+                }
+
+                if (detection.File.Operator != IntuneDetectionOperator.Exists && string.IsNullOrWhiteSpace(detection.File.Value))
+                {
+                    checks.Add(Error("detection-file-value", "File Detection", "Selected file detection operator requires a comparison value."));
+                }
+                break;
+
+            case IntuneDetectionRuleType.Registry:
+                if (string.IsNullOrWhiteSpace(detection.Registry.Hive) || string.IsNullOrWhiteSpace(detection.Registry.KeyPath))
+                {
+                    checks.Add(Error("detection-registry", "Registry Detection", "Registry detection requires hive and key path."));
+                }
+                else
+                {
+                    checks.Add(Pass("detection-registry", "Registry Detection", "Registry hive and key path are configured."));
+                }
+
+                if (detection.Registry.Operator != IntuneDetectionOperator.Exists)
+                {
+                    if (string.IsNullOrWhiteSpace(detection.Registry.ValueName))
+                    {
+                        checks.Add(Error("detection-registry-name", "Registry Detection", "Registry value name is required for comparison operators."));
+                    }
+
+                    if (string.IsNullOrWhiteSpace(detection.Registry.Value))
+                    {
+                        checks.Add(Error("detection-registry-value", "Registry Detection", "Registry comparison value is required for comparison operators."));
+                    }
+                }
+                break;
+
+            case IntuneDetectionRuleType.Script:
+                if (string.IsNullOrWhiteSpace(detection.Script.ScriptBody))
+                {
+                    checks.Add(Error("detection-script", "Script Detection", "Script detection requires script content."));
+                }
+                else if (ContainsPlaceholder(detection.Script.ScriptBody))
+                {
+                    checks.Add(Error("detection-script", "Script Detection", "Script detection still contains placeholders."));
+                }
+                else
+                {
+                    checks.Add(Pass("detection-script", "Script Detection", "Script detection content is configured."));
+                }
+                break;
+        }
+    }
+
+    private static void AddRequirementChecks(
+        IntuneRequirementRules requirements,
+        ICollection<PreflightCheck> checks)
+    {
+        if (string.IsNullOrWhiteSpace(requirements.OperatingSystemArchitecture))
+        {
+            checks.Add(Error("requirement-architecture", "Requirements", "Operating system architecture is required."));
+        }
+        else if (!SupportedArchitectures.Contains(requirements.OperatingSystemArchitecture.Trim()))
+        {
+            checks.Add(Error("requirement-architecture", "Requirements", "Operating system architecture is invalid. Use x64, x86, or Both."));
+        }
+        else
+        {
+            checks.Add(Pass("requirement-architecture", "Requirements", $"Operating system architecture is set to '{requirements.OperatingSystemArchitecture}'."));
+        }
+
+        checks.Add(string.IsNullOrWhiteSpace(requirements.MinimumOperatingSystem)
+            ? Error("requirement-os", "Requirements", "Minimum operating system is required.")
+            : Pass("requirement-os", "Requirements", $"Minimum operating system is set to '{requirements.MinimumOperatingSystem}'."));
+
+        checks.Add(requirements.MinimumFreeDiskSpaceMb < 0
+            ? Error("requirement-disk", "Requirements", "Minimum free disk space cannot be negative.")
+            : Pass("requirement-disk", "Requirements", requirements.MinimumFreeDiskSpaceMb > 0
+                ? $"Minimum free disk space is set to {requirements.MinimumFreeDiskSpaceMb} MB."
+                : "Minimum free disk space is not configured (optional)."));
+
+        checks.Add(requirements.MinimumMemoryMb < 0
+            ? Error("requirement-memory", "Requirements", "Minimum memory cannot be negative.")
+            : Pass("requirement-memory", "Requirements", requirements.MinimumMemoryMb > 0
+                ? $"Minimum memory is set to {requirements.MinimumMemoryMb} MB."
+                : "Minimum memory is not configured (optional)."));
+
+        checks.Add(requirements.MinimumCpuSpeedMhz < 0
+            ? Error("requirement-cpu", "Requirements", "Minimum CPU speed cannot be negative.")
+            : Pass("requirement-cpu", "Requirements", requirements.MinimumCpuSpeedMhz > 0
+                ? $"Minimum CPU speed is set to {requirements.MinimumCpuSpeedMhz} MHz."
+                : "Minimum CPU speed is not configured (optional)."));
+
+        checks.Add(requirements.MinimumLogicalProcessors < 0
+            ? Error("requirement-processors", "Requirements", "Minimum logical processors cannot be negative.")
+            : Pass("requirement-processors", "Requirements", requirements.MinimumLogicalProcessors > 0
+                ? $"Minimum logical processors is set to {requirements.MinimumLogicalProcessors}."
+                : "Minimum logical processors is not configured (optional)."));
+
+        if (string.IsNullOrWhiteSpace(requirements.RequirementScriptBody))
+        {
+            checks.Add(Pass("requirement-script", "Requirement Script", "Requirement script is not configured (optional)."));
+        }
+        else if (ContainsPlaceholder(requirements.RequirementScriptBody))
+        {
+            checks.Add(Error("requirement-script", "Requirement Script", "Requirement script still contains placeholders."));
+        }
+        else
+        {
+            checks.Add(Pass("requirement-script", "Requirement Script", "Requirement script content is configured."));
+        }
     }
 
     private async Task<(bool Passed, string Message)> ProbeToolExecutionAsync(string toolPath, CancellationToken cancellationToken)
@@ -304,12 +552,18 @@ public sealed class PreflightService : IPreflightService
     private static bool IsPathInsideFolder(string filePath, string folderPath)
     {
         var folderFullPath = Path.GetFullPath(folderPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-        var fileFullPath = Path.GetFullPath(filePath);
+        var fileFullPath = Path.GetFullPath(filePath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-        return fileFullPath.StartsWith(folderFullPath, StringComparison.OrdinalIgnoreCase);
+        return fileFullPath.Equals(folderFullPath, StringComparison.OrdinalIgnoreCase) ||
+               fileFullPath.StartsWith(folderFullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsPlaceholder(string value)
+    {
+        return PlaceholderRegex.IsMatch(value);
     }
 
     private static string FormatBytes(long bytes)
@@ -320,7 +574,7 @@ public sealed class PreflightService : IPreflightService
         }
 
         string[] units = ["B", "KB", "MB", "GB", "TB"];
-        var value = bytes;
+        var value = (double)bytes;
         var index = 0;
 
         while (value >= 1024 && index < units.Length - 1)
@@ -329,6 +583,6 @@ public sealed class PreflightService : IPreflightService
             index++;
         }
 
-        return $"{value:0} {units[index]}";
+        return $"{value:0.#} {units[index]}";
     }
 }
