@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.10] - 2026-04-14
+
+### Added
+- Performance: packaging now reuses fresh preflight results for unchanged configuration (up to 10 minutes), avoiding repeated full preflight on consecutive runs.
+- Performance: smart staging copy now uses adaptive parallel file copy for faster source staging on large app sources.
+- Performance: avoids unnecessary recursive package-artifact scan when smart staging is off or output is already inside source.
+- Adds timing logs for source preparation and packaging process duration to make bottlenecks visible.
+
 ## [1.1.9] - 2026-04-14
 
 ### Added
