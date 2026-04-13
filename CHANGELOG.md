@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.6] - 2026-04-14
+
+### Added
+- Fix updater reliability and release selection logic.\n- Add core localization key mapping for validation/preflight messages.\n- Add tab icons and compact density mode.\n- Add UI regression smoke tests and updater regression tests.
+
 ## [1.1.5] - 2026-04-13
 
 ### Added
