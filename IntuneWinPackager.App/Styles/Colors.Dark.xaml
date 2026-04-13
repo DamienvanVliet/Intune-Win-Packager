@@ -34,6 +34,12 @@
     <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FF111E2E" />
     <SolidColorBrush x:Key="InputBorderBrush" Color="#FF35506F" />
 
+    <SolidColorBrush x:Key="ComboBoxBackgroundBrush" Color="#FFF2F5FA" />
+    <SolidColorBrush x:Key="ComboBoxForegroundBrush" Color="#FF1F2A3D" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundBrush" Color="#FFF2F5FA" />
+    <SolidColorBrush x:Key="ComboBoxItemHoverBrush" Color="#FFDEE8F7" />
+    <SolidColorBrush x:Key="ComboBoxItemSelectedBrush" Color="#FFCADCF3" />
+
     <SolidColorBrush x:Key="SecondaryButtonBackgroundBrush" Color="#FF1B2D42" />
     <SolidColorBrush x:Key="SecondaryButtonForegroundBrush" Color="#FFD7E5FB" />
     <SolidColorBrush x:Key="SecondaryButtonBorderBrush" Color="#FF38577A" />

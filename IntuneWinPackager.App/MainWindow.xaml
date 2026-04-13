@@ -733,16 +733,28 @@
                                             BorderBrush="{DynamicResource LogBorderBrush}"
                                             BorderThickness="1"
                                             Padding="10">
-                                        <ListBox ItemsSource="{Binding Logs}"
-                                                 BorderThickness="0"
-                                                 Background="Transparent"
-                                                 Foreground="{DynamicResource LogForegroundBrush}"
-                                                 FontFamily="Consolas"
-                                                 FontSize="12"
-                                                 ScrollViewer.CanContentScroll="True"
-                                                 VirtualizingPanel.IsVirtualizing="True"
-                                                 VirtualizingPanel.VirtualizationMode="Recycling"
-                                                 Height="{DynamicResource Density.LogHeight}" />
+                                         <ListBox ItemsSource="{Binding Logs}"
+                                                  BorderThickness="0"
+                                                  Background="Transparent"
+                                                  Foreground="{DynamicResource LogForegroundBrush}"
+                                                  FontFamily="Consolas"
+                                                  FontSize="{DynamicResource Density.LogFontSize}"
+                                                  ScrollViewer.CanContentScroll="True"
+                                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                  VirtualizingPanel.IsVirtualizing="True"
+                                                  VirtualizingPanel.VirtualizationMode="Recycling"
+                                                  HorizontalContentAlignment="Stretch"
+                                                  Height="{DynamicResource Density.LogHeight}">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}"
+                                                               TextWrapping="Wrap"
+                                                               Foreground="{DynamicResource LogForegroundBrush}"
+                                                               FontFamily="Consolas"
+                                                               FontSize="{DynamicResource Density.LogFontSize}" />
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
                                     </Border>
                                 </StackPanel>
                             </Border>

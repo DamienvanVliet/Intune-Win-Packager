@@ -45,8 +45,26 @@
         <Setter Property="Padding" Value="{DynamicResource Density.ComboPadding}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
-        <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
-        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="Background" Value="{DynamicResource ComboBoxBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource ComboBoxForegroundBrush}" />
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+
+    <Style TargetType="ComboBoxItem">
+        <Setter Property="Background" Value="{DynamicResource ComboBoxItemBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource ComboBoxForegroundBrush}" />
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
+        <Setter Property="FontSize" Value="{DynamicResource Density.ControlFontSize}" />
+        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="Opacity" Value="1" />
+        <Style.Triggers>
+            <Trigger Property="IsHighlighted" Value="True">
+                <Setter Property="Background" Value="{DynamicResource ComboBoxItemHoverBrush}" />
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{DynamicResource ComboBoxItemSelectedBrush}" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <Style TargetType="CheckBox">
