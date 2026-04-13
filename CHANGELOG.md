@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.9] - 2026-04-14
+
+### Added
+- Fixes too-small text sizing in Comfortable density mode.
+- Increases default Comfortable scale, control font sizes, and log font for better readability without switching to Compact.
+
 ## [1.1.8] - 2026-04-14
 
 ### Added
