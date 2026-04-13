@@ -1,0 +1,51 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <LinearGradientBrush x:Key="PageBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#FFF4F8FD" Offset="0" />
+        <GradientStop Color="#FFEAF2FB" Offset="0.45" />
+        <GradientStop Color="#FFF8FAFC" Offset="1" />
+    </LinearGradientBrush>
+
+    <SolidColorBrush x:Key="WindowForegroundBrush" Color="#FF1F2A3D" />
+    <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FCFFFFFF" />
+    <SolidColorBrush x:Key="CardBorderBrush" Color="#FFD9E1EE" />
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#FF1F2A3D" />
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#FF5A6780" />
+    <SolidColorBrush x:Key="TextMutedBrush" Color="#FF78839A" />
+
+    <SolidColorBrush x:Key="HeaderBackgroundBrush" Color="#F2FFFFFF" />
+    <SolidColorBrush x:Key="HeaderBorderBrush" Color="#FFD6E1F0" />
+    <SolidColorBrush x:Key="StatusPanelBackgroundBrush" Color="#FFEAF1FB" />
+    <SolidColorBrush x:Key="StatusPanelBorderBrush" Color="#FFD0DEEF" />
+
+    <SolidColorBrush x:Key="DropZoneBackgroundBrush" Color="#FFF5F9FF" />
+    <SolidColorBrush x:Key="DropZoneBorderBrush" Color="#FFB8CAE6" />
+    <SolidColorBrush x:Key="DropZoneActiveBackgroundBrush" Color="#FFEAF4FF" />
+    <SolidColorBrush x:Key="DropZoneActiveBorderBrush" Color="#FF1E5EA8" />
+
+    <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FFF8FBFF" />
+    <SolidColorBrush x:Key="PanelBorderBrush" Color="#FFD6E1F0" />
+
+    <SolidColorBrush x:Key="PrimaryAccentBrush" Color="#FF1E5EA8" />
+    <SolidColorBrush x:Key="PrimaryAccentHoverBrush" Color="#FF2D72C4" />
+    <SolidColorBrush x:Key="SuccessBrush" Color="#FF0F7A57" />
+    <SolidColorBrush x:Key="ErrorBrush" Color="#FFB02A37" />
+
+    <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="InputBorderBrush" Color="#FFCAD5E7" />
+
+    <SolidColorBrush x:Key="SecondaryButtonBackgroundBrush" Color="#FFE8EEF8" />
+    <SolidColorBrush x:Key="SecondaryButtonForegroundBrush" Color="#FF20406B" />
+    <SolidColorBrush x:Key="SecondaryButtonBorderBrush" Color="#FFCAD8EE" />
+
+    <SolidColorBrush x:Key="ProgressBackgroundBrush" Color="#FFD4DDEA" />
+
+    <SolidColorBrush x:Key="LogBackgroundBrush" Color="#FF111927" />
+    <SolidColorBrush x:Key="LogBorderBrush" Color="#FF0D1521" />
+    <SolidColorBrush x:Key="LogForegroundBrush" Color="#FFEAF1FE" />
+
+    <SolidColorBrush x:Key="TabControlBackgroundBrush" Color="#00000000" />
+    <SolidColorBrush x:Key="TabItemBackgroundBrush" Color="#FFE9F1FA" />
+    <SolidColorBrush x:Key="TabItemSelectedBackgroundBrush" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="TabItemBorderBrush" Color="#FFD2DEEE" />
+</ResourceDictionary>

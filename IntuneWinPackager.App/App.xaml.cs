@@ -34,6 +34,8 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<IAppUpdateService, AppUpdateService>();
 
                 services.AddSingleton<IDialogService, SystemDialogService>();
+                services.AddSingleton<ILocalizationService, LocalizationService>();
+                services.AddSingleton<IThemeService, ThemeService>();
 
                 services.AddSingleton<MainViewModel>();
                 services.AddSingleton<MainWindow>();

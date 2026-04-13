@@ -1,20 +1,13 @@
-﻿using IntuneWinPackager.App.ViewModels;
+using IntuneWinPackager.App.ViewModels;
 using WpfBrush = System.Windows.Media.Brush;
-using WpfColor = System.Windows.Media.Color;
 using WpfDataFormats = System.Windows.DataFormats;
 using WpfDragDropEffects = System.Windows.DragDropEffects;
 using WpfDragEventArgs = System.Windows.DragEventArgs;
-using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
 
 namespace IntuneWinPackager.App;
 
 public partial class MainWindow : System.Windows.Window
 {
-    private static readonly WpfBrush DropDefaultBorder = new WpfSolidColorBrush(WpfColor.FromRgb(184, 202, 230));
-    private static readonly WpfBrush DropActiveBorder = new WpfSolidColorBrush(WpfColor.FromRgb(30, 94, 168));
-    private static readonly WpfBrush DropDefaultBackground = new WpfSolidColorBrush(WpfColor.FromRgb(245, 249, 255));
-    private static readonly WpfBrush DropActiveBackground = new WpfSolidColorBrush(WpfColor.FromRgb(234, 244, 255));
-
     private readonly MainViewModel _viewModel;
 
     public MainWindow(MainViewModel viewModel)
@@ -77,7 +70,17 @@ public partial class MainWindow : System.Windows.Window
     {
         _viewModel.SetDragOverState(isActive);
 
-        DropZone.BorderBrush = isActive ? DropActiveBorder : DropDefaultBorder;
-        DropZone.Background = isActive ? DropActiveBackground : DropDefaultBackground;
+        DropZone.BorderBrush = ResolveBrush(isActive ? "DropZoneActiveBorderBrush" : "DropZoneBorderBrush", DropZone.BorderBrush);
+        DropZone.Background = ResolveBrush(isActive ? "DropZoneActiveBackgroundBrush" : "DropZoneBackgroundBrush", DropZone.Background);
+    }
+
+    private WpfBrush ResolveBrush(string key, WpfBrush fallback)
+    {
+        if (TryFindResource(key) is WpfBrush brush)
+        {
+            return brush;
+        }
+
+        return fallback;
     }
 }

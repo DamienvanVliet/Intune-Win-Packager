@@ -1,0 +1,254 @@
+﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+    <sys:String x:Key="Ui.AppTitle">Intune Win Packager</sys:String>
+    <sys:String x:Key="Ui.AppSubtitle">Bereid productieklare Intune Win32-packages voor met duidelijke install-commando's, detectieregels, requirements en deploymentmetadata.</sys:String>
+
+    <sys:String x:Key="Ui.Tab.Packaging">Packaging</sys:String>
+    <sys:String x:Key="Ui.Tab.ToolsChecks">Tools &amp; Controles</sys:String>
+    <sys:String x:Key="Ui.Tab.UpdatesChanges">Updates &amp; Wijzigingen</sys:String>
+    <sys:String x:Key="Ui.Tab.Settings">Instellingen</sys:String>
+
+    <sys:String x:Key="Ui.PackageConfiguration.Title">Package Configuratie</sys:String>
+    <sys:String x:Key="Ui.PackageConfiguration.Description">Selecteer source, setup en output. De hoofdflow is gericht op het correct bouwen van een Intune-package.</sys:String>
+    <sys:String x:Key="Ui.DropZone.Title">Sleep Setup Package Hier</sys:String>
+    <sys:String x:Key="Ui.DropZone.Subtitle">Ondersteund: .msi, .exe, .appx/.msix (.bundle), .ps1, .cmd, .bat, .vbs, .wsf</sys:String>
+
+    <sys:String x:Key="Ui.SourceFolder">Bronmap</sys:String>
+    <sys:String x:Key="Ui.SetupFile">Setup-bestand</sys:String>
+    <sys:String x:Key="Ui.OutputFolder">Outputmap</sys:String>
+    <sys:String x:Key="Ui.Browse">Bladeren</sys:String>
+
+    <sys:String x:Key="Ui.Commands.Title">Installatiecommando's &amp; Intune-regels</sys:String>
+    <sys:String x:Key="Ui.SilentPreset">Silent Preset (EXE)</sys:String>
+    <sys:String x:Key="Ui.ApplyPreset">Preset Toepassen</sys:String>
+    <sys:String x:Key="Ui.CommandProfile">Command-profiel</sys:String>
+    <sys:String x:Key="Ui.InstallCommand">Installatiecommando</sys:String>
+    <sys:String x:Key="Ui.UninstallCommand">Uninstall-commando</sys:String>
+    <sys:String x:Key="Ui.SilentSwitchVerified">Silent switches geverifieerd voor deze EXE-build</sys:String>
+    <sys:String x:Key="Ui.SmartStaging">Gebruik slimme source staging (voorkomt recursieve output-packaging)</sys:String>
+
+    <sys:String x:Key="Ui.IntuneInstallRules.Title">Intune Installatieregels</sys:String>
+    <sys:String x:Key="Ui.InstallContext">Installatiecontext</sys:String>
+    <sys:String x:Key="Ui.RestartBehavior">Restart-gedrag</sys:String>
+    <sys:String x:Key="Ui.MaxRunTime">Maximale Looptijd</sys:String>
+    <sys:String x:Key="Ui.Minutes">minuten</sys:String>
+
+    <sys:String x:Key="Ui.IntuneRequirements.Title">Intune Requirements</sys:String>
+    <sys:String x:Key="Ui.OsArchitecture">OS-architectuur</sys:String>
+    <sys:String x:Key="Ui.MinimumOs">Minimaal OS</sys:String>
+    <sys:String x:Key="Ui.DiskMb">Schijf (MB)</sys:String>
+    <sys:String x:Key="Ui.MemoryMb">Geheugen (MB)</sys:String>
+    <sys:String x:Key="Ui.CpuMhz">CPU (MHz)</sys:String>
+    <sys:String x:Key="Ui.Processors">Processors</sys:String>
+    <sys:String x:Key="Ui.RequirementScriptOptional">Requirement-script (optioneel)</sys:String>
+    <sys:String x:Key="Ui.RequirementScriptRun32">Requirement-script als 32-bit proces uitvoeren op 64-bit clients</sys:String>
+    <sys:String x:Key="Ui.RequirementScriptSignature">Handtekeningcontrole voor requirement-script afdwingen</sys:String>
+
+    <sys:String x:Key="Ui.IntuneDetectionRule.Title">Intune Detectieregel</sys:String>
+    <sys:String x:Key="Ui.RuleType">Regeltype</sys:String>
+    <sys:String x:Key="Ui.ProductCode">Productcode</sys:String>
+    <sys:String x:Key="Ui.ProductVersion">Productversie</sys:String>
+    <sys:String x:Key="Ui.FolderPath">Mappad</sys:String>
+    <sys:String x:Key="Ui.FileOrFolder">Bestand/Map</sys:String>
+    <sys:String x:Key="Ui.Operator">Operator</sys:String>
+    <sys:String x:Key="Ui.Value">Waarde</sys:String>
+    <sys:String x:Key="Ui.Check32BitPath">Controleer 32-bit pad op 64-bit clients</sys:String>
+    <sys:String x:Key="Ui.Hive">Hive</sys:String>
+    <sys:String x:Key="Ui.KeyPath">Sleutelpad</sys:String>
+    <sys:String x:Key="Ui.ValueName">Waardenaam</sys:String>
+    <sys:String x:Key="Ui.Use32BitRegistry">Gebruik 32-bit register op 64-bit clients</sys:String>
+    <sys:String x:Key="Ui.DetectionScript">Detectiescript</sys:String>
+    <sys:String x:Key="Ui.RunScript32">Script als 32-bit proces uitvoeren op 64-bit clients</sys:String>
+    <sys:String x:Key="Ui.EnforceSignature">Handtekeningcontrole afdwingen</sys:String>
+
+    <sys:String x:Key="Ui.StartPackaging">Start Packaging</sys:String>
+    <sys:String x:Key="Ui.FixForMe">Los Op Voor Mij</sys:String>
+    <sys:String x:Key="Ui.Reset">Reset</sys:String>
+    <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
+
+    <sys:String x:Key="Ui.Result.Title">Resultaat</sys:String>
+    <sys:String x:Key="Ui.Result.StartToSeeProgress">Start packaging om live voortgang te zien.</sys:String>
+    <sys:String x:Key="Ui.Result.OutputPackage">Output Package</sys:String>
+    <sys:String x:Key="Ui.Result.Metadata">Intune Metadata</sys:String>
+    <sys:String x:Key="Ui.Result.Checklist">Intune Checklist</sys:String>
+    <sys:String x:Key="Ui.Result.PortalPreview">Portal-stappen preview</sys:String>
+
+    <sys:String x:Key="Ui.Logs.Title">Packaging Logs</sys:String>
+
+    <sys:String x:Key="Ui.GuidedStart.Title">Begeleide Start</sys:String>
+    <sys:String x:Key="Ui.GuidedStart.FixCommon">Los Veelvoorkomende Problemen Op</sys:String>
+    <sys:String x:Key="Ui.GuidedStart.RunPreflight">Run Preflight</sys:String>
+    <sys:String x:Key="Ui.GuidedStart.InstallTool">Installeer Tool</sys:String>
+    <sys:String x:Key="Ui.GuidedStart.StartPackaging">Start Packaging</sys:String>
+
+    <sys:String x:Key="Ui.Preflight.Title">Preflight-controles</sys:String>
+    <sys:String x:Key="Ui.Preflight.Run">Run Preflight</sys:String>
+    <sys:String x:Key="Ui.Preflight.Empty">Run preflight om toolstatus, toegang en packaging readiness te controleren.</sys:String>
+
+    <sys:String x:Key="Ui.Validation.Title">Validatie</sys:String>
+    <sys:String x:Key="Ui.Validation.Description">Verplichte velden worden direct gevalideerd voordat packaging start.</sys:String>
+    <sys:String x:Key="Ui.Validation.Ready">Alle verplichte velden zijn geldig. Klaar om te packagen.</sys:String>
+
+    <sys:String x:Key="Ui.Verification.Title">Verificatie-aanpak</sys:String>
+    <sys:String x:Key="Ui.Verification.Body">1. Run lokale preflight en los alle blokkerende fouten op.&#10;2. Package en controleer de gegenereerde .intune.json en .intune-checklist.md outputs.&#10;3. Valideer install/uninstall/detectie in een schone test-VM voor Intune-import.&#10;4. Maak de app aan in Intune met de checklist en start met een pilot assignment.&#10;5. Bevestig detectie- en uninstall-gedrag via Intune device logs voordat je breed uitrolt.</sys:String>
+
+    <sys:String x:Key="Ui.AppUpdates.Title">App-updates</sys:String>
+    <sys:String x:Key="Ui.SilentUpdateMode">Stille update-installatiemodus (beleid)</sys:String>
+    <sys:String x:Key="Ui.SilentUpdateHint">Gebruikt silent installerflags voor beheerde/interne omgevingen.</sys:String>
+    <sys:String x:Key="Ui.CheckForUpdates">Controleer op Updates</sys:String>
+    <sys:String x:Key="Ui.InstallUpdate">Installeer Update</sys:String>
+    <sys:String x:Key="Ui.Changelog">Wijzigingslog</sys:String>
+    <sys:String x:Key="Ui.RecentPackages.Title">Recente Packages</sys:String>
+    <sys:String x:Key="Ui.RecentPackages.Description">Meest recente lokale packaging-runs.</sys:String>
+
+    <sys:String x:Key="Ui.Preferences.Title">Voorkeuren</sys:String>
+    <sys:String x:Key="Ui.Preferences.Description">Configureer taal, thema en standaardgedrag voor packaging.</sys:String>
+    <sys:String x:Key="Ui.Language">Taal</sys:String>
+    <sys:String x:Key="Ui.Theme">Thema</sys:String>
+    <sys:String x:Key="Ui.LowImpactMode">Low Impact Packaging Mode (minder CPU, langzamer)</sys:String>
+
+    <sys:String x:Key="Ui.SettingsProfiles.Title">Tooling &amp; Profielen</sys:String>
+    <sys:String x:Key="Ui.SettingsProfiles.Description">Configureer IntuneWinAppUtil.exe, vind hem automatisch of installeer met een klik.</sys:String>
+    <sys:String x:Key="Ui.ToolPath">IntuneWinAppUtil-pad</sys:String>
+    <sys:String x:Key="Ui.BrowseTool">Browse Tool</sys:String>
+    <sys:String x:Key="Ui.AutoLocate">Auto Locate</sys:String>
+    <sys:String x:Key="Ui.InstallTool">Installeer Tool</sys:String>
+    <sys:String x:Key="Ui.ProfileName">Profielnaam</sys:String>
+    <sys:String x:Key="Ui.SavedProfiles">Opgeslagen Profielen</sys:String>
+    <sys:String x:Key="Ui.SaveProfile">Profiel Opslaan</sys:String>
+    <sys:String x:Key="Ui.LoadProfile">Profiel Laden</sys:String>
+
+    <sys:String x:Key="Vm.Status.ReadyTitle">Klaar</sys:String>
+    <sys:String x:Key="Vm.Status.SelectInstallerMessage">Selecteer een installer om packaging te starten.</sys:String>
+    <sys:String x:Key="Vm.Update.ChangelogDefault">Klik op 'Controleer op Updates' om release notes te laden.</sys:String>
+    <sys:String x:Key="Vm.Preflight.DefaultSummary">Run preflight-controles om toolstatus, mappen, permissies en schijfruimte te verifieren.</sys:String>
+    <sys:String x:Key="Vm.Preflight.ConfigChanged">Configuratie gewijzigd. Run preflight-controles opnieuw.</sys:String>
+
+    <sys:String x:Key="Vm.InstallerType.Msi">MSI gedetecteerd</sys:String>
+    <sys:String x:Key="Vm.InstallerType.Exe">EXE gedetecteerd</sys:String>
+    <sys:String x:Key="Vm.InstallerType.Appx">APPX/MSIX gedetecteerd</sys:String>
+    <sys:String x:Key="Vm.InstallerType.Script">Script-installer gedetecteerd</sys:String>
+    <sys:String x:Key="Vm.InstallerType.None">Geen installer geselecteerd</sys:String>
+
+    <sys:String x:Key="Vm.Readiness.ToolPath">Toolpad</sys:String>
+    <sys:String x:Key="Vm.Readiness.InstallerFile">Installerbestand</sys:String>
+    <sys:String x:Key="Vm.Readiness.SourceFolder">Bronmap</sys:String>
+    <sys:String x:Key="Vm.Readiness.OutputFolder">Outputmap</sys:String>
+    <sys:String x:Key="Vm.Readiness.DetectionRule">Detectieregel</sys:String>
+    <sys:String x:Key="Vm.Readiness.SmartStaging">Slimme staging</sys:String>
+    <sys:String x:Key="Vm.Readiness.Ready">Klaar</sys:String>
+    <sys:String x:Key="Vm.Readiness.Missing">Ontbreekt</sys:String>
+    <sys:String x:Key="Vm.Readiness.Configured">Geconfigureerd</sys:String>
+    <sys:String x:Key="Vm.Readiness.Enabled">Ingeschakeld</sys:String>
+    <sys:String x:Key="Vm.Readiness.Disabled">Uitgeschakeld</sys:String>
+
+    <sys:String x:Key="Vm.NextStep.ToolMissing">Tool niet gevonden. Klik op Installeer Tool, Auto Locate, of stel het pad handmatig in.</sys:String>
+    <sys:String x:Key="Vm.NextStep.SetupMissing">Sleep of selecteer een ondersteund setup-bestand (.msi, .exe, .appx/.msix/.bundle, .ps1, .cmd, .bat).</sys:String>
+    <sys:String x:Key="Vm.NextStep.SourceMissing">Stel de bronmap in (meestal de map van de installer).</sys:String>
+    <sys:String x:Key="Vm.NextStep.OutputMissing">Stel de outputmap in voor het gegenereerde .intunewin-bestand.</sys:String>
+    <sys:String x:Key="Vm.NextStep.DetectionMissing">Configureer een Intune-detectieregel voor packaging.</sys:String>
+    <sys:String x:Key="Vm.NextStep.SwitchVerify">Controleer en bevestig EXE silent switches voor packaging.</sys:String>
+    <sys:String x:Key="Vm.NextStep.ResolveValidation">Los de resterende validatiefouten op.</sys:String>
+    <sys:String x:Key="Vm.NextStep.PreflightRunAgain">Run preflight opnieuw om packaging readiness te verifieren.</sys:String>
+    <sys:String x:Key="Vm.NextStep.PreflightBlocked">Preflight geblokkeerd: {0}. {1}</sys:String>
+    <sys:String x:Key="Vm.NextStep.ReadyToPackage">Alles staat klaar. Klik op Start Packaging.</sys:String>
+
+    <sys:String x:Key="Vm.Preflight.SummaryNone">Er zijn geen preflight-controles uitgevoerd.</sys:String>
+    <sys:String x:Key="Vm.Preflight.SummaryErrors">{0}/{1} controles geslaagd. {2} blokkerende issue(s), {3} waarschuwing(en).</sys:String>
+    <sys:String x:Key="Vm.Preflight.SummaryWarnings">{0}/{1} controles geslaagd met {2} waarschuwing(en).</sys:String>
+    <sys:String x:Key="Vm.Preflight.SummaryPassed">{0}/{1} controles geslaagd. Klaar om te packagen.</sys:String>
+
+    <sys:String x:Key="Vm.Version.CurrentFormat">Huidige versie: {0}</sys:String>
+    <sys:String x:Key="Vm.Version.LatestFormat">Laatste versie: {0}</sys:String>
+
+    <sys:String x:Key="Vm.Update.NotChecked">Nog niet gecontroleerd.</sys:String>
+    <sys:String x:Key="Vm.Update.Checking">GitHub releases worden gecontroleerd...</sys:String>
+    <sys:String x:Key="Vm.Update.NoChangelog">Er is geen changelog gepubliceerd voor deze release.</sys:String>
+    <sys:String x:Key="Vm.Update.NoPublicFeed">Updatecontrole gaf geen publieke release-feed terug.</sys:String>
+    <sys:String x:Key="Vm.Update.CheckFailedFormat">Updatecontrole mislukt: {0}</sys:String>
+    <sys:String x:Key="Vm.Update.InstallerStarted">Update-installer gestart.</sys:String>
+    <sys:String x:Key="Vm.Update.SilentInstallerStarted">Stille update-installer gestart.</sys:String>
+    <sys:String x:Key="Vm.Update.InstallFailedFormat">Update-installatie mislukt: {0}</sys:String>
+
+    <sys:String x:Key="Vm.Progress.ReadyStep">Klaar</sys:String>
+    <sys:String x:Key="Vm.Progress.ReadyDetail">Wachten om te starten.</sys:String>
+    <sys:String x:Key="Vm.Progress.PreparingStep">Voorbereiden</sys:String>
+    <sys:String x:Key="Vm.Progress.PreparingDetail">Request wordt gevalideerd en workflow wordt gestart.</sys:String>
+    <sys:String x:Key="Vm.Progress.PreflightStep">Preflight</sys:String>
+    <sys:String x:Key="Vm.Progress.PreflightDetail">Readiness-checks worden uitgevoerd voor packaging.</sys:String>
+    <sys:String x:Key="Vm.Progress.PreflightFailedStep">Preflight mislukt</sys:String>
+    <sys:String x:Key="Vm.Progress.PreflightFailedDetail">Los blokkerende issues op en probeer opnieuw.</sys:String>
+    <sys:String x:Key="Vm.Progress.CompletedStep">Voltooid</sys:String>
+    <sys:String x:Key="Vm.Progress.CompletedDetail">Package is succesvol gemaakt.</sys:String>
+    <sys:String x:Key="Vm.Progress.FailedStep">Mislukt</sys:String>
+    <sys:String x:Key="Vm.Progress.UnexpectedErrorStep">Onverwachte fout</sys:String>
+
+    <sys:String x:Key="Vm.Preset.Custom">Aangepast</sys:String>
+
+    <sys:String x:Key="Vm.Status.UnsupportedDropTitle">Niet ondersteunde drop</sys:String>
+    <sys:String x:Key="Vm.Status.UnsupportedDropMessage">Sleep een ondersteund setup-bestand (.msi, .exe, .appx/.msix/.bundle, .ps1, .cmd, .bat).</sys:String>
+    <sys:String x:Key="Vm.Status.ToolLocatedTitle">Tool gevonden</sys:String>
+    <sys:String x:Key="Vm.Status.ToolLocatedMessage">IntuneWinAppUtil.exe is automatisch gevonden.</sys:String>
+    <sys:String x:Key="Vm.Status.ToolNotFoundTitle">Tool niet gevonden</sys:String>
+    <sys:String x:Key="Vm.Status.ToolNotFoundMessage">IntuneWinAppUtil.exe kon niet automatisch worden gevonden. Stel het pad handmatig in.</sys:String>
+    <sys:String x:Key="Vm.Status.ToolReadyTitle">Tool klaar</sys:String>
+    <sys:String x:Key="Vm.Status.ToolReadyMessage">IntuneWinAppUtil.exe is gevonden en geconfigureerd.</sys:String>
+    <sys:String x:Key="Vm.Status.ToolInstalledTitle">Tool geinstalleerd</sys:String>
+    <sys:String x:Key="Vm.Status.ToolInstalledMessage">IntuneWinAppUtil.exe is geinstalleerd en geconfigureerd.</sys:String>
+    <sys:String x:Key="Vm.Status.ToolInstallFailedTitle">Tool-installatie mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.InstallErrorTitle">Installatiefout</sys:String>
+    <sys:String x:Key="Vm.Status.PresetAppliedTitle">Preset toegepast</sys:String>
+    <sys:String x:Key="Vm.Status.PresetAppliedMessage">Preset toegepast: {0}.</sys:String>
+    <sys:String x:Key="Vm.Status.PreflightFailedTitle">Preflight mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.PreflightFailedMessage">Los de blokkerende preflight-issues op voor packaging.</sys:String>
+    <sys:String x:Key="Vm.Status.PreflightCompleteTitle">Preflight voltooid</sys:String>
+    <sys:String x:Key="Vm.Status.PreflightCompleteMessage">Preflight geslaagd met waarschuwingen. Controleer de notities voor packaging.</sys:String>
+    <sys:String x:Key="Vm.Status.PreflightPassedTitle">Preflight geslaagd</sys:String>
+    <sys:String x:Key="Vm.Status.PreflightPassedMessage">Alle kritieke preflight-checks zijn geslaagd.</sys:String>
+    <sys:String x:Key="Vm.Status.PreflightErrorTitle">Preflight-fout</sys:String>
+    <sys:String x:Key="Vm.Status.NoAutoFixTitle">Geen auto-fix toegepast</sys:String>
+    <sys:String x:Key="Vm.Status.QuickFixAppliedTitle">Quick fix toegepast</sys:String>
+    <sys:String x:Key="Vm.Status.UpdateAvailableTitle">Update beschikbaar</sys:String>
+    <sys:String x:Key="Vm.Status.UpdateAvailableMessage">Versie {0} is beschikbaar. Controleer de changelog en klik op Installeer Update.</sys:String>
+    <sys:String x:Key="Vm.Status.NoUpdateSelectedTitle">Geen update geselecteerd</sys:String>
+    <sys:String x:Key="Vm.Status.NoUpdateSelectedMessage">Controleer eerst op updates.</sys:String>
+    <sys:String x:Key="Vm.Status.InstallingUpdateTitle">Update installeren</sys:String>
+    <sys:String x:Key="Vm.Status.InstallingUpdateSilentMessage">Update wordt gedownload en stille installer wordt gestart...</sys:String>
+    <sys:String x:Key="Vm.Status.InstallingUpdateInteractiveMessage">Update wordt gedownload en installer wordt gestart...</sys:String>
+    <sys:String x:Key="Vm.Status.UpdateInstallerStartedTitle">Update-installer gestart</sys:String>
+    <sys:String x:Key="Vm.Status.UpdateInstallerStartedSilentMessage">Stille update gestart. De app sluit zodat setup bestanden kan vervangen.</sys:String>
+    <sys:String x:Key="Vm.Status.UpdateInstallerStartedInteractiveMessage">Installer gestart. Rond setup af en open daarna deze app opnieuw.</sys:String>
+    <sys:String x:Key="Vm.Status.UpdateInstallFailedTitle">Update-installatie mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.PackagingInProgressTitle">Packaging bezig</sys:String>
+    <sys:String x:Key="Vm.Status.PackagingInProgressMessage">IntuneWinAppUtil.exe wordt uitgevoerd...</sys:String>
+    <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Los preflight-fouten op voordat package-creatie start.</sys:String>
+    <sys:String x:Key="Vm.Status.PackageCreatedTitle">Package gemaakt</sys:String>
+    <sys:String x:Key="Vm.Status.PackageCreatedMessage">Gemaakt: {0}</sys:String>
+    <sys:String x:Key="Vm.Status.PackagingFailedTitle">Packaging mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.UnexpectedErrorTitle">Onverwachte fout</sys:String>
+    <sys:String x:Key="Vm.Status.ProfileNameRequiredTitle">Profielnaam vereist</sys:String>
+    <sys:String x:Key="Vm.Status.ProfileNameRequiredMessage">Vul een profielnaam in voordat je opslaat.</sys:String>
+    <sys:String x:Key="Vm.Status.ProfileSavedTitle">Profiel opgeslagen</sys:String>
+    <sys:String x:Key="Vm.Status.ProfileSavedMessage">Profiel '{0}' is opgeslagen.</sys:String>
+    <sys:String x:Key="Vm.Status.NoProfileSelectedTitle">Geen profiel geselecteerd</sys:String>
+    <sys:String x:Key="Vm.Status.NoProfileSelectedMessage">Selecteer een profiel om te laden.</sys:String>
+    <sys:String x:Key="Vm.Status.ProfileMissingTitle">Profiel ontbreekt</sys:String>
+    <sys:String x:Key="Vm.Status.ProfileMissingMessage">Profiel '{0}' is niet gevonden.</sys:String>
+    <sys:String x:Key="Vm.Status.ProfileLoadedTitle">Profiel geladen</sys:String>
+    <sys:String x:Key="Vm.Status.ProfileLoadedMessage">Profiel '{0}' is geladen.</sys:String>
+    <sys:String x:Key="Vm.Status.ConfigurationResetMessage">Configuratie is gereset.</sys:String>
+
+    <sys:String x:Key="Vm.Fix.ToolPathAutoLocated">Toolpad automatisch gevonden.</sys:String>
+    <sys:String x:Key="Vm.Fix.ToolInstalledConfigured">Tool geinstalleerd en geconfigureerd.</sys:String>
+    <sys:String x:Key="Vm.Fix.InstallerDetected">Installer gevonden: {0}.</sys:String>
+    <sys:String x:Key="Vm.Fix.SourceAligned">Bronmap is uitgelijnd met de installerlocatie.</sys:String>
+    <sys:String x:Key="Vm.Fix.DefaultOutputCreated">Standaard outputmap is gemaakt.</sys:String>
+    <sys:String x:Key="Vm.Fix.RulesCompletedFromTemplate">Install/uninstall en Intune-regels zijn aangevuld met installer-template data.</sys:String>
+
+    <sys:String x:Key="Vm.Msi.ProductFormat">Product: {0}</sys:String>
+    <sys:String x:Key="Vm.Msi.VersionFormat">Versie: {0}</sys:String>
+    <sys:String x:Key="Vm.Msi.CodeFormat">Code: {0}</sys:String>
+    <sys:String x:Key="Vm.Msi.WarningFormat">Waarschuwing: {0}</sys:String>
+    <sys:String x:Key="Vm.Msi.MetadataAvailable">MSI-metadata beschikbaar.</sys:String>
+</ResourceDictionary>

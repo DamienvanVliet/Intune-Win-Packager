@@ -13,5 +13,9 @@ public sealed record AppSettings
     public bool UseLowImpactMode { get; init; } = false;
 
     public bool EnableSilentAppUpdates { get; init; }
+
+    public string UiLanguage { get; init; } = "en";
+
+    public string UiTheme { get; init; } = "light";
 }
 

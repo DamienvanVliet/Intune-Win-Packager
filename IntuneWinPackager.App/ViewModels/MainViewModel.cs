@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using WpfBrush = System.Windows.Media.Brush;
@@ -31,6 +32,8 @@ public partial class MainViewModel : ObservableObject
     private readonly IPreflightService _preflightService;
     private readonly IAppUpdateService _appUpdateService;
     private readonly IDialogService _dialogService;
+    private readonly ILocalizationService _localizationService;
+    private readonly IThemeService _themeService;
 
     private readonly ObservableCollection<string> _logs = new();
     private readonly ReadOnlyObservableCollection<string> _readonlyLogs;
@@ -43,6 +46,7 @@ public partial class MainViewModel : ObservableObject
     private CancellationTokenSource? _msiInspectionCancellation;
     private bool _isInitialized;
     private bool _suppressSetupRefresh;
+    private bool _isApplyingPreferences;
     private AppUpdateInfo? _latestUpdateInfo;
 
     [ObservableProperty]
@@ -181,10 +185,10 @@ public partial class MainViewModel : ObservableObject
     private SilentInstallPreset? selectedPreset;
 
     [ObservableProperty]
-    private string statusTitle = "Ready";
+    private string statusTitle = string.Empty;
 
     [ObservableProperty]
-    private string statusMessage = "Select an installer to start packaging.";
+    private string statusMessage = string.Empty;
 
     [ObservableProperty]
     private OperationState operationState = OperationState.Idle;
@@ -214,16 +218,22 @@ public partial class MainViewModel : ObservableObject
     private bool enableSilentAppUpdates;
 
     [ObservableProperty]
+    private string selectedLanguage = "English";
+
+    [ObservableProperty]
+    private string selectedTheme = "Light";
+
+    [ObservableProperty]
     private double packagingProgressPercentage;
 
     [ObservableProperty]
     private bool isPackagingProgressIndeterminate;
 
     [ObservableProperty]
-    private string packagingProgressStep = "Ready";
+    private string packagingProgressStep = string.Empty;
 
     [ObservableProperty]
-    private string packagingProgressDetail = "Waiting to start.";
+    private string packagingProgressDetail = string.Empty;
 
     [ObservableProperty]
     private string currentVersion = "1.0.0";
@@ -232,10 +242,10 @@ public partial class MainViewModel : ObservableObject
     private string latestVersion = "-";
 
     [ObservableProperty]
-    private string updateStatus = "Not checked yet.";
+    private string updateStatus = string.Empty;
 
     [ObservableProperty]
-    private string updateChangelog = "Click 'Check for Updates' to load release notes.";
+    private string updateChangelog = string.Empty;
 
     [ObservableProperty]
     private bool isUpdateAvailable;
@@ -247,7 +257,7 @@ public partial class MainViewModel : ObservableObject
     private bool hasPreflightRun;
 
     [ObservableProperty]
-    private string preflightSummary = "Run preflight checks to verify tool health, folders, permissions, and disk space.";
+    private string preflightSummary = string.Empty;
 
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
@@ -261,7 +271,9 @@ public partial class MainViewModel : ObservableObject
         IToolInstallerService toolInstallerService,
         IPreflightService preflightService,
         IAppUpdateService appUpdateService,
-        IDialogService dialogService)
+        IDialogService dialogService,
+        ILocalizationService localizationService,
+        IThemeService themeService)
     {
         _packagingWorkflowService = packagingWorkflowService;
         _validationService = validationService;
@@ -275,6 +287,8 @@ public partial class MainViewModel : ObservableObject
         _preflightService = preflightService;
         _appUpdateService = appUpdateService;
         _dialogService = dialogService;
+        _localizationService = localizationService;
+        _themeService = themeService;
 
         _readonlyLogs = new ReadOnlyObservableCollection<string>(_logs);
 
@@ -308,6 +322,8 @@ public partial class MainViewModel : ObservableObject
         }
 
         SelectedPreset = ExePresets.FirstOrDefault();
+        SelectedLanguage = _localizationService.CurrentLanguage;
+        SelectedTheme = _themeService.CurrentTheme;
 
         BrowseSourceFolderCommand = new RelayCommand(BrowseSourceFolder);
         BrowseSetupFileCommand = new AsyncRelayCommand(BrowseSetupFileAsync);
@@ -326,8 +342,17 @@ public partial class MainViewModel : ObservableObject
         CheckForUpdatesCommand = new AsyncRelayCommand(CheckForUpdatesAsync, () => !IsBusy);
         InstallUpdateCommand = new AsyncRelayCommand(InstallUpdateAsync, CanInstallUpdate);
 
+        _localizationService.LanguageChanged += HandleLanguageChanged;
+
         CurrentVersion = ResolveCurrentVersion();
         LatestVersion = CurrentVersion;
+        StatusTitle = T("Vm.Status.ReadyTitle");
+        StatusMessage = T("Vm.Status.SelectInstallerMessage");
+        UpdateChangelog = T("Vm.Update.ChangelogDefault");
+        UpdateStatus = T("Vm.Update.NotChecked");
+        PreflightSummary = T("Vm.Preflight.DefaultSummary");
+        PackagingProgressStep = T("Vm.Progress.ReadyStep");
+        PackagingProgressDetail = T("Vm.Progress.ReadyDetail");
     }
 
     public ObservableCollection<string> ValidationErrors { get; } = new();
@@ -386,6 +411,10 @@ public partial class MainViewModel : ObservableObject
         "Windows 11 24H2"
     ];
 
+    public IReadOnlyList<string> LanguageOptions => _localizationService.LanguageOptions;
+
+    public IReadOnlyList<string> ThemeOptions => _themeService.ThemeOptions;
+
     public bool IsMsiInstaller => InstallerType == InstallerType.Msi;
 
     public bool IsExeInstaller => InstallerType == InstallerType.Exe;
@@ -412,11 +441,11 @@ public partial class MainViewModel : ObservableObject
 
     public string InstallerTypeDisplay => InstallerType switch
     {
-        InstallerType.Msi => "MSI detected",
-        InstallerType.Exe => "EXE detected",
-        InstallerType.AppxMsix => "APPX/MSIX detected",
-        InstallerType.Script => "Script installer detected",
-        _ => "No installer selected"
+        InstallerType.Msi => T("Vm.InstallerType.Msi"),
+        InstallerType.Exe => T("Vm.InstallerType.Exe"),
+        InstallerType.AppxMsix => T("Vm.InstallerType.Appx"),
+        InstallerType.Script => T("Vm.InstallerType.Script"),
+        _ => T("Vm.InstallerType.None")
     };
 
     public WpfBrush InstallerTypeBrush => InstallerType switch
@@ -445,12 +474,12 @@ public partial class MainViewModel : ObservableObject
     public bool IsOutputFolderValid => !string.IsNullOrWhiteSpace(OutputFolder);
 
     public string ReadinessSummary =>
-        $"Tool path: {(IsToolPathValid ? "Ready" : "Missing")}{Environment.NewLine}" +
-        $"Installer file: {(IsSetupFileValid ? "Ready" : "Missing")}{Environment.NewLine}" +
-        $"Source folder: {(IsSourceFolderValid ? "Ready" : "Missing")}{Environment.NewLine}" +
-        $"Output folder: {(IsOutputFolderValid ? "Ready" : "Missing")}{Environment.NewLine}" +
-        $"Detection rule: {(DetectionRuleType == IntuneDetectionRuleType.None ? "Missing" : "Configured")}{Environment.NewLine}" +
-        $"Smart staging: {(UseSmartSourceStaging ? "Enabled" : "Disabled")}";
+        $"{T("Vm.Readiness.ToolPath")}: {(IsToolPathValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}{Environment.NewLine}" +
+        $"{T("Vm.Readiness.InstallerFile")}: {(IsSetupFileValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}{Environment.NewLine}" +
+        $"{T("Vm.Readiness.SourceFolder")}: {(IsSourceFolderValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}{Environment.NewLine}" +
+        $"{T("Vm.Readiness.OutputFolder")}: {(IsOutputFolderValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}{Environment.NewLine}" +
+        $"{T("Vm.Readiness.DetectionRule")}: {(DetectionRuleType == IntuneDetectionRuleType.None ? T("Vm.Readiness.Missing") : T("Vm.Readiness.Configured"))}{Environment.NewLine}" +
+        $"{T("Vm.Readiness.SmartStaging")}: {(UseSmartSourceStaging ? T("Vm.Readiness.Enabled") : T("Vm.Readiness.Disabled"))}";
 
     public string NextStepHint
     {
@@ -458,54 +487,64 @@ public partial class MainViewModel : ObservableObject
         {
             if (!IsToolPathValid)
             {
-                return "Tool not found. Click Install Tool (1 click), Auto Locate, or set the path manually.";
+                return T("Vm.NextStep.ToolMissing");
             }
 
             if (!IsSetupFileValid)
             {
-                return "Drop or browse a supported setup file (.msi, .exe, .appx/.msix/.bundle, .ps1, .cmd, .bat).";
+                return T("Vm.NextStep.SetupMissing");
             }
 
             if (!IsSourceFolderValid)
             {
-                return "Set the source folder (usually the installer's folder).";
+                return T("Vm.NextStep.SourceMissing");
             }
 
             if (!IsOutputFolderValid)
             {
-                return "Set the output folder for the generated .intunewin.";
+                return T("Vm.NextStep.OutputMissing");
             }
 
             if (DetectionRuleType == IntuneDetectionRuleType.None)
             {
-                return "Configure an Intune detection rule before packaging.";
+                return T("Vm.NextStep.DetectionMissing");
             }
 
             if (IsSilentSwitchReviewVisible && !SilentSwitchesVerified)
             {
-                return "Review and confirm EXE silent switches before packaging.";
+                return T("Vm.NextStep.SwitchVerify");
             }
 
             if (HasValidationErrors)
             {
-                return ValidationErrors.FirstOrDefault() ?? "Resolve the remaining validation errors.";
+                return ValidationErrors.FirstOrDefault() ?? T("Vm.NextStep.ResolveValidation");
             }
 
             if (HasPreflightRun && HasPreflightErrors)
             {
                 var blocking = PreflightChecks.FirstOrDefault(check => !check.Passed && check.Severity == PreflightSeverity.Error);
                 return blocking is null
-                    ? "Run preflight again to verify packaging readiness."
-                    : $"Preflight blocked: {blocking.Title}. {blocking.Message}";
+                    ? T("Vm.NextStep.PreflightRunAgain")
+                    : string.Format(CultureInfo.CurrentCulture, T("Vm.NextStep.PreflightBlocked"), blocking.Title, blocking.Message);
             }
 
-            return "Everything is ready. Click Start Packaging.";
+            return T("Vm.NextStep.ReadyToPackage");
         }
     }
 
     public string PackagingProgressLabel => IsPackagingProgressIndeterminate
         ? PackagingProgressStep
         : $"{PackagingProgressStep} ({PackagingProgressPercentage:0}%)";
+
+    public string CurrentVersionDisplay => string.Format(
+        CultureInfo.CurrentCulture,
+        T("Vm.Version.CurrentFormat"),
+        CurrentVersion);
+
+    public string LatestVersionDisplay => string.Format(
+        CultureInfo.CurrentCulture,
+        T("Vm.Version.LatestFormat"),
+        LatestVersion);
 
     public IRelayCommand BrowseSourceFolderCommand { get; }
 
@@ -565,7 +604,10 @@ public partial class MainViewModel : ObservableObject
         var installer = FindDroppedInstaller(droppedPaths);
         if (installer is null)
         {
-            SetStatus(OperationState.Error, "Unsupported Drop", "Drop a supported setup file (.msi, .exe, .appx/.msix/.bundle, .ps1, .cmd, .bat).");
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.UnsupportedDropTitle"),
+                T("Vm.Status.UnsupportedDropMessage"));
             return;
         }
 
@@ -938,9 +980,73 @@ public partial class MainViewModel : ObservableObject
         _ = PersistSettingsSafeAsync();
     }
 
+    partial void OnSelectedLanguageChanged(string value)
+    {
+        var normalized = _localizationService.NormalizeLanguage(value);
+        if (!string.Equals(normalized, value, StringComparison.Ordinal))
+        {
+            SelectedLanguage = normalized;
+            return;
+        }
+
+        _localizationService.SetLanguage(normalized);
+
+        if (_isApplyingPreferences)
+        {
+            return;
+        }
+
+        _ = PersistSettingsSafeAsync();
+    }
+
+    partial void OnSelectedThemeChanged(string value)
+    {
+        var normalized = _themeService.NormalizeTheme(value);
+        if (!string.Equals(normalized, value, StringComparison.Ordinal))
+        {
+            SelectedTheme = normalized;
+            return;
+        }
+
+        _themeService.SetTheme(normalized);
+
+        if (_isApplyingPreferences)
+        {
+            return;
+        }
+
+        _ = PersistSettingsSafeAsync();
+    }
+
+    partial void OnCurrentVersionChanged(string value)
+    {
+        OnPropertyChanged(nameof(CurrentVersionDisplay));
+    }
+
+    partial void OnLatestVersionChanged(string value)
+    {
+        OnPropertyChanged(nameof(LatestVersionDisplay));
+    }
+
     private async Task LoadSettingsAsync()
     {
         var settings = await _settingsService.LoadAsync();
+
+        _isApplyingPreferences = true;
+        try
+        {
+            var language = _localizationService.DisplayNameFromCode(settings.UiLanguage);
+            _localizationService.SetLanguage(language);
+            SelectedLanguage = language;
+
+            var theme = _themeService.DisplayNameFromCode(settings.UiTheme);
+            _themeService.SetTheme(theme);
+            SelectedTheme = theme;
+        }
+        finally
+        {
+            _isApplyingPreferences = false;
+        }
 
         IntuneWinAppUtilPath = settings.IntuneWinAppUtilPath;
         SourceFolder = settings.LastSourceFolder;
@@ -1039,11 +1145,17 @@ public partial class MainViewModel : ObservableObject
         if (!string.IsNullOrWhiteSpace(located))
         {
             IntuneWinAppUtilPath = located;
-            SetStatus(OperationState.Idle, "Tool Located", "IntuneWinAppUtil.exe was located automatically.");
+            SetStatus(
+                OperationState.Idle,
+                T("Vm.Status.ToolLocatedTitle"),
+                T("Vm.Status.ToolLocatedMessage"));
             return;
         }
 
-        SetStatus(OperationState.Error, "Tool Not Found", "Could not auto-locate IntuneWinAppUtil.exe. Configure it manually.");
+        SetStatus(
+            OperationState.Error,
+            T("Vm.Status.ToolNotFoundTitle"),
+            T("Vm.Status.ToolNotFoundMessage"));
     }
 
     private async Task InstallToolAsync()
@@ -1066,22 +1178,24 @@ public partial class MainViewModel : ObservableObject
 
                 SetStatus(
                     OperationState.Success,
-                    installResult.AlreadyInstalled ? "Tool Ready" : "Tool Installed",
                     installResult.AlreadyInstalled
-                        ? "IntuneWinAppUtil.exe was found and configured."
-                        : "Installed and configured IntuneWinAppUtil.exe.");
+                        ? T("Vm.Status.ToolReadyTitle")
+                        : T("Vm.Status.ToolInstalledTitle"),
+                    installResult.AlreadyInstalled
+                        ? T("Vm.Status.ToolReadyMessage")
+                        : T("Vm.Status.ToolInstalledMessage"));
             }
             else
             {
                 SetStatus(
                     OperationState.Error,
-                    "Tool Install Failed",
+                    T("Vm.Status.ToolInstallFailedTitle"),
                     installResult.Message);
             }
         }
         catch (Exception ex)
         {
-            SetStatus(OperationState.Error, "Install Error", ex.Message);
+            SetStatus(OperationState.Error, T("Vm.Status.InstallErrorTitle"), ex.Message);
             AppendLog($"Install error: {ex.Message}");
         }
         finally
@@ -1105,7 +1219,10 @@ public partial class MainViewModel : ObservableObject
             preset: SelectedPreset);
         ApplySuggestion(suggestion);
 
-        SetStatus(OperationState.Idle, "Preset Applied", $"Applied preset: {SelectedPreset?.Name ?? "Custom"}.");
+        SetStatus(
+            OperationState.Idle,
+            T("Vm.Status.PresetAppliedTitle"),
+            TF("Vm.Status.PresetAppliedMessage", SelectedPreset?.Name ?? T("Vm.Preset.Custom")));
     }
 
     private async Task RunPreflightAsync()
@@ -1119,20 +1236,29 @@ public partial class MainViewModel : ObservableObject
 
             if (result.HasErrors)
             {
-                SetStatus(OperationState.Error, "Preflight Failed", "Fix the blocking preflight issues before packaging.");
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.PreflightFailedTitle"),
+                    T("Vm.Status.PreflightFailedMessage"));
             }
             else if (result.HasWarnings)
             {
-                SetStatus(OperationState.Idle, "Preflight Complete", "Preflight passed with warnings. Review the notes before packaging.");
+                SetStatus(
+                    OperationState.Idle,
+                    T("Vm.Status.PreflightCompleteTitle"),
+                    T("Vm.Status.PreflightCompleteMessage"));
             }
             else
             {
-                SetStatus(OperationState.Success, "Preflight Passed", "All critical preflight checks passed.");
+                SetStatus(
+                    OperationState.Success,
+                    T("Vm.Status.PreflightPassedTitle"),
+                    T("Vm.Status.PreflightPassedMessage"));
             }
         }
         catch (Exception ex)
         {
-            SetStatus(OperationState.Error, "Preflight Error", ex.Message);
+            SetStatus(OperationState.Error, T("Vm.Status.PreflightErrorTitle"), ex.Message);
             AppendLog($"Preflight error: {ex.Message}");
         }
         finally
@@ -1173,11 +1299,11 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(NextStepHint));
     }
 
-    private static string BuildPreflightSummary(PreflightResult result)
+    private string BuildPreflightSummary(PreflightResult result)
     {
         if (result.TotalCount == 0)
         {
-            return "No preflight checks were executed.";
+            return T("Vm.Preflight.SummaryNone");
         }
 
         var warnings = result.Checks.Count(check => !check.Passed && check.Severity == PreflightSeverity.Warning);
@@ -1185,15 +1311,30 @@ public partial class MainViewModel : ObservableObject
 
         if (errors > 0)
         {
-            return $"{result.PassedCount}/{result.TotalCount} checks passed. {errors} blocking issue(s), {warnings} warning(s).";
+            return string.Format(
+                CultureInfo.CurrentCulture,
+                T("Vm.Preflight.SummaryErrors"),
+                result.PassedCount,
+                result.TotalCount,
+                errors,
+                warnings);
         }
 
         if (warnings > 0)
         {
-            return $"{result.PassedCount}/{result.TotalCount} checks passed with {warnings} warning(s).";
+            return string.Format(
+                CultureInfo.CurrentCulture,
+                T("Vm.Preflight.SummaryWarnings"),
+                result.PassedCount,
+                result.TotalCount,
+                warnings);
         }
 
-        return $"{result.PassedCount}/{result.TotalCount} checks passed. Ready to package.";
+        return string.Format(
+            CultureInfo.CurrentCulture,
+            T("Vm.Preflight.SummaryPassed"),
+            result.PassedCount,
+            result.TotalCount);
     }
 
     private async Task ApplyQuickFixesAsync()
@@ -1209,7 +1350,7 @@ public partial class MainViewModel : ObservableObject
                 if (!string.IsNullOrWhiteSpace(locatedTool))
                 {
                     IntuneWinAppUtilPath = locatedTool;
-                    fixes.Add("Tool path auto-located.");
+                    fixes.Add(T("Vm.Fix.ToolPathAutoLocated"));
                 }
                 else
                 {
@@ -1217,7 +1358,7 @@ public partial class MainViewModel : ObservableObject
                     if (installResult.Success && !string.IsNullOrWhiteSpace(installResult.ToolPath))
                     {
                         IntuneWinAppUtilPath = installResult.ToolPath;
-                        fixes.Add("Tool installed and configured.");
+                        fixes.Add(T("Vm.Fix.ToolInstalledConfigured"));
                     }
                 }
             }
@@ -1231,7 +1372,7 @@ public partial class MainViewModel : ObservableObject
                 if (!string.IsNullOrWhiteSpace(candidateInstaller))
                 {
                     await SelectSetupFileAsync(candidateInstaller);
-                    fixes.Add($"Installer detected: {Path.GetFileName(candidateInstaller)}.");
+                    fixes.Add(TF("Vm.Fix.InstallerDetected", Path.GetFileName(candidateInstaller)));
                 }
             }
 
@@ -1242,13 +1383,13 @@ public partial class MainViewModel : ObservableObject
                     (!IsSourceFolderValid || !IsPathInsideFolder(SetupFilePath, SourceFolder)))
                 {
                     SourceFolder = installerFolder;
-                    fixes.Add("Source folder aligned with installer location.");
+                    fixes.Add(T("Vm.Fix.SourceAligned"));
                 }
 
                 if (!IsOutputFolderValid)
                 {
                     OutputFolder = BuildDefaultOutputFolder(SourceFolder);
-                    fixes.Add("Default output folder created.");
+                    fixes.Add(T("Vm.Fix.DefaultOutputCreated"));
                 }
 
                 InstallerType = _installerCommandService.DetectInstallerType(SetupFilePath);
@@ -1269,7 +1410,7 @@ public partial class MainViewModel : ObservableObject
                         overwriteCommands: string.IsNullOrWhiteSpace(InstallCommand) || string.IsNullOrWhiteSpace(UninstallCommand),
                         overwriteRules: DetectionRuleType == IntuneDetectionRuleType.None);
 
-                    fixes.Add("Install/uninstall and Intune rules were completed from installer template data.");
+                    fixes.Add(T("Vm.Fix.RulesCompletedFromTemplate"));
                 }
             }
 
@@ -1281,14 +1422,14 @@ public partial class MainViewModel : ObservableObject
             {
                 SetStatus(
                     HasValidationErrors ? OperationState.Error : OperationState.Idle,
-                    "No Auto-Fix Applied",
+                    T("Vm.Status.NoAutoFixTitle"),
                     NextStepHint);
                 return;
             }
 
             SetStatus(
                 HasValidationErrors ? OperationState.Idle : OperationState.Success,
-                "Quick Fix Applied",
+                T("Vm.Status.QuickFixAppliedTitle"),
                 string.Join(" ", fixes));
         }
         finally
@@ -1309,7 +1450,7 @@ public partial class MainViewModel : ObservableObject
         var previousMessage = StatusMessage;
 
         IsBusy = true;
-        UpdateStatus = "Checking GitHub releases...";
+        UpdateStatus = T("Vm.Update.Checking");
         AppendLog("Checking for app updates...");
 
         try
@@ -1322,7 +1463,7 @@ public partial class MainViewModel : ObservableObject
                 : updateInfo.LatestVersion;
 
             UpdateChangelog = string.IsNullOrWhiteSpace(updateInfo.ReleaseNotes)
-                ? "No changelog published for this release."
+                ? T("Vm.Update.NoChangelog")
                 : updateInfo.ReleaseNotes.Trim();
 
             UpdateStatus = updateInfo.Message;
@@ -1332,8 +1473,8 @@ public partial class MainViewModel : ObservableObject
             {
                 SetStatus(
                     OperationState.Success,
-                    "Update Available",
-                    $"Version {updateInfo.LatestVersion} is available. Review changelog and click Install Update.");
+                    T("Vm.Status.UpdateAvailableTitle"),
+                    TF("Vm.Status.UpdateAvailableMessage", updateInfo.LatestVersion));
                 AppendLog($"Update available: {updateInfo.LatestVersion}.");
             }
             else
@@ -1362,14 +1503,14 @@ public partial class MainViewModel : ObservableObject
                         previousTitle,
                         previousMessage);
                     AppendLog(string.IsNullOrWhiteSpace(updateInfo.Message)
-                        ? "Update check did not return a public release feed."
+                        ? T("Vm.Update.NoPublicFeed")
                         : updateInfo.Message);
                 }
             }
         }
         catch (Exception ex)
         {
-            UpdateStatus = $"Update check failed: {ex.Message}";
+            UpdateStatus = TF("Vm.Update.CheckFailedFormat", ex.Message);
             IsUpdateAvailable = false;
             SetStatus(previousState, previousTitle, previousMessage);
             AppendLog($"Update check failed: {ex.Message}");
@@ -1389,17 +1530,20 @@ public partial class MainViewModel : ObservableObject
 
         if (_latestUpdateInfo is null || !_latestUpdateInfo.IsUpdateAvailable)
         {
-            SetStatus(OperationState.Error, "No Update Selected", "Check for updates first.");
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.NoUpdateSelectedTitle"),
+                T("Vm.Status.NoUpdateSelectedMessage"));
             return;
         }
 
         IsBusy = true;
         SetStatus(
             OperationState.Running,
-            "Installing Update",
+            T("Vm.Status.InstallingUpdateTitle"),
             EnableSilentAppUpdates
-                ? "Downloading update and starting silent installer..."
-                : "Downloading and launching update installer...");
+                ? T("Vm.Status.InstallingUpdateSilentMessage")
+                : T("Vm.Status.InstallingUpdateInteractiveMessage"));
         AppendLog($"Starting update install to version {_latestUpdateInfo.LatestVersion}...");
 
         try
@@ -1411,20 +1555,20 @@ public partial class MainViewModel : ObservableObject
 
             if (!installResult.Success)
             {
-                SetStatus(OperationState.Error, "Update Install Failed", installResult.Message);
+                SetStatus(OperationState.Error, T("Vm.Status.UpdateInstallFailedTitle"), installResult.Message);
                 UpdateStatus = installResult.Message;
                 return;
             }
 
             SetStatus(
                 OperationState.Success,
-                "Update Installer Started",
+                T("Vm.Status.UpdateInstallerStartedTitle"),
                 EnableSilentAppUpdates
-                    ? "Silent update started. The app will close so setup can replace files."
-                    : "Installer launched. Finish setup, then reopen this app.");
+                    ? T("Vm.Status.UpdateInstallerStartedSilentMessage")
+                    : T("Vm.Status.UpdateInstallerStartedInteractiveMessage"));
             UpdateStatus = EnableSilentAppUpdates
-                ? "Silent update installer started."
-                : "Update installer started.";
+                ? T("Vm.Update.SilentInstallerStarted")
+                : T("Vm.Update.InstallerStarted");
             AppendLog("Installer launched. Closing app to allow update installation...");
 
             await Task.Delay(700);
@@ -1432,8 +1576,8 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            SetStatus(OperationState.Error, "Update Install Failed", ex.Message);
-            UpdateStatus = $"Update install failed: {ex.Message}";
+            SetStatus(OperationState.Error, T("Vm.Status.UpdateInstallFailedTitle"), ex.Message);
+            UpdateStatus = TF("Vm.Update.InstallFailedFormat", ex.Message);
             AppendLog($"Update install failed: {ex.Message}");
         }
         finally
@@ -1487,20 +1631,26 @@ public partial class MainViewModel : ObservableObject
         ResultChecklistPath = string.Empty;
         IntunePortalChecklist = string.Empty;
         ClearLogs();
-        SetPackagingProgress("Preparing", "Validating request and starting workflow.", 0);
+        SetPackagingProgress(T("Vm.Progress.PreparingStep"), T("Vm.Progress.PreparingDetail"), 0);
 
-        SetStatus(OperationState.Running, "Packaging In Progress", "Running IntuneWinAppUtil.exe...");
+        SetStatus(
+            OperationState.Running,
+            T("Vm.Status.PackagingInProgressTitle"),
+            T("Vm.Status.PackagingInProgressMessage"));
         AppendLog("Packaging started.");
 
         try
         {
             await PersistSettingsAsync();
-            SetPackagingProgress("Preflight", "Running readiness checks before packaging.", 8);
+            SetPackagingProgress(T("Vm.Progress.PreflightStep"), T("Vm.Progress.PreflightDetail"), 8);
             var preflight = await RunPreflightCoreAsync();
             if (preflight.HasErrors)
             {
-                SetStatus(OperationState.Error, "Preflight Failed", "Resolve preflight errors before starting package creation.");
-                SetPackagingProgress("Preflight Failed", "Fix blocking issues and run packaging again.", 100);
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.PreflightFailedTitle"),
+                    T("Vm.Status.PreflightResolveBeforePackaging"));
+                SetPackagingProgress(T("Vm.Progress.PreflightFailedStep"), T("Vm.Progress.PreflightFailedDetail"), 100);
                 AppendLog("Packaging stopped because preflight reported blocking issues.");
                 return;
             }
@@ -1544,22 +1694,22 @@ public partial class MainViewModel : ObservableObject
             {
                 SetStatus(
                     OperationState.Success,
-                    "Package Created",
-                    $"Created: {result.OutputPackagePath}");
-                SetPackagingProgress("Completed", "Package created successfully.", 100);
+                    T("Vm.Status.PackageCreatedTitle"),
+                    TF("Vm.Status.PackageCreatedMessage", result.OutputPackagePath ?? string.Empty));
+                SetPackagingProgress(T("Vm.Progress.CompletedStep"), T("Vm.Progress.CompletedDetail"), 100);
                 AppendLog("Packaging completed successfully.");
             }
             else
             {
-                SetStatus(OperationState.Error, "Packaging Failed", result.Message);
-                SetPackagingProgress("Failed", result.Message, 100);
+                SetStatus(OperationState.Error, T("Vm.Status.PackagingFailedTitle"), result.Message);
+                SetPackagingProgress(T("Vm.Progress.FailedStep"), result.Message, 100);
                 AppendLog($"Packaging failed: {result.Message}");
             }
         }
         catch (Exception ex)
         {
-            SetStatus(OperationState.Error, "Unexpected Error", ex.Message);
-            SetPackagingProgress("Unexpected Error", ex.Message, 100);
+            SetStatus(OperationState.Error, T("Vm.Status.UnexpectedErrorTitle"), ex.Message);
+            SetPackagingProgress(T("Vm.Progress.UnexpectedErrorStep"), ex.Message, 100);
             AppendLog($"Unexpected error: {ex.Message}");
         }
         finally
@@ -1579,7 +1729,10 @@ public partial class MainViewModel : ObservableObject
 
         if (string.IsNullOrWhiteSpace(resolvedName))
         {
-            SetStatus(OperationState.Error, "Profile Name Required", "Provide a profile name before saving.");
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.ProfileNameRequiredTitle"),
+                T("Vm.Status.ProfileNameRequiredMessage"));
             return;
         }
 
@@ -1602,7 +1755,10 @@ public partial class MainViewModel : ObservableObject
 
         await RefreshProfileListAsync();
 
-        SetStatus(OperationState.Idle, "Profile Saved", $"Saved profile '{resolvedName}'.");
+        SetStatus(
+            OperationState.Idle,
+            T("Vm.Status.ProfileSavedTitle"),
+            TF("Vm.Status.ProfileSavedMessage", resolvedName));
     }
 
     private async Task LoadProfileAsync()
@@ -1613,14 +1769,20 @@ public partial class MainViewModel : ObservableObject
 
         if (string.IsNullOrWhiteSpace(nameToLoad))
         {
-            SetStatus(OperationState.Error, "No Profile Selected", "Select a profile to load.");
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.NoProfileSelectedTitle"),
+                T("Vm.Status.NoProfileSelectedMessage"));
             return;
         }
 
         var profile = await _profileService.GetProfileAsync(nameToLoad);
         if (profile is null)
         {
-            SetStatus(OperationState.Error, "Profile Missing", $"Profile '{nameToLoad}' was not found.");
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.ProfileMissingTitle"),
+                TF("Vm.Status.ProfileMissingMessage", nameToLoad));
             return;
         }
 
@@ -1651,7 +1813,10 @@ public partial class MainViewModel : ObservableObject
         }
 
         UpdateValidation();
-        SetStatus(OperationState.Idle, "Profile Loaded", $"Loaded profile '{profile.Name}'.");
+        SetStatus(
+            OperationState.Idle,
+            T("Vm.Status.ProfileLoadedTitle"),
+            TF("Vm.Status.ProfileLoadedMessage", profile.Name));
     }
 
     private void ResetConfiguration()
@@ -1706,17 +1871,17 @@ public partial class MainViewModel : ObservableObject
             IntunePortalChecklist = string.Empty;
             HasPackagingRun = false;
             HasPreflightRun = false;
-            PreflightSummary = "Run preflight checks to verify tool health, folders, permissions, and disk space.";
+            PreflightSummary = T("Vm.Preflight.DefaultSummary");
             PreflightChecks.Clear();
             PackagingProgressPercentage = 0;
             IsPackagingProgressIndeterminate = false;
-            PackagingProgressStep = "Ready";
-            PackagingProgressDetail = "Waiting to start.";
+            PackagingProgressStep = T("Vm.Progress.ReadyStep");
+            PackagingProgressDetail = T("Vm.Progress.ReadyDetail");
             ProfileName = string.Empty;
             SelectedProfileName = null;
             OperationState = OperationState.Idle;
-            StatusTitle = "Ready";
-            StatusMessage = "Configuration reset.";
+            StatusTitle = T("Vm.Status.ReadyTitle");
+            StatusMessage = T("Vm.Status.ConfigurationResetMessage");
             ClearLogs();
         }
         finally
@@ -1846,26 +2011,26 @@ public partial class MainViewModel : ObservableObject
             var summaryParts = new List<string>();
             if (!string.IsNullOrWhiteSpace(metadata.ProductName))
             {
-                summaryParts.Add($"Product: {metadata.ProductName}");
+                summaryParts.Add(TF("Vm.Msi.ProductFormat", metadata.ProductName));
             }
 
             if (!string.IsNullOrWhiteSpace(metadata.ProductVersion))
             {
-                summaryParts.Add($"Version: {metadata.ProductVersion}");
+                summaryParts.Add(TF("Vm.Msi.VersionFormat", metadata.ProductVersion));
             }
 
             if (!string.IsNullOrWhiteSpace(metadata.ProductCode))
             {
-                summaryParts.Add($"Code: {metadata.ProductCode}");
+                summaryParts.Add(TF("Vm.Msi.CodeFormat", metadata.ProductCode));
             }
 
             if (!string.IsNullOrWhiteSpace(metadata.InspectionWarning))
             {
-                summaryParts.Add($"Warning: {metadata.InspectionWarning}");
+                summaryParts.Add(TF("Vm.Msi.WarningFormat", metadata.InspectionWarning));
             }
 
             MsiMetadataSummary = summaryParts.Count == 0
-                ? "MSI metadata available."
+                ? T("Vm.Msi.MetadataAvailable")
                 : string.Join(" | ", summaryParts);
         }
         catch (OperationCanceledException)
@@ -1883,7 +2048,9 @@ public partial class MainViewModel : ObservableObject
             LastOutputFolder = OutputFolder,
             LastSetupFilePath = SetupFilePath,
             UseLowImpactMode = UseLowImpactMode,
-            EnableSilentAppUpdates = EnableSilentAppUpdates
+            EnableSilentAppUpdates = EnableSilentAppUpdates,
+            UiLanguage = _localizationService.CurrentLanguageCode,
+            UiTheme = _themeService.CurrentThemeCode
         };
 
         await _settingsService.SaveAsync(settings);
@@ -2095,7 +2262,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         HasPreflightRun = false;
-        PreflightSummary = "Configuration changed. Run preflight checks again.";
+        PreflightSummary = T("Vm.Preflight.ConfigChanged");
         PreflightChecks.Clear();
     }
 
@@ -2104,6 +2271,42 @@ public partial class MainViewModel : ObservableObject
         OperationState = state;
         StatusTitle = title;
         StatusMessage = message;
+    }
+
+    private string T(string key)
+    {
+        return _localizationService.Translate(key);
+    }
+
+    private string TF(string key, params object[] args)
+    {
+        return string.Format(CultureInfo.CurrentCulture, T(key), args);
+    }
+
+    private void HandleLanguageChanged(object? sender, EventArgs e)
+    {
+        OnPropertyChanged(nameof(InstallerTypeDisplay));
+        OnPropertyChanged(nameof(ReadinessSummary));
+        OnPropertyChanged(nameof(NextStepHint));
+        OnPropertyChanged(nameof(CurrentVersionDisplay));
+        OnPropertyChanged(nameof(LatestVersionDisplay));
+
+        if (_latestUpdateInfo is null)
+        {
+            UpdateChangelog = T("Vm.Update.ChangelogDefault");
+            UpdateStatus = T("Vm.Update.NotChecked");
+        }
+
+        if (!HasPreflightRun)
+        {
+            PreflightSummary = T("Vm.Preflight.DefaultSummary");
+        }
+
+        if (!HasPackagingRun)
+        {
+            PackagingProgressStep = T("Vm.Progress.ReadyStep");
+            PackagingProgressDetail = T("Vm.Progress.ReadyDetail");
+        }
     }
 
     private void SetPackagingProgress(string step, string detail, double percentage, bool isIndeterminate = false)
