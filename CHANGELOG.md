@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.7] - 2026-04-14
+
+### Added
+- Fix dark-mode dropdown contrast/readability across settings and rules panels.\n- Improve packaging logs readability (wrapping + larger visible area).\n- Make UI density more compact and reduce oversized layout feel.
+
 ## [1.1.6] - 2026-04-14
 
 ### Added
