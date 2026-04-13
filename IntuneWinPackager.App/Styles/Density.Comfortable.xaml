@@ -1,14 +1,14 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:sys="clr-namespace:System;assembly=mscorlib">
-    <sys:Double x:Key="Density.Scale">0.9</sys:Double>
-    <Thickness x:Key="Density.CardPadding">14</Thickness>
-    <Thickness x:Key="Density.InputPadding">8,6</Thickness>
-    <Thickness x:Key="Density.ComboPadding">6,3</Thickness>
-    <Thickness x:Key="Density.ButtonPadding">12,8</Thickness>
-    <Thickness x:Key="Density.TabPadding">12,6</Thickness>
-    <sys:Double x:Key="Density.ControlFontSize">12</sys:Double>
-    <sys:Double x:Key="Density.CheckboxFontSize">11</sys:Double>
-    <sys:Double x:Key="Density.LogHeight">440</sys:Double>
-    <sys:Double x:Key="Density.LogFontSize">11</sys:Double>
+    <sys:Double x:Key="Density.Scale">0.84</sys:Double>
+    <Thickness x:Key="Density.CardPadding">12</Thickness>
+    <Thickness x:Key="Density.InputPadding">7,5</Thickness>
+    <Thickness x:Key="Density.ComboPadding">5,2</Thickness>
+    <Thickness x:Key="Density.ButtonPadding">10,6</Thickness>
+    <Thickness x:Key="Density.TabPadding">10,5</Thickness>
+    <sys:Double x:Key="Density.ControlFontSize">11</sys:Double>
+    <sys:Double x:Key="Density.CheckboxFontSize">10</sys:Double>
+    <sys:Double x:Key="Density.LogHeight">470</sys:Double>
+    <sys:Double x:Key="Density.LogFontSize">10</sys:Double>
 </ResourceDictionary>

@@ -47,7 +47,14 @@
         <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
         <Setter Property="Background" Value="{DynamicResource ComboBoxBackgroundBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource ComboBoxForegroundBrush}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="Opacity" Value="1" />
+        <Style.Triggers>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+                <Setter Property="Opacity" Value="0.78" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <Style TargetType="ComboBoxItem">
