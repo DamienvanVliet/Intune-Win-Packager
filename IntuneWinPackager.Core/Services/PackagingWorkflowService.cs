@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -11,6 +12,8 @@ namespace IntuneWinPackager.Core.Services;
 
 public sealed class PackagingWorkflowService : IPackagingWorkflowService
 {
+    private const int MaxStagingCopyParallelism = 8;
+
     private static readonly JsonSerializerOptions MetadataSerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -86,7 +89,11 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         try
         {
             ReportProgress(20, "Preparing Source", "Evaluating source optimization and setup path.");
+            var sourcePreparationStopwatch = Stopwatch.StartNew();
             preparedSource = PrepareSourceContext(request, startedAtUtc, logProgress, cancellationToken);
+            sourcePreparationStopwatch.Stop();
+
+            logProgress?.Report($"Source preparation completed in {sourcePreparationStopwatch.Elapsed.TotalSeconds:0.00}s.");
 
             var arguments = $"-c {Quote(preparedSource.PackagingSourceFolder)} -s {Quote(preparedSource.SetupRelativePath)} -o {Quote(request.Configuration.OutputFolder)} -q";
 
@@ -94,6 +101,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             logProgress?.Report($"Starting packaging for {Path.GetFileName(preparedSource.SetupRelativePath)}");
             logProgress?.Report($"Running: {Path.GetFileName(request.IntuneWinAppUtilPath)} {arguments}");
 
+            var packagingStopwatch = Stopwatch.StartNew();
             var processResult = await _processRunner.RunAsync(
                 new ProcessRunRequest
                 {
@@ -111,6 +119,9 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                     }
                 }),
                 cancellationToken);
+            packagingStopwatch.Stop();
+
+            logProgress?.Report($"Packaging process finished in {packagingStopwatch.Elapsed.TotalSeconds:0.00}s (exit code {processResult.ExitCode}).");
 
             ReportProgress(92, "Resolving Output", "Locating generated .intunewin package.");
             var outputPackagePath = ResolveOutputPackagePath(
@@ -193,7 +204,10 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
 
         var outputFolder = Path.GetFullPath(request.Configuration.OutputFolder);
         var outputInsideSource = IsPathInsideFolder(outputFolder, sourceFolder);
-        var sourceContainsPackages = SourceContainsPackageArtifacts(sourceFolder);
+        var sourceContainsPackages =
+            request.Configuration.UseSmartSourceStaging &&
+            !outputInsideSource &&
+            SourceContainsPackageArtifacts(sourceFolder);
 
         var shouldStage = request.Configuration.UseSmartSourceStaging &&
             (outputInsideSource || sourceContainsPackages);
@@ -225,16 +239,18 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
 
         var copiedFileCount = 0;
         long copiedBytes = 0;
+        var copyParallelism = DetermineStagingCopyParallelism(request.UseLowImpactMode);
 
         CopyDirectoryTree(
             sourceFolder,
             stagingSource,
             outputInsideSource ? outputFolder : null,
+            copyParallelism,
             ref copiedFileCount,
             ref copiedBytes,
             cancellationToken);
 
-        logProgress?.Report($"Staged {copiedFileCount} file(s), {FormatBytes(copiedBytes)} copied to isolated source.");
+        logProgress?.Report($"Staged {copiedFileCount} file(s), {FormatBytes(copiedBytes)} copied to isolated source (parallelism: {copyParallelism}).");
 
         return new PreparedSourceContext
         {
@@ -246,10 +262,27 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         };
     }
 
+    private static int DetermineStagingCopyParallelism(bool useLowImpactMode)
+    {
+        if (useLowImpactMode)
+        {
+            return 1;
+        }
+
+        var logicalCpuCount = Environment.ProcessorCount;
+        if (logicalCpuCount <= 2)
+        {
+            return 2;
+        }
+
+        return Math.Clamp(logicalCpuCount / 2, 2, MaxStagingCopyParallelism);
+    }
+
     private static void CopyDirectoryTree(
         string sourceFolder,
         string destinationFolder,
         string? excludedOutputFolder,
+        int copyParallelism,
         ref int copiedFileCount,
         ref long copiedBytes,
         CancellationToken cancellationToken)
@@ -275,6 +308,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                 stack.Push((directory, targetDirectory));
             }
 
+            var filesToCopy = new List<string>();
             foreach (var file in Directory.EnumerateFiles(current.Source))
             {
                 if (ShouldSkipFile(file))
@@ -282,12 +316,50 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                     continue;
                 }
 
-                var destinationFile = Path.Combine(current.Destination, Path.GetFileName(file));
-                File.Copy(file, destinationFile, overwrite: true);
-
-                copiedFileCount++;
-                copiedBytes += new FileInfo(file).Length;
+                filesToCopy.Add(file);
             }
+
+            if (filesToCopy.Count == 0)
+            {
+                continue;
+            }
+
+            if (copyParallelism <= 1 || filesToCopy.Count == 1)
+            {
+                foreach (var file in filesToCopy)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var destinationFile = Path.Combine(current.Destination, Path.GetFileName(file));
+                    File.Copy(file, destinationFile, overwrite: true);
+
+                    copiedFileCount++;
+                    copiedBytes += new FileInfo(file).Length;
+                }
+
+                continue;
+            }
+
+            var copiedInDirectory = 0;
+            long copiedBytesInDirectory = 0;
+            Parallel.ForEach(
+                filesToCopy,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = copyParallelism,
+                    CancellationToken = cancellationToken
+                },
+                file =>
+                {
+                    var destinationFile = Path.Combine(current.Destination, Path.GetFileName(file));
+                    File.Copy(file, destinationFile, overwrite: true);
+
+                    Interlocked.Increment(ref copiedInDirectory);
+                    Interlocked.Add(ref copiedBytesInDirectory, new FileInfo(file).Length);
+                });
+
+            copiedFileCount += copiedInDirectory;
+            copiedBytes += copiedBytesInDirectory;
         }
     }
 

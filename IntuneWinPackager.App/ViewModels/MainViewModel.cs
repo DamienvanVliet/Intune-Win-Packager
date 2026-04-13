@@ -43,12 +43,14 @@ public partial class MainViewModel : ObservableObject
 
     private const int MaxVisibleLogLines = 500;
     private const int MaxLogFlushBatchSize = 40;
+    private static readonly TimeSpan PreflightReuseWindow = TimeSpan.FromMinutes(10);
 
     private CancellationTokenSource? _msiInspectionCancellation;
     private bool _isInitialized;
     private bool _suppressSetupRefresh;
     private bool _isApplyingPreferences;
     private AppUpdateInfo? _latestUpdateInfo;
+    private DateTimeOffset? _lastPreflightCompletedAtUtc;
 
     [ObservableProperty]
     private string sourceFolder = string.Empty;
@@ -1308,6 +1310,7 @@ public partial class MainViewModel : ObservableObject
 
     private void ApplyPreflightResult(PreflightResult result)
     {
+        _lastPreflightCompletedAtUtc = DateTimeOffset.UtcNow;
         HasPreflightRun = true;
         PreflightChecks.Clear();
 
@@ -1678,7 +1681,22 @@ public partial class MainViewModel : ObservableObject
         {
             await PersistSettingsAsync();
             SetPackagingProgress(T("Vm.Progress.PreflightStep"), T("Vm.Progress.PreflightDetail"), 8);
-            var preflight = await RunPreflightCoreAsync();
+
+            PreflightResult preflight;
+            if (CanReusePreflightForPackaging())
+            {
+                var lastPreflight = _lastPreflightCompletedAtUtc?.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture) ?? "-";
+                AppendLog($"Reusing preflight results from {lastPreflight} to speed up packaging.");
+                preflight = new PreflightResult
+                {
+                    Checks = PreflightChecks.ToList()
+                };
+            }
+            else
+            {
+                preflight = await RunPreflightCoreAsync();
+            }
+
             if (preflight.HasErrors)
             {
                 SetStatus(
@@ -2297,9 +2315,20 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        _lastPreflightCompletedAtUtc = null;
         HasPreflightRun = false;
         PreflightSummary = T("Vm.Preflight.ConfigChanged");
         PreflightChecks.Clear();
+    }
+
+    private bool CanReusePreflightForPackaging()
+    {
+        if (!HasPreflightRun || !_lastPreflightCompletedAtUtc.HasValue || PreflightChecks.Count == 0)
+        {
+            return false;
+        }
+
+        return DateTimeOffset.UtcNow - _lastPreflightCompletedAtUtc.Value <= PreflightReuseWindow;
     }
 
     private void SetStatus(OperationState state, string title, string message)
