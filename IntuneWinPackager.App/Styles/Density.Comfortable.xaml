@@ -1,0 +1,13 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+    <sys:Double x:Key="Density.Scale">1.0</sys:Double>
+    <Thickness x:Key="Density.CardPadding">18</Thickness>
+    <Thickness x:Key="Density.InputPadding">10,7</Thickness>
+    <Thickness x:Key="Density.ComboPadding">8,4</Thickness>
+    <Thickness x:Key="Density.ButtonPadding">16,10</Thickness>
+    <Thickness x:Key="Density.TabPadding">16,8</Thickness>
+    <sys:Double x:Key="Density.ControlFontSize">13</sys:Double>
+    <sys:Double x:Key="Density.CheckboxFontSize">12</sys:Double>
+    <sys:Double x:Key="Density.LogHeight">360</sys:Double>
+</ResourceDictionary>

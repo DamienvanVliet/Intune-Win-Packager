@@ -48,7 +48,12 @@ public sealed class PreflightService : IPreflightService
 
         if (request is null)
         {
-            checks.Add(Error("request", "Request", "Packaging request is missing."));
+            checks.Add(Error(
+                "request",
+                "Request",
+                "Packaging request is missing.",
+                titleKey: "Core.Preflight.Title.Request",
+                messageKey: "Core.Preflight.Message.RequestMissing"));
             return new PreflightResult { Checks = checks };
         }
 
@@ -69,20 +74,34 @@ public sealed class PreflightService : IPreflightService
     {
         if (string.IsNullOrWhiteSpace(toolPath))
         {
-            checks.Add(Error("tool-path", "Tool Path", "Path to IntuneWinAppUtil.exe is missing."));
+            checks.Add(Error(
+                "tool-path",
+                "Tool Path",
+                "Path to IntuneWinAppUtil.exe is missing.",
+                titleKey: "Core.Preflight.Title.ToolPath",
+                messageKey: "Core.Preflight.Message.ToolPathMissing"));
             return;
         }
 
         if (!File.Exists(toolPath))
         {
-            checks.Add(Error("tool-file", "Tool File", "IntuneWinAppUtil.exe was not found at the configured path."));
+            checks.Add(Error(
+                "tool-file",
+                "Tool File",
+                "IntuneWinAppUtil.exe was not found at the configured path.",
+                titleKey: "Core.Preflight.Title.ToolFile",
+                messageKey: "Core.Preflight.Message.ToolFileMissing"));
             return;
         }
 
         var fileName = Path.GetFileName(toolPath);
         if (!string.Equals(fileName, "IntuneWinAppUtil.exe", StringComparison.OrdinalIgnoreCase))
         {
-            checks.Add(Warning("tool-name", "Tool Filename", $"Selected executable is '{fileName}', expected IntuneWinAppUtil.exe."));
+            checks.Add(Warning(
+                "tool-name",
+                "Tool Filename",
+                $"Selected executable is '{fileName}', expected IntuneWinAppUtil.exe.",
+                titleKey: "Core.Preflight.Title.ToolFilename"));
         }
         else
         {
@@ -94,7 +113,12 @@ public sealed class PreflightService : IPreflightService
             var fileInfo = new FileInfo(toolPath);
             if (fileInfo.Length <= 0)
             {
-                checks.Add(Error("tool-size", "Tool Integrity", "Tool file is empty or corrupted."));
+                checks.Add(Error(
+                    "tool-size",
+                    "Tool Integrity",
+                    "Tool file is empty or corrupted.",
+                    titleKey: "Core.Preflight.Title.ToolIntegrity",
+                    messageKey: "Core.Preflight.Message.ToolIntegrityCorrupt"));
                 return;
             }
 
@@ -116,13 +140,23 @@ public sealed class PreflightService : IPreflightService
     {
         if (string.IsNullOrWhiteSpace(sourceFolder))
         {
-            checks.Add(Error("source-folder", "Source Folder", "Source folder is required."));
+            checks.Add(Error(
+                "source-folder",
+                "Source Folder",
+                "Source folder is required.",
+                titleKey: "Core.Preflight.Title.SourceFolder",
+                messageKey: "Core.Preflight.Message.SourceFolderRequired"));
             return;
         }
 
         if (!Directory.Exists(sourceFolder))
         {
-            checks.Add(Error("source-folder", "Source Folder", "Source folder does not exist."));
+            checks.Add(Error(
+                "source-folder",
+                "Source Folder",
+                "Source folder does not exist.",
+                titleKey: "Core.Preflight.Title.SourceFolder",
+                messageKey: "Core.Preflight.Message.SourceFolderMissing"));
             return;
         }
 
@@ -151,20 +185,32 @@ public sealed class PreflightService : IPreflightService
         checks.Add(Warning(
             "source-artifacts",
             "Source Artifacts",
-            "Existing .intunewin files in source can slow packaging. Enable smart source staging."));
+            "Existing .intunewin files in source can slow packaging. Enable smart source staging.",
+            titleKey: "Core.Preflight.Title.SourceArtifacts",
+            messageKey: "Core.Preflight.Message.SourceArtifactsWarn"));
     }
 
     private static void AddSetupChecks(string setupFilePath, string sourceFolder, ICollection<PreflightCheck> checks)
     {
         if (string.IsNullOrWhiteSpace(setupFilePath))
         {
-            checks.Add(Error("setup-file", "Setup File", "Setup file is required."));
+            checks.Add(Error(
+                "setup-file",
+                "Setup File",
+                "Setup file is required.",
+                titleKey: "Core.Preflight.Title.SetupFile",
+                messageKey: "Core.Preflight.Message.SetupFileRequired"));
             return;
         }
 
         if (!File.Exists(setupFilePath))
         {
-            checks.Add(Error("setup-file", "Setup File", "Setup file was not found."));
+            checks.Add(Error(
+                "setup-file",
+                "Setup File",
+                "Setup file was not found.",
+                titleKey: "Core.Preflight.Title.SetupFile",
+                messageKey: "Core.Preflight.Message.SetupFileMissing"));
             return;
         }
 
@@ -177,12 +223,22 @@ public sealed class PreflightService : IPreflightService
         }
         else
         {
-            checks.Add(Error("setup-type", "Installer Type", "Unsupported setup extension. Use .msi, .exe, .appx/.msix, or supported script types."));
+            checks.Add(Error(
+                "setup-type",
+                "Installer Type",
+                "Unsupported setup extension. Use .msi, .exe, .appx/.msix, or supported script types.",
+                titleKey: "Core.Preflight.Title.InstallerType",
+                messageKey: "Core.Preflight.Message.SetupTypeUnsupported"));
         }
 
         if (string.IsNullOrWhiteSpace(sourceFolder) || !Directory.Exists(sourceFolder))
         {
-            checks.Add(Warning("setup-source", "Source Match", "Source folder is missing, setup location check skipped."));
+            checks.Add(Warning(
+                "setup-source",
+                "Source Match",
+                "Source folder is missing, setup location check skipped.",
+                titleKey: "Core.Preflight.Title.SourceMatch",
+                messageKey: "Core.Preflight.Message.SourceMatchSkipped"));
             return;
         }
 
@@ -192,7 +248,12 @@ public sealed class PreflightService : IPreflightService
         }
         else
         {
-            checks.Add(Error("setup-source", "Source Match", "Setup file must be inside the selected source folder."));
+            checks.Add(Error(
+                "setup-source",
+                "Source Match",
+                "Setup file must be inside the selected source folder.",
+                titleKey: "Core.Preflight.Title.SourceMatch",
+                messageKey: "Core.Preflight.Message.SetupOutsideSource"));
         }
     }
 
@@ -204,7 +265,12 @@ public sealed class PreflightService : IPreflightService
     {
         if (string.IsNullOrWhiteSpace(outputFolder))
         {
-            checks.Add(Error("output-folder", "Output Folder", "Output folder is required."));
+            checks.Add(Error(
+                "output-folder",
+                "Output Folder",
+                "Output folder is required.",
+                titleKey: "Core.Preflight.Title.OutputFolder",
+                messageKey: "Core.Preflight.Message.OutputFolderRequired"));
             return;
         }
 
@@ -243,7 +309,9 @@ public sealed class PreflightService : IPreflightService
                     : Error(
                         "output-source-overlap",
                         "Output vs Source",
-                        "Output folder is inside source. Enable smart source staging or move output outside source to avoid recursion and slow packaging."));
+                        "Output folder is inside source. Enable smart source staging or move output outside source to avoid recursion and slow packaging.",
+                        titleKey: "Core.Preflight.Title.OutputVsSource",
+                        messageKey: "Core.Preflight.Message.OutputInsideSource"));
             }
             else
             {
@@ -260,7 +328,12 @@ public sealed class PreflightService : IPreflightService
         }
         catch (Exception ex)
         {
-            checks.Add(Error("output-write", "Output Write Access", $"Output folder is not writable: {ex.Message}"));
+            checks.Add(Error(
+                "output-write",
+                "Output Write Access",
+                $"Output folder is not writable: {ex.Message}",
+                titleKey: "Core.Preflight.Title.OutputWriteAccess",
+                messageKey: "Core.Preflight.Message.OutputWriteDenied"));
             return;
         }
 
@@ -276,7 +349,8 @@ public sealed class PreflightService : IPreflightService
                     checks.Add(Warning(
                         "output-space",
                         "Disk Space",
-                        $"Low free space on output drive ({FormatBytes(freeSpace)} available). Recommended: at least {FormatBytes(RecommendedFreeSpaceBytes)}."));
+                        $"Low free space on output drive ({FormatBytes(freeSpace)} available). Recommended: at least {FormatBytes(RecommendedFreeSpaceBytes)}.",
+                        titleKey: "Core.Preflight.Title.DiskSpace"));
                 }
                 else
                 {
@@ -285,7 +359,12 @@ public sealed class PreflightService : IPreflightService
             }
             else
             {
-                checks.Add(Warning("output-space", "Disk Space", "Could not determine output drive free space."));
+                checks.Add(Warning(
+                    "output-space",
+                    "Disk Space",
+                    "Could not determine output drive free space.",
+                    titleKey: "Core.Preflight.Title.DiskSpace",
+                    messageKey: "Core.Preflight.Message.OutputDiskUnknown"));
             }
         }
         catch (Exception ex)
@@ -297,15 +376,35 @@ public sealed class PreflightService : IPreflightService
     private static void AddCommandChecks(string installCommand, string uninstallCommand, ICollection<PreflightCheck> checks)
     {
         checks.Add(string.IsNullOrWhiteSpace(installCommand)
-            ? Error("install-command", "Install Command", "Install command is required.")
+            ? Error(
+                "install-command",
+                "Install Command",
+                "Install command is required.",
+                titleKey: "Core.Preflight.Title.InstallCommand",
+                messageKey: "Core.Preflight.Message.InstallCommandRequired")
             : ContainsPlaceholder(installCommand)
-                ? Error("install-command", "Install Command", "Install command still contains placeholders.")
+                ? Error(
+                    "install-command",
+                    "Install Command",
+                    "Install command still contains placeholders.",
+                    titleKey: "Core.Preflight.Title.InstallCommand",
+                    messageKey: "Core.Preflight.Message.InstallCommandPlaceholder")
                 : Pass("install-command", "Install Command", "Install command is configured."));
 
         checks.Add(string.IsNullOrWhiteSpace(uninstallCommand)
-            ? Error("uninstall-command", "Uninstall Command", "Uninstall command is required.")
+            ? Error(
+                "uninstall-command",
+                "Uninstall Command",
+                "Uninstall command is required.",
+                titleKey: "Core.Preflight.Title.UninstallCommand",
+                messageKey: "Core.Preflight.Message.UninstallCommandRequired")
             : ContainsPlaceholder(uninstallCommand)
-                ? Error("uninstall-command", "Uninstall Command", "Uninstall command still contains placeholders.")
+                ? Error(
+                    "uninstall-command",
+                    "Uninstall Command",
+                    "Uninstall command still contains placeholders.",
+                    titleKey: "Core.Preflight.Title.UninstallCommand",
+                    messageKey: "Core.Preflight.Message.UninstallCommandPlaceholder")
                 : Pass("uninstall-command", "Uninstall Command", "Uninstall command is configured."));
     }
 
@@ -316,14 +415,21 @@ public sealed class PreflightService : IPreflightService
     {
         checks.Add(rules.MaxRunTimeMinutes is >= 1 and <= 1440
             ? Pass("intune-runtime", "Intune Runtime", $"Max run time is set to {rules.MaxRunTimeMinutes} minute(s).")
-            : Error("intune-runtime", "Intune Runtime", "Max run time must be between 1 and 1440 minutes."));
+            : Error(
+                "intune-runtime",
+                "Intune Runtime",
+                "Max run time must be between 1 and 1440 minutes.",
+                titleKey: "Core.Preflight.Title.IntuneRuntime",
+                messageKey: "Core.Preflight.Message.IntuneRuntimeInvalid"));
 
         if (installerType == InstallerType.Exe && rules.RequireSilentSwitchReview && !rules.SilentSwitchesVerified)
         {
             checks.Add(Error(
                 "intune-switch-review",
                 "EXE Silent Switch Review",
-                "This EXE profile requires switch verification. Review vendor switches and confirm before packaging."));
+                "This EXE profile requires switch verification. Review vendor switches and confirm before packaging.",
+                titleKey: "Core.Preflight.Title.ExeSwitchReview",
+                messageKey: "Core.Preflight.Message.ExeSwitchReviewRequired"));
         }
         else
         {
@@ -335,7 +441,12 @@ public sealed class PreflightService : IPreflightService
         var detection = rules.DetectionRule;
         if (detection.RuleType == IntuneDetectionRuleType.None)
         {
-            checks.Add(Error("detection-type", "Detection Rule", "No detection rule configured. Configure MSI, file, registry, or script detection."));
+            checks.Add(Error(
+                "detection-type",
+                "Detection Rule",
+                "No detection rule configured. Configure MSI, file, registry, or script detection.",
+                titleKey: "Core.Preflight.Title.DetectionRule",
+                messageKey: "Core.Preflight.Message.DetectionRuleMissing"));
             return;
         }
 
@@ -346,16 +457,31 @@ public sealed class PreflightService : IPreflightService
             case IntuneDetectionRuleType.MsiProductCode:
                 if (installerType != InstallerType.Msi)
                 {
-                    checks.Add(Error("detection-msi-installer", "MSI Detection", "MSI product code detection can only be used for MSI installers."));
+                    checks.Add(Error(
+                        "detection-msi-installer",
+                        "MSI Detection",
+                        "MSI product code detection can only be used for MSI installers.",
+                        titleKey: "Core.Preflight.Title.MsiDetection",
+                        messageKey: "Core.Preflight.Message.MsiDetectionInstallerMismatch"));
                 }
 
                 if (string.IsNullOrWhiteSpace(detection.Msi.ProductCode))
                 {
-                    checks.Add(Error("detection-msi-code", "MSI Detection", "Product code is required for MSI detection."));
+                    checks.Add(Error(
+                        "detection-msi-code",
+                        "MSI Detection",
+                        "Product code is required for MSI detection.",
+                        titleKey: "Core.Preflight.Title.MsiDetection",
+                        messageKey: "Core.Preflight.Message.MsiDetectionProductCodeRequired"));
                 }
                 else if (!ProductCodeRegex.IsMatch(detection.Msi.ProductCode.Trim()))
                 {
-                    checks.Add(Error("detection-msi-code", "MSI Detection", "MSI product code format is invalid."));
+                    checks.Add(Error(
+                        "detection-msi-code",
+                        "MSI Detection",
+                        "MSI product code format is invalid.",
+                        titleKey: "Core.Preflight.Title.MsiDetection",
+                        messageKey: "Core.Preflight.Message.MsiDetectionProductCodeFormat"));
                 }
                 else
                 {
@@ -366,7 +492,12 @@ public sealed class PreflightService : IPreflightService
             case IntuneDetectionRuleType.File:
                 if (string.IsNullOrWhiteSpace(detection.File.Path) || string.IsNullOrWhiteSpace(detection.File.FileOrFolderName))
                 {
-                    checks.Add(Error("detection-file", "File Detection", "File detection requires both path and file/folder name."));
+                    checks.Add(Error(
+                        "detection-file",
+                        "File Detection",
+                        "File detection requires both path and file/folder name.",
+                        titleKey: "Core.Preflight.Title.FileDetection",
+                        messageKey: "Core.Preflight.Message.FileDetectionPathOrNameRequired"));
                 }
                 else
                 {
@@ -375,14 +506,24 @@ public sealed class PreflightService : IPreflightService
 
                 if (detection.File.Operator != IntuneDetectionOperator.Exists && string.IsNullOrWhiteSpace(detection.File.Value))
                 {
-                    checks.Add(Error("detection-file-value", "File Detection", "Selected file detection operator requires a comparison value."));
+                    checks.Add(Error(
+                        "detection-file-value",
+                        "File Detection",
+                        "Selected file detection operator requires a comparison value.",
+                        titleKey: "Core.Preflight.Title.FileDetection",
+                        messageKey: "Core.Preflight.Message.FileDetectionValueRequired"));
                 }
                 break;
 
             case IntuneDetectionRuleType.Registry:
                 if (string.IsNullOrWhiteSpace(detection.Registry.Hive) || string.IsNullOrWhiteSpace(detection.Registry.KeyPath))
                 {
-                    checks.Add(Error("detection-registry", "Registry Detection", "Registry detection requires hive and key path."));
+                    checks.Add(Error(
+                        "detection-registry",
+                        "Registry Detection",
+                        "Registry detection requires hive and key path.",
+                        titleKey: "Core.Preflight.Title.RegistryDetection",
+                        messageKey: "Core.Preflight.Message.RegistryDetectionHiveOrKeyRequired"));
                 }
                 else
                 {
@@ -393,12 +534,22 @@ public sealed class PreflightService : IPreflightService
                 {
                     if (string.IsNullOrWhiteSpace(detection.Registry.ValueName))
                     {
-                        checks.Add(Error("detection-registry-name", "Registry Detection", "Registry value name is required for comparison operators."));
+                        checks.Add(Error(
+                            "detection-registry-name",
+                            "Registry Detection",
+                            "Registry value name is required for comparison operators.",
+                            titleKey: "Core.Preflight.Title.RegistryDetection",
+                            messageKey: "Core.Preflight.Message.RegistryDetectionValueNameRequired"));
                     }
 
                     if (string.IsNullOrWhiteSpace(detection.Registry.Value))
                     {
-                        checks.Add(Error("detection-registry-value", "Registry Detection", "Registry comparison value is required for comparison operators."));
+                        checks.Add(Error(
+                            "detection-registry-value",
+                            "Registry Detection",
+                            "Registry comparison value is required for comparison operators.",
+                            titleKey: "Core.Preflight.Title.RegistryDetection",
+                            messageKey: "Core.Preflight.Message.RegistryDetectionValueRequired"));
                     }
                 }
                 break;
@@ -406,11 +557,21 @@ public sealed class PreflightService : IPreflightService
             case IntuneDetectionRuleType.Script:
                 if (string.IsNullOrWhiteSpace(detection.Script.ScriptBody))
                 {
-                    checks.Add(Error("detection-script", "Script Detection", "Script detection requires script content."));
+                    checks.Add(Error(
+                        "detection-script",
+                        "Script Detection",
+                        "Script detection requires script content.",
+                        titleKey: "Core.Preflight.Title.ScriptDetection",
+                        messageKey: "Core.Preflight.Message.ScriptDetectionBodyRequired"));
                 }
                 else if (ContainsPlaceholder(detection.Script.ScriptBody))
                 {
-                    checks.Add(Error("detection-script", "Script Detection", "Script detection still contains placeholders."));
+                    checks.Add(Error(
+                        "detection-script",
+                        "Script Detection",
+                        "Script detection still contains placeholders.",
+                        titleKey: "Core.Preflight.Title.ScriptDetection",
+                        messageKey: "Core.Preflight.Message.ScriptDetectionPlaceholder"));
                 }
                 else
                 {
@@ -426,11 +587,21 @@ public sealed class PreflightService : IPreflightService
     {
         if (string.IsNullOrWhiteSpace(requirements.OperatingSystemArchitecture))
         {
-            checks.Add(Error("requirement-architecture", "Requirements", "Operating system architecture is required."));
+            checks.Add(Error(
+                "requirement-architecture",
+                "Requirements",
+                "Operating system architecture is required.",
+                titleKey: "Core.Preflight.Title.Requirements",
+                messageKey: "Core.Preflight.Message.RequirementArchitectureRequired"));
         }
         else if (!SupportedArchitectures.Contains(requirements.OperatingSystemArchitecture.Trim()))
         {
-            checks.Add(Error("requirement-architecture", "Requirements", "Operating system architecture is invalid. Use x64, x86, or Both."));
+            checks.Add(Error(
+                "requirement-architecture",
+                "Requirements",
+                "Operating system architecture is invalid. Use x64, x86, or Both.",
+                titleKey: "Core.Preflight.Title.Requirements",
+                messageKey: "Core.Preflight.Message.RequirementArchitectureInvalid"));
         }
         else
         {
@@ -438,29 +609,54 @@ public sealed class PreflightService : IPreflightService
         }
 
         checks.Add(string.IsNullOrWhiteSpace(requirements.MinimumOperatingSystem)
-            ? Error("requirement-os", "Requirements", "Minimum operating system is required.")
+            ? Error(
+                "requirement-os",
+                "Requirements",
+                "Minimum operating system is required.",
+                titleKey: "Core.Preflight.Title.Requirements",
+                messageKey: "Core.Preflight.Message.RequirementMinimumOsRequired")
             : Pass("requirement-os", "Requirements", $"Minimum operating system is set to '{requirements.MinimumOperatingSystem}'."));
 
         checks.Add(requirements.MinimumFreeDiskSpaceMb < 0
-            ? Error("requirement-disk", "Requirements", "Minimum free disk space cannot be negative.")
+            ? Error(
+                "requirement-disk",
+                "Requirements",
+                "Minimum free disk space cannot be negative.",
+                titleKey: "Core.Preflight.Title.Requirements",
+                messageKey: "Core.Preflight.Message.RequirementDiskNegative")
             : Pass("requirement-disk", "Requirements", requirements.MinimumFreeDiskSpaceMb > 0
                 ? $"Minimum free disk space is set to {requirements.MinimumFreeDiskSpaceMb} MB."
                 : "Minimum free disk space is not configured (optional)."));
 
         checks.Add(requirements.MinimumMemoryMb < 0
-            ? Error("requirement-memory", "Requirements", "Minimum memory cannot be negative.")
+            ? Error(
+                "requirement-memory",
+                "Requirements",
+                "Minimum memory cannot be negative.",
+                titleKey: "Core.Preflight.Title.Requirements",
+                messageKey: "Core.Preflight.Message.RequirementMemoryNegative")
             : Pass("requirement-memory", "Requirements", requirements.MinimumMemoryMb > 0
                 ? $"Minimum memory is set to {requirements.MinimumMemoryMb} MB."
                 : "Minimum memory is not configured (optional)."));
 
         checks.Add(requirements.MinimumCpuSpeedMhz < 0
-            ? Error("requirement-cpu", "Requirements", "Minimum CPU speed cannot be negative.")
+            ? Error(
+                "requirement-cpu",
+                "Requirements",
+                "Minimum CPU speed cannot be negative.",
+                titleKey: "Core.Preflight.Title.Requirements",
+                messageKey: "Core.Preflight.Message.RequirementCpuNegative")
             : Pass("requirement-cpu", "Requirements", requirements.MinimumCpuSpeedMhz > 0
                 ? $"Minimum CPU speed is set to {requirements.MinimumCpuSpeedMhz} MHz."
                 : "Minimum CPU speed is not configured (optional)."));
 
         checks.Add(requirements.MinimumLogicalProcessors < 0
-            ? Error("requirement-processors", "Requirements", "Minimum logical processors cannot be negative.")
+            ? Error(
+                "requirement-processors",
+                "Requirements",
+                "Minimum logical processors cannot be negative.",
+                titleKey: "Core.Preflight.Title.Requirements",
+                messageKey: "Core.Preflight.Message.RequirementProcessorsNegative")
             : Pass("requirement-processors", "Requirements", requirements.MinimumLogicalProcessors > 0
                 ? $"Minimum logical processors is set to {requirements.MinimumLogicalProcessors}."
                 : "Minimum logical processors is not configured (optional)."));
@@ -471,7 +667,12 @@ public sealed class PreflightService : IPreflightService
         }
         else if (ContainsPlaceholder(requirements.RequirementScriptBody))
         {
-            checks.Add(Error("requirement-script", "Requirement Script", "Requirement script still contains placeholders."));
+            checks.Add(Error(
+                "requirement-script",
+                "Requirement Script",
+                "Requirement script still contains placeholders.",
+                titleKey: "Core.Preflight.Title.RequirementScript",
+                messageKey: "Core.Preflight.Message.RequirementScriptPlaceholder"));
         }
         else
         {
@@ -513,37 +714,43 @@ public sealed class PreflightService : IPreflightService
         }
     }
 
-    private static PreflightCheck Pass(string key, string title, string message)
+    private static PreflightCheck Pass(string key, string title, string message, string titleKey = "", string messageKey = "")
     {
         return new PreflightCheck
         {
             Key = key,
             Title = title,
+            TitleKey = titleKey,
             Message = message,
+            MessageKey = messageKey,
             Passed = true,
             Severity = PreflightSeverity.Info
         };
     }
 
-    private static PreflightCheck Warning(string key, string title, string message)
+    private static PreflightCheck Warning(string key, string title, string message, string titleKey = "", string messageKey = "")
     {
         return new PreflightCheck
         {
             Key = key,
             Title = title,
+            TitleKey = titleKey,
             Message = message,
+            MessageKey = messageKey,
             Passed = false,
             Severity = PreflightSeverity.Warning
         };
     }
 
-    private static PreflightCheck Error(string key, string title, string message)
+    private static PreflightCheck Error(string key, string title, string message, string titleKey = "", string messageKey = "")
     {
         return new PreflightCheck
         {
             Key = key,
             Title = title,
+            TitleKey = titleKey,
             Message = message,
+            MessageKey = messageKey,
             Passed = false,
             Severity = PreflightSeverity.Error
         };

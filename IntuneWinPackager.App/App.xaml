@@ -5,6 +5,7 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Styles/Colors.Light.xaml" />
+                <ResourceDictionary Source="Styles/Density.Comfortable.xaml" />
                 <ResourceDictionary Source="Styles/Theme.xaml" />
                 <ResourceDictionary Source="Localization/Strings.en.xaml" />
             </ResourceDictionary.MergedDictionaries>

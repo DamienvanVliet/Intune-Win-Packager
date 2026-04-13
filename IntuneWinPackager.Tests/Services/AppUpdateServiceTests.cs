@@ -1,0 +1,150 @@
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using IntuneWinPackager.Infrastructure.Services;
+
+namespace IntuneWinPackager.Tests.Services;
+
+public class AppUpdateServiceTests
+{
+    [Fact]
+    public async Task CheckForUpdatesAsync_ReturnsUpdate_WhenHigherVersionExists()
+    {
+        var payload = """
+                      [
+                        {
+                          "tag_name": "v1.1.6",
+                          "draft": false,
+                          "prerelease": false,
+                          "published_at": "2026-04-13T12:00:00Z",
+                          "assets": [
+                            {
+                              "name": "IntuneWinPackager-Setup-1.1.6.exe",
+                              "browser_download_url": "https://example.com/iwp-1.1.6.exe",
+                              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            }
+                          ]
+                        }
+                      ]
+                      """;
+
+        var sut = CreateService(payload);
+
+        var result = await sut.CheckForUpdatesAsync("1.1.5");
+
+        Assert.True(result.CheckSucceeded);
+        Assert.True(result.IsUpdateAvailable);
+        Assert.Equal("1.1.6", result.LatestVersion);
+    }
+
+    [Fact]
+    public async Task CheckForUpdatesAsync_ReturnsUpdate_WhenSameVersionButNewerBuildPublished()
+    {
+        var payload = """
+                      [
+                        {
+                          "tag_name": "v1.1.5",
+                          "draft": false,
+                          "prerelease": false,
+                          "published_at": "2026-04-13T12:00:00Z",
+                          "assets": [
+                            {
+                              "name": "IntuneWinPackager-Setup-1.1.5.exe",
+                              "browser_download_url": "https://example.com/iwp-1.1.5.exe",
+                              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            }
+                          ]
+                        }
+                      ]
+                      """;
+
+        var sut = CreateService(payload);
+        var currentBuildTimestamp = new DateTimeOffset(2026, 4, 10, 9, 0, 0, TimeSpan.Zero);
+
+        var result = await sut.CheckForUpdatesAsync("1.1.5", currentBuildTimestamp);
+
+        Assert.True(result.CheckSucceeded);
+        Assert.True(result.IsUpdateAvailable);
+        Assert.Contains("newer build", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckForUpdatesAsync_ReturnsLatest_WhenSameVersionAndNoNewBuild()
+    {
+        var payload = """
+                      [
+                        {
+                          "tag_name": "v1.1.5",
+                          "draft": false,
+                          "prerelease": false,
+                          "published_at": "2026-04-13T12:00:00Z",
+                          "assets": [
+                            {
+                              "name": "IntuneWinPackager-Setup-1.1.5.exe",
+                              "browser_download_url": "https://example.com/iwp-1.1.5.exe",
+                              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            }
+                          ]
+                        }
+                      ]
+                      """;
+
+        var sut = CreateService(payload);
+        var currentBuildTimestamp = new DateTimeOffset(2026, 4, 13, 12, 1, 0, TimeSpan.Zero);
+
+        var result = await sut.CheckForUpdatesAsync("1.1.5", currentBuildTimestamp);
+
+        Assert.True(result.CheckSucceeded);
+        Assert.False(result.IsUpdateAvailable);
+        Assert.Contains("latest version", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static AppUpdateService CreateService(string releasesPayload)
+    {
+        var handler = new StubHttpMessageHandler(releasesPayload);
+        var client = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("IntuneWinPackager.Tests");
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+
+        return new AppUpdateService(client);
+    }
+
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly string _releasesPayload;
+
+        public StubHttpMessageHandler(string releasesPayload)
+        {
+            _releasesPayload = releasesPayload;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri?.ToString() ?? string.Empty;
+
+            if (uri.Contains("/releases?per_page=20", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(JsonResponse(_releasesPayload));
+            }
+
+            if (uri.Contains("/releases/latest", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+
+        private static HttpResponseMessage JsonResponse(string json)
+        {
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+        }
+    }
+}

@@ -4,7 +4,10 @@ namespace IntuneWinPackager.Core.Interfaces;
 
 public interface IAppUpdateService
 {
-    Task<AppUpdateInfo> CheckForUpdatesAsync(string currentVersion, CancellationToken cancellationToken = default);
+    Task<AppUpdateInfo> CheckForUpdatesAsync(
+        string currentVersion,
+        DateTimeOffset? currentBuildTimestampUtc = null,
+        CancellationToken cancellationToken = default);
 
     Task<AppUpdateInstallResult> DownloadAndLaunchInstallerAsync(
         AppUpdateInfo updateInfo,

@@ -34,6 +34,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IDialogService _dialogService;
     private readonly ILocalizationService _localizationService;
     private readonly IThemeService _themeService;
+    private readonly IDensityService _densityService;
 
     private readonly ObservableCollection<string> _logs = new();
     private readonly ReadOnlyObservableCollection<string> _readonlyLogs;
@@ -224,6 +225,9 @@ public partial class MainViewModel : ObservableObject
     private string selectedTheme = "Light";
 
     [ObservableProperty]
+    private string selectedDensity = "Comfortable";
+
+    [ObservableProperty]
     private double packagingProgressPercentage;
 
     [ObservableProperty]
@@ -273,7 +277,8 @@ public partial class MainViewModel : ObservableObject
         IAppUpdateService appUpdateService,
         IDialogService dialogService,
         ILocalizationService localizationService,
-        IThemeService themeService)
+        IThemeService themeService,
+        IDensityService densityService)
     {
         _packagingWorkflowService = packagingWorkflowService;
         _validationService = validationService;
@@ -289,6 +294,7 @@ public partial class MainViewModel : ObservableObject
         _dialogService = dialogService;
         _localizationService = localizationService;
         _themeService = themeService;
+        _densityService = densityService;
 
         _readonlyLogs = new ReadOnlyObservableCollection<string>(_logs);
 
@@ -324,6 +330,7 @@ public partial class MainViewModel : ObservableObject
         SelectedPreset = ExePresets.FirstOrDefault();
         SelectedLanguage = _localizationService.CurrentLanguage;
         SelectedTheme = _themeService.CurrentTheme;
+        SelectedDensity = _densityService.CurrentDensity;
 
         BrowseSourceFolderCommand = new RelayCommand(BrowseSourceFolder);
         BrowseSetupFileCommand = new AsyncRelayCommand(BrowseSetupFileAsync);
@@ -414,6 +421,8 @@ public partial class MainViewModel : ObservableObject
     public IReadOnlyList<string> LanguageOptions => _localizationService.LanguageOptions;
 
     public IReadOnlyList<string> ThemeOptions => _themeService.ThemeOptions;
+
+    public IReadOnlyList<string> DensityOptions => _densityService.DensityOptions;
 
     public bool IsMsiInstaller => InstallerType == InstallerType.Msi;
 
@@ -1018,6 +1027,25 @@ public partial class MainViewModel : ObservableObject
         _ = PersistSettingsSafeAsync();
     }
 
+    partial void OnSelectedDensityChanged(string value)
+    {
+        var normalized = _densityService.NormalizeDensity(value);
+        if (!string.Equals(normalized, value, StringComparison.Ordinal))
+        {
+            SelectedDensity = normalized;
+            return;
+        }
+
+        _densityService.SetDensity(normalized);
+
+        if (_isApplyingPreferences)
+        {
+            return;
+        }
+
+        _ = PersistSettingsSafeAsync();
+    }
+
     partial void OnCurrentVersionChanged(string value)
     {
         OnPropertyChanged(nameof(CurrentVersionDisplay));
@@ -1042,6 +1070,10 @@ public partial class MainViewModel : ObservableObject
             var theme = _themeService.DisplayNameFromCode(settings.UiTheme);
             _themeService.SetTheme(theme);
             SelectedTheme = theme;
+
+            var density = _densityService.DisplayNameFromCode(settings.UiDensity);
+            _densityService.SetDensity(density);
+            SelectedDensity = density;
         }
         finally
         {
@@ -1281,7 +1313,8 @@ public partial class MainViewModel : ObservableObject
 
         foreach (var check in result.Checks)
         {
-            PreflightChecks.Add(check);
+            var localizedCheck = LocalizePreflightCheck(check);
+            PreflightChecks.Add(localizedCheck);
 
             var label = check.Passed
                 ? "PRECHECK OK"
@@ -1289,7 +1322,7 @@ public partial class MainViewModel : ObservableObject
                     ? "PRECHECK WARN"
                     : "PRECHECK ERROR";
 
-            AppendLog($"{label} | {check.Title}: {check.Message}");
+            AppendLog($"{label} | {localizedCheck.Title}: {localizedCheck.Message}");
         }
 
         PreflightSummary = BuildPreflightSummary(result);
@@ -1455,7 +1488,9 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            var updateInfo = await _appUpdateService.CheckForUpdatesAsync(CurrentVersion);
+            var updateInfo = await _appUpdateService.CheckForUpdatesAsync(
+                CurrentVersion,
+                ResolveCurrentBuildTimestampUtc());
             _latestUpdateInfo = updateInfo;
 
             LatestVersion = string.IsNullOrWhiteSpace(updateInfo.LatestVersion)
@@ -2050,7 +2085,8 @@ public partial class MainViewModel : ObservableObject
             UseLowImpactMode = UseLowImpactMode,
             EnableSilentAppUpdates = EnableSilentAppUpdates,
             UiLanguage = _localizationService.CurrentLanguageCode,
-            UiTheme = _themeService.CurrentThemeCode
+            UiTheme = _themeService.CurrentThemeCode,
+            UiDensity = _densityService.CurrentDensityCode
         };
 
         await _settingsService.SaveAsync(settings);
@@ -2236,9 +2272,9 @@ public partial class MainViewModel : ObservableObject
         var validation = _validationService.Validate(BuildRequest());
 
         ValidationErrors.Clear();
-        foreach (var error in validation.Errors)
+        foreach (var issue in validation.Issues)
         {
-            ValidationErrors.Add(error);
+            ValidationErrors.Add(LocalizeWithFallback(issue.Key, issue.Message));
         }
 
         NotifyReadinessChanged();
@@ -2276,6 +2312,28 @@ public partial class MainViewModel : ObservableObject
     private string T(string key)
     {
         return _localizationService.Translate(key);
+    }
+
+    private string LocalizeWithFallback(string key, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return fallback;
+        }
+
+        var translated = T(key);
+        return string.Equals(translated, key, StringComparison.Ordinal)
+            ? fallback
+            : translated;
+    }
+
+    private PreflightCheck LocalizePreflightCheck(PreflightCheck check)
+    {
+        return check with
+        {
+            Title = LocalizeWithFallback(check.TitleKey, check.Title),
+            Message = LocalizeWithFallback(check.MessageKey, check.Message)
+        };
     }
 
     private string TF(string key, params object[] args)
@@ -2427,6 +2485,24 @@ public partial class MainViewModel : ObservableObject
 
         var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
         return assemblyVersion?.ToString(3) ?? "1.0.0";
+    }
+
+    private static DateTimeOffset? ResolveCurrentBuildTimestampUtc()
+    {
+        try
+        {
+            var location = Assembly.GetExecutingAssembly().Location;
+            if (string.IsNullOrWhiteSpace(location) || !File.Exists(location))
+            {
+                return null;
+            }
+
+            return File.GetLastWriteTimeUtc(location);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private string BuildDefaultProfileName()

@@ -8,7 +8,11 @@ public sealed record PreflightCheck
 
     public string Title { get; init; } = string.Empty;
 
+    public string TitleKey { get; init; } = string.Empty;
+
     public string Message { get; init; } = string.Empty;
+
+    public string MessageKey { get; init; } = string.Empty;
 
     public bool Passed { get; init; }
 

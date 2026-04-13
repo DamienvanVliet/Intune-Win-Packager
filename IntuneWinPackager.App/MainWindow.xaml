@@ -15,6 +15,10 @@
         Foreground="{DynamicResource WindowForegroundBrush}"
         Background="{DynamicResource PageBackgroundBrush}">
     <Grid Margin="24">
+        <Grid.LayoutTransform>
+            <ScaleTransform ScaleX="{DynamicResource Density.Scale}"
+                            ScaleY="{DynamicResource Density.Scale}" />
+        </Grid.LayoutTransform>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -59,7 +63,13 @@
         </Border>
 
         <TabControl Grid.Row="1">
-            <TabItem Header="{DynamicResource Ui.Tab.Packaging}">
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;" Margin="0,0,6,0" />
+                        <TextBlock Text="{DynamicResource Ui.Tab.Packaging}" />
+                    </StackPanel>
+                </TabItem.Header>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
@@ -732,7 +742,7 @@
                                                  ScrollViewer.CanContentScroll="True"
                                                  VirtualizingPanel.IsVirtualizing="True"
                                                  VirtualizingPanel.VirtualizationMode="Recycling"
-                                                 Height="360" />
+                                                 Height="{DynamicResource Density.LogHeight}" />
                                     </Border>
                                 </StackPanel>
                             </Border>
@@ -741,7 +751,13 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="{DynamicResource Ui.Tab.ToolsChecks}">
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D9;" Margin="0,0,6,0" />
+                        <TextBlock Text="{DynamicResource Ui.Tab.ToolsChecks}" />
+                    </StackPanel>
+                </TabItem.Header>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
@@ -928,7 +944,13 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="{DynamicResource Ui.Tab.UpdatesChanges}">
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE895;" Margin="0,0,6,0" />
+                        <TextBlock Text="{DynamicResource Ui.Tab.UpdatesChanges}" />
+                    </StackPanel>
+                </TabItem.Header>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
@@ -1034,7 +1056,13 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="{DynamicResource Ui.Tab.Settings}">
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" Margin="0,0,6,0" />
+                        <TextBlock Text="{DynamicResource Ui.Tab.Settings}" />
+                    </StackPanel>
+                </TabItem.Header>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
@@ -1060,6 +1088,12 @@
                                     <TextBlock Text="{DynamicResource Ui.Theme}" Style="{StaticResource BodyTextStyle}" />
                                     <ComboBox ItemsSource="{Binding ThemeOptions}"
                                               SelectedItem="{Binding SelectedTheme}"
+                                              Margin="0,6,0,12"
+                                              MinHeight="34" />
+
+                                    <TextBlock Text="{DynamicResource Ui.Density}" Style="{StaticResource BodyTextStyle}" />
+                                    <ComboBox ItemsSource="{Binding DensityOptions}"
+                                              SelectedItem="{Binding SelectedDensity}"
                                               Margin="0,6,0,12"
                                               MinHeight="34" />
 

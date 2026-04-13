@@ -18,9 +18,9 @@ public sealed class AppUpdateService : IAppUpdateService
 
     private readonly HttpClient _httpClient;
 
-    public AppUpdateService()
+    public AppUpdateService(HttpClient? httpClient = null)
     {
-        _httpClient = new HttpClient
+        _httpClient = httpClient ?? new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(35)
         };
@@ -29,7 +29,10 @@ public sealed class AppUpdateService : IAppUpdateService
         _httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
     }
 
-    public async Task<AppUpdateInfo> CheckForUpdatesAsync(string currentVersion, CancellationToken cancellationToken = default)
+    public async Task<AppUpdateInfo> CheckForUpdatesAsync(
+        string currentVersion,
+        DateTimeOffset? currentBuildTimestampUtc = null,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(currentVersion))
         {
@@ -40,8 +43,17 @@ public sealed class AppUpdateService : IAppUpdateService
 
         try
         {
+            var releasesApiPreferred = await TryCheckWithPublicReleasesListAsync(
+                currentNormalized,
+                currentBuildTimestampUtc,
+                cancellationToken);
+            if (releasesApiPreferred is not null)
+            {
+                return releasesApiPreferred;
+            }
+
             using var response = await GetWithRetryAsync(
-                LatestReleaseApiUrl,
+                $"{LatestReleaseApiUrl}?_={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
                 HttpCompletionOption.ResponseContentRead,
                 operationCodePrefix: "UPD-CHK",
                 progress: null,
@@ -53,13 +65,19 @@ public sealed class AppUpdateService : IAppUpdateService
                     || response.StatusCode == HttpStatusCode.Unauthorized
                     || response.StatusCode == HttpStatusCode.Forbidden)
                 {
-                    var releasesApiFallback = await TryCheckWithPublicReleasesListAsync(currentNormalized, cancellationToken);
+                    var releasesApiFallback = await TryCheckWithPublicReleasesListAsync(
+                        currentNormalized,
+                        currentBuildTimestampUtc,
+                        cancellationToken);
                     if (releasesApiFallback is not null)
                     {
                         return releasesApiFallback;
                     }
 
-                    var ghFallback = await TryCheckWithGhCliAsync(currentVersion, cancellationToken);
+                    var ghFallback = await TryCheckWithGhCliAsync(
+                        currentVersion,
+                        currentBuildTimestampUtc,
+                        cancellationToken);
                     if (ghFallback is not null)
                     {
                         return ghFallback;
@@ -86,7 +104,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var document = JsonDocument.Parse(json);
-            return BuildUpdateInfoFromReleasePayload(document.RootElement, currentNormalized);
+            return BuildUpdateInfoFromReleasePayload(document.RootElement, currentNormalized, currentBuildTimestampUtc);
         }
         catch (OperationCanceledException)
         {
@@ -94,13 +112,19 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            var releasesApiFallback = await TryCheckWithPublicReleasesListAsync(currentNormalized, cancellationToken);
+            var releasesApiFallback = await TryCheckWithPublicReleasesListAsync(
+                currentNormalized,
+                currentBuildTimestampUtc,
+                cancellationToken);
             if (releasesApiFallback is not null)
             {
                 return releasesApiFallback;
             }
 
-            var ghFallback = await TryCheckWithGhCliAsync(currentVersion, cancellationToken);
+            var ghFallback = await TryCheckWithGhCliAsync(
+                currentVersion,
+                currentBuildTimestampUtc,
+                cancellationToken);
             if (ghFallback is not null)
             {
                 return ghFallback;
@@ -289,7 +313,10 @@ public sealed class AppUpdateService : IAppUpdateService
         }
     }
 
-    private async Task<AppUpdateInfo?> TryCheckWithGhCliAsync(string currentVersion, CancellationToken cancellationToken)
+    private async Task<AppUpdateInfo?> TryCheckWithGhCliAsync(
+        string currentVersion,
+        DateTimeOffset? currentBuildTimestampUtc,
+        CancellationToken cancellationToken)
     {
         var ghCliPath = ResolveGhCliPath();
         if (ghCliPath is null)
@@ -311,7 +338,7 @@ public sealed class AppUpdateService : IAppUpdateService
         {
             using var document = JsonDocument.Parse(result.StdOut);
             var currentNormalized = NormalizeVersion(currentVersion);
-            return BuildUpdateInfoFromReleasePayload(document.RootElement, currentNormalized);
+            return BuildUpdateInfoFromReleasePayload(document.RootElement, currentNormalized, currentBuildTimestampUtc);
         }
         catch
         {
@@ -485,12 +512,15 @@ public sealed class AppUpdateService : IAppUpdateService
         return fallbackExe ?? (string.Empty, string.Empty, string.Empty);
     }
 
-    private async Task<AppUpdateInfo?> TryCheckWithPublicReleasesListAsync(string currentNormalized, CancellationToken cancellationToken)
+    private async Task<AppUpdateInfo?> TryCheckWithPublicReleasesListAsync(
+        string currentNormalized,
+        DateTimeOffset? currentBuildTimestampUtc,
+        CancellationToken cancellationToken)
     {
         try
         {
             using var response = await GetWithRetryAsync(
-                ReleasesApiUrl,
+                $"{ReleasesApiUrl}&_={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
                 HttpCompletionOption.ResponseContentRead,
                 operationCodePrefix: "UPD-CHK-LIST",
                 progress: null,
@@ -507,8 +537,12 @@ public sealed class AppUpdateService : IAppUpdateService
                 return null;
             }
 
-            JsonElement? firstNonDraftStable = null;
-            JsonElement? firstNonDraft = null;
+            JsonElement? bestStable = null;
+            JsonElement? bestAny = null;
+            var bestStableVersion = "0.0.0";
+            var bestAnyVersion = "0.0.0";
+            DateTimeOffset? bestStablePublishedAt = null;
+            DateTimeOffset? bestAnyPublishedAt = null;
 
             foreach (var release in document.RootElement.EnumerateArray())
             {
@@ -518,24 +552,42 @@ public sealed class AppUpdateService : IAppUpdateService
                     continue;
                 }
 
-                firstNonDraft ??= release;
+                var candidateVersion = NormalizeVersion(GetStringWithFallback(release, "tag_name", "tagName"));
+                var candidatePublishedAt = TryGetDateTimeOffsetWithFallback(release, "published_at", "publishedAt");
+
+                if (bestAny is null ||
+                    CompareVersions(candidateVersion, bestAnyVersion) > 0 ||
+                    (CompareVersions(candidateVersion, bestAnyVersion) == 0 &&
+                     IsPublishedLater(candidatePublishedAt, bestAnyPublishedAt)))
+                {
+                    bestAny = release;
+                    bestAnyVersion = candidateVersion;
+                    bestAnyPublishedAt = candidatePublishedAt;
+                }
 
                 var isPrerelease = TryGetBoolean(release, "prerelease");
                 if (!isPrerelease)
                 {
-                    firstNonDraftStable = release;
-                    break;
+                    if (bestStable is null ||
+                        CompareVersions(candidateVersion, bestStableVersion) > 0 ||
+                        (CompareVersions(candidateVersion, bestStableVersion) == 0 &&
+                         IsPublishedLater(candidatePublishedAt, bestStablePublishedAt)))
+                    {
+                        bestStable = release;
+                        bestStableVersion = candidateVersion;
+                        bestStablePublishedAt = candidatePublishedAt;
+                    }
                 }
             }
 
-            if (firstNonDraftStable is not null)
+            if (bestStable is not null)
             {
-                return BuildUpdateInfoFromReleasePayload(firstNonDraftStable.Value, currentNormalized);
+                return BuildUpdateInfoFromReleasePayload(bestStable.Value, currentNormalized, currentBuildTimestampUtc);
             }
 
-            if (firstNonDraft is not null)
+            if (bestAny is not null)
             {
-                return BuildUpdateInfoFromReleasePayload(firstNonDraft.Value, currentNormalized);
+                return BuildUpdateInfoFromReleasePayload(bestAny.Value, currentNormalized, currentBuildTimestampUtc);
             }
 
             return null;
@@ -546,7 +598,10 @@ public sealed class AppUpdateService : IAppUpdateService
         }
     }
 
-    private static AppUpdateInfo BuildUpdateInfoFromReleasePayload(JsonElement root, string currentNormalized)
+    private static AppUpdateInfo BuildUpdateInfoFromReleasePayload(
+        JsonElement root,
+        string currentNormalized,
+        DateTimeOffset? currentBuildTimestampUtc)
     {
         var tagName = GetStringWithFallback(root, "tag_name", "tagName");
         var releaseName = GetString(root, "name");
@@ -563,6 +618,19 @@ public sealed class AppUpdateService : IAppUpdateService
         }
 
         var updateAvailable = IsVersionGreater(latestVersion, currentNormalized);
+        var sameVersionNewerBuildAvailable = !updateAvailable
+            && string.Equals(latestVersion, currentNormalized, StringComparison.OrdinalIgnoreCase)
+            && publishedAt.HasValue
+            && currentBuildTimestampUtc.HasValue
+            && publishedAt.Value > currentBuildTimestampUtc.Value.AddMinutes(5)
+            && !string.IsNullOrWhiteSpace(installerUrl);
+
+        if (sameVersionNewerBuildAvailable && !IsValidSha256(installerSha256))
+        {
+            sameVersionNewerBuildAvailable = false;
+        }
+
+        updateAvailable = updateAvailable || sameVersionNewerBuildAvailable;
         if (!updateAvailable)
         {
             return new AppUpdateInfo
@@ -630,7 +698,9 @@ public sealed class AppUpdateService : IAppUpdateService
             InstallerDownloadUrl = installerUrl,
             InstallerSha256 = installerSha256,
             PublishedAtUtc = publishedAt,
-            Message = $"Update available: {latestVersion}"
+            Message = sameVersionNewerBuildAvailable
+                ? $"A newer build for version {latestVersion} is available."
+                : $"Update available: {latestVersion}"
         };
     }
 
@@ -795,12 +865,27 @@ public sealed class AppUpdateService : IAppUpdateService
 
     private static bool IsVersionGreater(string latestVersion, string currentVersion)
     {
-        if (TryParseVersion(latestVersion, out var latest) && TryParseVersion(currentVersion, out var current))
+        return CompareVersions(latestVersion, currentVersion) > 0;
+    }
+
+    private static int CompareVersions(string leftVersion, string rightVersion)
+    {
+        if (TryParseVersion(leftVersion, out var left) && TryParseVersion(rightVersion, out var right))
         {
-            return latest > current;
+            return left.CompareTo(right);
         }
 
-        return !string.Equals(latestVersion, currentVersion, StringComparison.OrdinalIgnoreCase);
+        return string.Compare(leftVersion, rightVersion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPublishedLater(DateTimeOffset? left, DateTimeOffset? right)
+    {
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value > right.Value;
+        }
+
+        return left.HasValue && !right.HasValue;
     }
 
     private static bool TryParseVersion(string value, out Version parsedVersion)

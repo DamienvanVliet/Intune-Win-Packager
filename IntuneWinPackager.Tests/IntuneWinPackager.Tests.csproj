@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\IntuneWinPackager.Core\IntuneWinPackager.Core.csproj" />
+    <ProjectReference Include="..\IntuneWinPackager.Infrastructure\IntuneWinPackager.Infrastructure.csproj" />
     <ProjectReference Include="..\IntuneWinPackager.Models\IntuneWinPackager.Models.csproj" />
   </ItemGroup>
 

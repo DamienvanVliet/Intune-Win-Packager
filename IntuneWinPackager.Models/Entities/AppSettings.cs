@@ -17,5 +17,7 @@ public sealed record AppSettings
     public string UiLanguage { get; init; } = "en";
 
     public string UiTheme { get; init; } = "light";
+
+    public string UiDensity { get; init; } = "comfortable";
 }
 
