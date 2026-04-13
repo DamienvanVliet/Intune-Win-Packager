@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.5] - 2026-04-13
+
+### Added
+- Universal Intune preparation flow for MSI, EXE, APPX/MSIX and script installers.
+- Removed app-specific behavior and hardcoded defaults; command/detection handling is type-aware.
+- Added structured Intune install rules, requirement rules, and detection rules (MSI/File/Registry/Script).
+- Added Intune preparation outputs: .intune.json metadata and .intune-checklist.md portal checklist.
+- Added requirement validation and preflight checks for production-safe packaging.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
