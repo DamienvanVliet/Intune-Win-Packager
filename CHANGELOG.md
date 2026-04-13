@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.8] - 2026-04-14
+
+### Added
+- Fixes dark-mode visibility for dropdown controls in Settings and form-heavy sections.
+- Adds a resizable splitter in Packaging so logs and result panels can be widened interactively.
+- Improves Packaging Logs readability for long commands with horizontal scrolling and denser typography.
+- Reduces overall UI footprint with tighter comfortable/compact density values and smaller control minimum heights.
+
 ## [1.1.7] - 2026-04-14
 
 ### Added
