@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.13] - 2026-04-16
+
+### Added
+- Simplified EXE preset dropdown labels to plain language (less technical). - Added small helper text under EXE preset selection with clear guidance for non-technical users. - Kept behavior unchanged while reducing cognitive load in advanced settings.
+
 ## [1.1.12] - 2026-04-16
 
 ### Added
