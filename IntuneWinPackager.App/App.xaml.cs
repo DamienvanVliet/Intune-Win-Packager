@@ -32,6 +32,7 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<IToolLocatorService, ToolLocatorService>();
                 services.AddSingleton<IToolInstallerService, ToolInstallerService>();
                 services.AddSingleton<IAppUpdateService, AppUpdateService>();
+                services.AddSingleton<IPackageCatalogService, PackageCatalogService>();
 
                 services.AddSingleton<IDialogService, SystemDialogService>();
                 services.AddSingleton<ILocalizationService, LocalizationService>();

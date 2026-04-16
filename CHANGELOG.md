@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.17] - 2026-04-17
+
+### Added
+- Added a full in-app Package Store (catalog) with WinGet + Chocolatey search. - Added package cards showing app icon (with fallback tile), app name, package id, source, and build version. - Added package detail panel with install/uninstall command templates, detection guidance, metadata notes, and quick actions.
+
+### Changed
+- Added a new package catalog service layer (Models/Core/Infrastructure) to keep store logic modular and extensible.
+- Added a `Use In Packager` action that applies selected catalog hints into the main packaging workflow for faster setup.
+
 ## [1.1.16] - 2026-04-17
 
 ### Added

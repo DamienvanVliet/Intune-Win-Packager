@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Diagnostics;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfColor = System.Windows.Media.Color;
 using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
@@ -31,6 +32,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IToolInstallerService _toolInstallerService;
     private readonly IPreflightService _preflightService;
     private readonly IAppUpdateService _appUpdateService;
+    private readonly IPackageCatalogService _packageCatalogService;
     private readonly IDialogService _dialogService;
     private readonly ILocalizationService _localizationService;
     private readonly IThemeService _themeService;
@@ -56,6 +58,8 @@ public partial class MainViewModel : ObservableObject
     private AppUpdateInfo? _latestUpdateInfo;
     private DateTimeOffset? _lastUpdateCheckCompletedAtUtc;
     private DateTimeOffset? _lastPreflightCompletedAtUtc;
+    private CancellationTokenSource? _catalogSearchCancellation;
+    private CancellationTokenSource? _catalogDetailsCancellation;
 
     [ObservableProperty]
     private string sourceFolder = string.Empty;
@@ -276,6 +280,30 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string switchVerificationStatus = string.Empty;
 
+    [ObservableProperty]
+    private string packageCatalogSearchTerm = string.Empty;
+
+    [ObservableProperty]
+    private bool includeWingetCatalogSource = true;
+
+    [ObservableProperty]
+    private bool includeChocolateyCatalogSource = true;
+
+    [ObservableProperty]
+    private bool isPackageCatalogBusy;
+
+    [ObservableProperty]
+    private bool isPackageCatalogDetailBusy;
+
+    [ObservableProperty]
+    private string packageCatalogStatus = string.Empty;
+
+    [ObservableProperty]
+    private PackageCatalogEntry? selectedCatalogEntry;
+
+    [ObservableProperty]
+    private PackageCatalogEntry? catalogEntryDetails;
+
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
         IValidationService validationService,
@@ -288,6 +316,7 @@ public partial class MainViewModel : ObservableObject
         IToolInstallerService toolInstallerService,
         IPreflightService preflightService,
         IAppUpdateService appUpdateService,
+        IPackageCatalogService packageCatalogService,
         IDialogService dialogService,
         ILocalizationService localizationService,
         IThemeService themeService,
@@ -304,6 +333,7 @@ public partial class MainViewModel : ObservableObject
         _toolInstallerService = toolInstallerService;
         _preflightService = preflightService;
         _appUpdateService = appUpdateService;
+        _packageCatalogService = packageCatalogService;
         _dialogService = dialogService;
         _localizationService = localizationService;
         _themeService = themeService;
@@ -342,6 +372,11 @@ public partial class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(IsPreflightReady));
         };
 
+        PackageCatalogResults.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasCatalogResults));
+        };
+
         foreach (var preset in _installerCommandService.GetExeSilentPresets())
         {
             ExePresets.Add(preset);
@@ -369,6 +404,9 @@ public partial class MainViewModel : ObservableObject
         DeleteProfileCommand = new AsyncRelayCommand(DeleteProfileAsync, CanDeleteProfile);
         CheckForUpdatesCommand = new AsyncRelayCommand(CheckForUpdatesAsync, () => !IsBusy);
         InstallUpdateCommand = new AsyncRelayCommand(InstallUpdateAsync, CanInstallUpdate);
+        SearchCatalogCommand = new AsyncRelayCommand(SearchCatalogAsync, CanSearchCatalog);
+        UseCatalogEntryCommand = new RelayCommand(UseCatalogEntry, CanUseCatalogEntrySelection);
+        OpenCatalogHomepageCommand = new RelayCommand(OpenCatalogHomepage, CanOpenCatalogHomepageLink);
 
         _localizationService.LanguageChanged += HandleLanguageChanged;
 
@@ -381,6 +419,7 @@ public partial class MainViewModel : ObservableObject
         PreflightSummary = T("Vm.Preflight.DefaultSummary");
         PackagingProgressStep = T("Vm.Progress.ReadyStep");
         PackagingProgressDetail = T("Vm.Progress.ReadyDetail");
+        PackageCatalogStatus = T("Vm.Store.Ready");
         RefreshSwitchVerificationStatus();
     }
 
@@ -393,6 +432,8 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<string> AvailableProfiles { get; } = new();
 
     public ObservableCollection<PreflightCheck> PreflightChecks { get; } = new();
+
+    public ObservableCollection<PackageCatalogEntry> PackageCatalogResults { get; } = new();
 
     public ReadOnlyObservableCollection<string> Logs => _readonlyLogs;
 
@@ -508,6 +549,12 @@ public partial class MainViewModel : ObservableObject
     public bool IsPreflightReady => HasPreflightRun && !HasPreflightErrors;
 
     public bool IsUpdateNotificationVisible => IsUpdateAvailable;
+
+    public bool HasCatalogResults => PackageCatalogResults.Count > 0;
+
+    public bool HasCatalogSelection => SelectedCatalogEntry is not null;
+
+    public bool HasCatalogDetails => CatalogEntryDetails is not null;
 
     public string UpdateNotificationText => TF("Vm.Update.NotificationFormat", LatestVersion, CurrentVersion);
 
@@ -651,6 +698,12 @@ public partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand CheckForUpdatesCommand { get; }
 
     public IAsyncRelayCommand InstallUpdateCommand { get; }
+
+    public IAsyncRelayCommand SearchCatalogCommand { get; }
+
+    public IRelayCommand UseCatalogEntryCommand { get; }
+
+    public IRelayCommand OpenCatalogHomepageCommand { get; }
 
     public async Task InitializeAsync()
     {
@@ -1012,6 +1065,41 @@ public partial class MainViewModel : ObservableObject
         DeleteProfileCommand.NotifyCanExecuteChanged();
     }
 
+    partial void OnPackageCatalogSearchTermChanged(string value)
+    {
+        SearchCatalogCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIncludeWingetCatalogSourceChanged(bool value)
+    {
+        SearchCatalogCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIncludeChocolateyCatalogSourceChanged(bool value)
+    {
+        SearchCatalogCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsPackageCatalogBusyChanged(bool value)
+    {
+        SearchCatalogCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSelectedCatalogEntryChanged(PackageCatalogEntry? value)
+    {
+        OnPropertyChanged(nameof(HasCatalogSelection));
+        UseCatalogEntryCommand.NotifyCanExecuteChanged();
+        OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
+        _ = LoadCatalogDetailsAsync(value);
+    }
+
+    partial void OnCatalogEntryDetailsChanged(PackageCatalogEntry? value)
+    {
+        OnPropertyChanged(nameof(HasCatalogDetails));
+        UseCatalogEntryCommand.NotifyCanExecuteChanged();
+        OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
+    }
+
     partial void OnOperationStateChanged(OperationState value)
     {
         OnPropertyChanged(nameof(StatusBrush));
@@ -1030,6 +1118,9 @@ public partial class MainViewModel : ObservableObject
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
         CheckForUpdatesCommand.NotifyCanExecuteChanged();
         InstallUpdateCommand.NotifyCanExecuteChanged();
+        SearchCatalogCommand.NotifyCanExecuteChanged();
+        UseCatalogEntryCommand.NotifyCanExecuteChanged();
+        OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnResultOutputPathChanged(string value)
@@ -1152,6 +1243,13 @@ public partial class MainViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(LatestVersionDisplay));
         OnPropertyChanged(nameof(UpdateNotificationText));
+    }
+
+    partial void OnPackageCatalogStatusChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasCatalogResults));
+        OnPropertyChanged(nameof(HasCatalogSelection));
+        OnPropertyChanged(nameof(HasCatalogDetails));
     }
 
     private async Task LoadSettingsAsync()
@@ -1838,6 +1936,201 @@ public partial class MainViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    private bool CanSearchCatalog()
+    {
+        var hasQuery = !string.IsNullOrWhiteSpace(PackageCatalogSearchTerm) && PackageCatalogSearchTerm.Trim().Length >= 2;
+        var hasSource = IncludeWingetCatalogSource || IncludeChocolateyCatalogSource;
+        return !IsBusy && !IsPackageCatalogBusy && hasQuery && hasSource;
+    }
+
+    private bool CanUseCatalogEntrySelection()
+    {
+        return !IsBusy && (CatalogEntryDetails is not null || SelectedCatalogEntry is not null);
+    }
+
+    private bool CanOpenCatalogHomepageLink()
+    {
+        return !IsBusy && !string.IsNullOrWhiteSpace((CatalogEntryDetails ?? SelectedCatalogEntry)?.HomepageUrl);
+    }
+
+    private async Task SearchCatalogAsync()
+    {
+        if (!CanSearchCatalog())
+        {
+            if (!IncludeWingetCatalogSource && !IncludeChocolateyCatalogSource)
+            {
+                PackageCatalogStatus = T("Vm.Store.SelectSource");
+            }
+            else if (string.IsNullOrWhiteSpace(PackageCatalogSearchTerm) || PackageCatalogSearchTerm.Trim().Length < 2)
+            {
+                PackageCatalogStatus = T("Vm.Store.QueryTooShort");
+            }
+
+            return;
+        }
+
+        _catalogSearchCancellation?.Cancel();
+        _catalogSearchCancellation = new CancellationTokenSource();
+        var cancellationToken = _catalogSearchCancellation.Token;
+
+        IsPackageCatalogBusy = true;
+        PackageCatalogStatus = T("Vm.Store.Searching");
+        CatalogEntryDetails = null;
+        SelectedCatalogEntry = null;
+        PackageCatalogResults.Clear();
+        OnPropertyChanged(nameof(HasCatalogResults));
+
+        try
+        {
+            var results = await _packageCatalogService.SearchAsync(new PackageCatalogQuery
+            {
+                SearchTerm = PackageCatalogSearchTerm.Trim(),
+                MaxResults = 24,
+                IncludeWinget = IncludeWingetCatalogSource,
+                IncludeChocolatey = IncludeChocolateyCatalogSource
+            }, cancellationToken);
+
+            foreach (var item in results)
+            {
+                PackageCatalogResults.Add(item);
+            }
+
+            if (PackageCatalogResults.Count == 0)
+            {
+                PackageCatalogStatus = TF("Vm.Store.NoResults", PackageCatalogSearchTerm.Trim());
+                return;
+            }
+
+            PackageCatalogStatus = TF("Vm.Store.Results", PackageCatalogResults.Count, PackageCatalogSearchTerm.Trim());
+            SelectedCatalogEntry = PackageCatalogResults[0];
+        }
+        catch (OperationCanceledException)
+        {
+            PackageCatalogStatus = T("Vm.Store.Canceled");
+        }
+        catch (Exception ex)
+        {
+            PackageCatalogStatus = TF("Vm.Store.Error", ex.Message);
+        }
+        finally
+        {
+            IsPackageCatalogBusy = false;
+            SearchCatalogCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private async Task LoadCatalogDetailsAsync(PackageCatalogEntry? entry)
+    {
+        CatalogEntryDetails = null;
+        if (entry is null)
+        {
+            return;
+        }
+
+        _catalogDetailsCancellation?.Cancel();
+        _catalogDetailsCancellation = new CancellationTokenSource();
+        var cancellationToken = _catalogDetailsCancellation.Token;
+
+        IsPackageCatalogDetailBusy = true;
+        PackageCatalogStatus = TF("Vm.Store.LoadingDetails", entry.Name);
+
+        try
+        {
+            var detailed = await _packageCatalogService.GetDetailsAsync(entry, cancellationToken);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            CatalogEntryDetails = detailed ?? entry;
+            PackageCatalogStatus = TF("Vm.Store.DetailReady", CatalogEntryDetails.Name);
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer item selection replaced this details load.
+        }
+        catch (Exception ex)
+        {
+            CatalogEntryDetails = entry;
+            PackageCatalogStatus = TF("Vm.Store.DetailsError", ex.Message);
+        }
+        finally
+        {
+            IsPackageCatalogDetailBusy = false;
+        }
+    }
+
+    private void UseCatalogEntry()
+    {
+        var entry = CatalogEntryDetails ?? SelectedCatalogEntry;
+        if (entry is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(ProfileName))
+        {
+            ProfileName = $"{entry.PackageId}-profile";
+        }
+
+        if (InstallerType == InstallerType.Unknown && entry.InstallerType != InstallerType.Unknown)
+        {
+            InstallerType = entry.InstallerType;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.SuggestedInstallCommand))
+        {
+            InstallCommand = entry.SuggestedInstallCommand;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.SuggestedUninstallCommand))
+        {
+            UninstallCommand = entry.SuggestedUninstallCommand;
+        }
+
+        if (entry.InstallerType == InstallerType.Exe)
+        {
+            RequireSilentSwitchReview = true;
+            SilentSwitchesVerified = false;
+        }
+
+        AppliedTemplateName = $"{entry.SourceDisplayName} Catalog - {entry.Name}";
+        TemplateGuidance = entry.DetectionGuidance;
+        UpdateValidation();
+        NotifyReadinessChanged();
+
+        SetStatus(
+            OperationState.Idle,
+            T("Vm.Status.CatalogAppliedTitle"),
+            TF("Vm.Status.CatalogAppliedMessage", entry.Name));
+        AppendLog($"Catalog template applied for {entry.Name} ({entry.PackageId}).");
+    }
+
+    private void OpenCatalogHomepage()
+    {
+        var url = (CatalogEntryDetails ?? SelectedCatalogEntry)?.HomepageUrl;
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.CatalogLinkOpenFailedTitle"),
+                ex.Message);
         }
     }
 
@@ -2690,6 +2983,13 @@ public partial class MainViewModel : ObservableObject
         {
             PackagingProgressStep = T("Vm.Progress.ReadyStep");
             PackagingProgressDetail = T("Vm.Progress.ReadyDetail");
+        }
+
+        if (!IsPackageCatalogBusy &&
+            PackageCatalogResults.Count == 0 &&
+            string.IsNullOrWhiteSpace(PackageCatalogSearchTerm))
+        {
+            PackageCatalogStatus = T("Vm.Store.Ready");
         }
 
         RefreshSwitchVerificationStatus();

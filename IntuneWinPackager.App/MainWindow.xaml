@@ -1128,6 +1128,100 @@
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Ui.Store.Title}" Style="{StaticResource SectionTitleTextStyle}" />
+                                    <TextBlock Text="{DynamicResource Ui.Store.Description}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,4,0,10"
+                                               TextWrapping="Wrap" />
+
+                                    <DockPanel Margin="0,0,0,8">
+                                        <Button DockPanel.Dock="Right"
+                                                Content="{DynamicResource Ui.Store.SearchButton}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Command="{Binding SearchCatalogCommand}" />
+                                        <TextBox Text="{Binding PackageCatalogSearchTerm, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,0,8,0"
+                                                 MinHeight="34" />
+                                    </DockPanel>
+
+                                    <WrapPanel Margin="0,0,0,8">
+                                        <CheckBox Content="{DynamicResource Ui.Store.SourceWinget}"
+                                                  IsChecked="{Binding IncludeWingetCatalogSource}"
+                                                  Margin="0,0,12,0" />
+                                        <CheckBox Content="{DynamicResource Ui.Store.SourceChocolatey}"
+                                                  IsChecked="{Binding IncludeChocolateyCatalogSource}" />
+                                    </WrapPanel>
+
+                                    <TextBlock Text="{Binding PackageCatalogStatus}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,0,0,8"
+                                               TextWrapping="Wrap" />
+
+                                    <ListBox ItemsSource="{Binding PackageCatalogResults}"
+                                             SelectedItem="{Binding SelectedCatalogEntry}"
+                                             MaxHeight="260"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border CornerRadius="10"
+                                                        BorderBrush="{DynamicResource PanelBorderBrush}"
+                                                        BorderThickness="1"
+                                                        Background="{DynamicResource PanelBackgroundBrush}"
+                                                        Padding="8"
+                                                        Margin="0,0,0,8">
+                                                    <DockPanel LastChildFill="True">
+                                                        <Grid DockPanel.Dock="Left"
+                                                              Width="38"
+                                                              Height="38"
+                                                              Margin="0,0,10,0">
+                                                            <Border CornerRadius="8"
+                                                                    Background="{DynamicResource HeaderBackgroundBrush}"
+                                                                    BorderBrush="{DynamicResource HeaderBorderBrush}"
+                                                                    BorderThickness="1" />
+                                                            <TextBlock Text="{Binding Monogram}"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"
+                                                                       FontFamily="Segoe UI Variable Display"
+                                                                       FontSize="13"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                            <Border CornerRadius="8" ClipToBounds="True">
+                                                                <Image Source="{Binding IconUrl}" Stretch="UniformToFill" />
+                                                            </Border>
+                                                        </Grid>
+
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Name}"
+                                                                       FontFamily="Segoe UI Variable Text"
+                                                                       FontSize="12"
+                                                                       FontWeight="SemiBold"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Text="{Binding PackageId}"
+                                                                       Style="{StaticResource BodyTextStyle}"
+                                                                       FontSize="11"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Style="{StaticResource BodyTextStyle}"
+                                                                       FontSize="11"
+                                                                       Margin="0,2,0,0">
+                                                                <Run Text="{DynamicResource Ui.Store.BuildLabel}" />
+                                                                <Run Text=" " />
+                                                                <Run Text="{Binding BuildVersion}" />
+                                                                <Run Text="  |  " />
+                                                                <Run Text="{Binding SourceDisplayName}" />
+                                                            </TextBlock>
+                                                        </StackPanel>
+                                                    </DockPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </StackPanel>
+                            </Border>
+
                             <Border Style="{StaticResource CardBorderStyle}">
                                 <StackPanel>
                                     <TextBlock Text="{DynamicResource Ui.AppUpdates.Title}" Style="{StaticResource SectionTitleTextStyle}" />
@@ -1182,6 +1276,109 @@
                         </StackPanel>
 
                         <StackPanel Grid.Column="1">
+                            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Ui.Store.Details}" Style="{StaticResource SectionTitleTextStyle}" />
+                                    <TextBlock Text="{DynamicResource Ui.Store.SelectHint}"
+                                               Margin="0,4,0,10">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasCatalogSelection}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+
+                                    <StackPanel>
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasCatalogSelection}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+
+                                        <TextBlock Text="{Binding SelectedCatalogEntry.Name}"
+                                                   FontFamily="Segoe UI Variable Display"
+                                                   FontSize="15"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource BodyTextStyle}" Margin="0,2,0,0">
+                                            <Run Text="{DynamicResource Ui.Store.BuildLabel}" />
+                                            <Run Text=" " />
+                                            <Run Text="{Binding SelectedCatalogEntry.BuildVersion}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding SelectedCatalogEntry.PackageId}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   Margin="0,2,0,0"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding CatalogEntryDetails.Publisher, TargetNullValue=-}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   Margin="0,2,0,8"
+                                                   TextTrimming="CharacterEllipsis" />
+
+                                        <TextBlock Text="{Binding CatalogEntryDetails.Description, TargetNullValue=''}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,8" />
+
+                                        <TextBlock Text="{DynamicResource Ui.Store.InstallCommandHint}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,0,4" />
+                                        <TextBox Text="{Binding CatalogEntryDetails.SuggestedInstallCommand, TargetNullValue=''}"
+                                                 IsReadOnly="True"
+                                                 TextWrapping="Wrap"
+                                                 AcceptsReturn="True"
+                                                 MinHeight="48"
+                                                 VerticalScrollBarVisibility="Auto" />
+
+                                        <TextBlock Text="{DynamicResource Ui.Store.UninstallCommandHint}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,8,0,4" />
+                                        <TextBox Text="{Binding CatalogEntryDetails.SuggestedUninstallCommand, TargetNullValue=''}"
+                                                 IsReadOnly="True"
+                                                 TextWrapping="Wrap"
+                                                 AcceptsReturn="True"
+                                                 MinHeight="48"
+                                                 VerticalScrollBarVisibility="Auto" />
+
+                                        <TextBlock Text="{DynamicResource Ui.Store.DetectionHint}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,8,0,4" />
+                                        <TextBlock Text="{Binding CatalogEntryDetails.DetectionGuidance, TargetNullValue=''}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   TextWrapping="Wrap" />
+
+                                        <TextBlock Text="{Binding CatalogEntryDetails.MetadataNotes, TargetNullValue=''}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontSize="11"
+                                                   Margin="0,8,0,8"
+                                                   TextWrapping="Wrap" />
+
+                                        <WrapPanel>
+                                            <Button Content="{DynamicResource Ui.Store.UseInPackager}"
+                                                    Style="{StaticResource PrimaryButtonStyle}"
+                                                    Command="{Binding UseCatalogEntryCommand}" />
+                                            <Button Content="{DynamicResource Ui.Store.OpenHomepage}"
+                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                    Margin="8,0,0,0"
+                                                    Command="{Binding OpenCatalogHomepageCommand}" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
                             <Border Style="{StaticResource CardBorderStyle}">
                                 <StackPanel>
                                     <TextBlock Text="{DynamicResource Ui.RecentPackages.Title}" Style="{StaticResource SectionTitleTextStyle}" />
