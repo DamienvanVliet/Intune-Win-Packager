@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Infrastructure.Support;
 using IntuneWinPackager.Models.Entities;
@@ -915,13 +916,25 @@ public sealed class AppUpdateService : IAppUpdateService
             normalized = normalized[1..];
         }
 
+        var plusIndex = normalized.IndexOf('+');
+        if (plusIndex > 0)
+        {
+            normalized = normalized[..plusIndex];
+        }
+
         var dashIndex = normalized.IndexOf('-');
         if (dashIndex > 0)
         {
             normalized = normalized[..dashIndex];
         }
 
-        return normalized;
+        var numericMatch = Regex.Match(normalized, @"\d+(?:\.\d+){0,3}");
+        if (numericMatch.Success)
+        {
+            return numericMatch.Value;
+        }
+
+        return "0.0.0";
     }
 
     private static string GetString(JsonElement element, string propertyName)

@@ -10,4 +10,11 @@ public interface IInstallerCommandService
     IReadOnlyList<SilentInstallPreset> GetExeSilentPresets();
 
     CommandSuggestion CreateSuggestion(string setupFilePath, InstallerType installerType, MsiMetadata? msiMetadata = null, SilentInstallPreset? preset = null);
+
+    void SaveVerifiedKnowledge(
+        string setupFilePath,
+        InstallerType installerType,
+        string installCommand,
+        string uninstallCommand,
+        IntuneWin32AppRules intuneRules);
 }

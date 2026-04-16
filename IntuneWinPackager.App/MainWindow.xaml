@@ -21,6 +21,7 @@
         </Grid.LayoutTransform>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -62,7 +63,47 @@
             </DockPanel>
         </Border>
 
-        <TabControl Grid.Row="1">
+        <Border Grid.Row="1"
+                Margin="0,0,0,12"
+                Padding="12,10"
+                CornerRadius="12"
+                Background="{DynamicResource UpdateNoticeBackgroundBrush}"
+                BorderBrush="{DynamicResource UpdateNoticeBorderBrush}"
+                BorderThickness="1">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsUpdateNotificationVisible}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right"
+                        Content="{DynamicResource Ui.InstallUpdate}"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        Margin="10,0,0,0"
+                        Command="{Binding InstallUpdateCommand}" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                               Text="&#xE946;"
+                               Foreground="{DynamicResource UpdateNoticeForegroundBrush}"
+                               Margin="0,0,8,0"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding UpdateNotificationText}"
+                               Foreground="{DynamicResource UpdateNoticeForegroundBrush}"
+                               FontFamily="Segoe UI Variable Text"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <TabControl Grid.Row="2">
             <TabItem>
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">

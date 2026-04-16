@@ -99,6 +99,37 @@ public class AppUpdateServiceTests
         Assert.Contains("latest version", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task CheckForUpdatesAsync_HandlesCurrentVersionWithBuildMetadata()
+    {
+        var payload = """
+                      [
+                        {
+                          "tag_name": "v1.1.10",
+                          "draft": false,
+                          "prerelease": false,
+                          "published_at": "2026-04-13T12:00:00Z",
+                          "assets": [
+                            {
+                              "name": "IntuneWinPackager-Setup-1.1.10.exe",
+                              "browser_download_url": "https://example.com/iwp-1.1.10.exe",
+                              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            }
+                          ]
+                        }
+                      ]
+                      """;
+
+        var sut = CreateService(payload);
+
+        var result = await sut.CheckForUpdatesAsync("1.1.5+build.42");
+
+        Assert.True(result.CheckSucceeded);
+        Assert.True(result.IsUpdateAvailable);
+        Assert.Equal("1.1.10", result.LatestVersion);
+        Assert.Equal("1.1.5", result.CurrentVersion);
+    }
+
     private static AppUpdateService CreateService(string releasesPayload)
     {
         var handler = new StubHttpMessageHandler(releasesPayload);

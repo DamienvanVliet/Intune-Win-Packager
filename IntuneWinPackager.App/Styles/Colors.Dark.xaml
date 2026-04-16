@@ -46,6 +46,10 @@
 
     <SolidColorBrush x:Key="ProgressBackgroundBrush" Color="#FF2C415E" />
 
+    <SolidColorBrush x:Key="UpdateNoticeBackgroundBrush" Color="#FF1C3554" />
+    <SolidColorBrush x:Key="UpdateNoticeBorderBrush" Color="#FF4C79AA" />
+    <SolidColorBrush x:Key="UpdateNoticeForegroundBrush" Color="#FFE4F0FF" />
+
     <SolidColorBrush x:Key="LogBackgroundBrush" Color="#FF0B1018" />
     <SolidColorBrush x:Key="LogBorderBrush" Color="#FF1C2C43" />
     <SolidColorBrush x:Key="LogForegroundBrush" Color="#FFD9E7FF" />

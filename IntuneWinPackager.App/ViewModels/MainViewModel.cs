@@ -49,6 +49,7 @@ public partial class MainViewModel : ObservableObject
     private bool _isInitialized;
     private bool _suppressSetupRefresh;
     private bool _isApplyingPreferences;
+    private bool _isCheckingForUpdates;
     private AppUpdateInfo? _latestUpdateInfo;
     private DateTimeOffset? _lastPreflightCompletedAtUtc;
 
@@ -450,6 +451,10 @@ public partial class MainViewModel : ObservableObject
 
     public bool IsPreflightReady => HasPreflightRun && !HasPreflightErrors;
 
+    public bool IsUpdateNotificationVisible => IsUpdateAvailable;
+
+    public string UpdateNotificationText => TF("Vm.Update.NotificationFormat", LatestVersion, CurrentVersion);
+
     public string InstallerTypeDisplay => InstallerType switch
     {
         InstallerType.Msi => T("Vm.InstallerType.Msi"),
@@ -603,6 +608,8 @@ public partial class MainViewModel : ObservableObject
         await RefreshHistoryAsync();
 
         UpdateValidation();
+
+        _ = CheckForUpdatesOnStartupAsync();
     }
 
     public void SetDragOverState(bool dragOver)
@@ -697,6 +704,11 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSilentSwitchesVerifiedChanged(bool value)
     {
+        if (value && InstallerType == InstallerType.Exe)
+        {
+            TrySaveVerifiedInstallerKnowledge();
+        }
+
         InvalidatePreflightIfNeeded();
         UpdateValidation();
         NotifyReadinessChanged();
@@ -972,6 +984,7 @@ public partial class MainViewModel : ObservableObject
     partial void OnIsUpdateAvailableChanged(bool value)
     {
         InstallUpdateCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsUpdateNotificationVisible));
     }
 
     partial void OnHasPreflightRunChanged(bool value)
@@ -1051,11 +1064,13 @@ public partial class MainViewModel : ObservableObject
     partial void OnCurrentVersionChanged(string value)
     {
         OnPropertyChanged(nameof(CurrentVersionDisplay));
+        OnPropertyChanged(nameof(UpdateNotificationText));
     }
 
     partial void OnLatestVersionChanged(string value)
     {
         OnPropertyChanged(nameof(LatestVersionDisplay));
+        OnPropertyChanged(nameof(UpdateNotificationText));
     }
 
     private async Task LoadSettingsAsync()
@@ -1481,10 +1496,16 @@ public partial class MainViewModel : ObservableObject
 
     private async Task CheckForUpdatesAsync()
     {
+        if (_isCheckingForUpdates)
+        {
+            return;
+        }
+
         var previousState = OperationState;
         var previousTitle = StatusTitle;
         var previousMessage = StatusMessage;
 
+        _isCheckingForUpdates = true;
         IsBusy = true;
         UpdateStatus = T("Vm.Update.Checking");
         AppendLog("Checking for app updates...");
@@ -1556,6 +1577,51 @@ public partial class MainViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            _isCheckingForUpdates = false;
+        }
+    }
+
+    private async Task CheckForUpdatesOnStartupAsync()
+    {
+        if (_isCheckingForUpdates)
+        {
+            return;
+        }
+
+        _isCheckingForUpdates = true;
+
+        try
+        {
+            var updateInfo = await _appUpdateService.CheckForUpdatesAsync(
+                CurrentVersion,
+                ResolveCurrentBuildTimestampUtc());
+
+            _latestUpdateInfo = updateInfo;
+            LatestVersion = string.IsNullOrWhiteSpace(updateInfo.LatestVersion)
+                ? CurrentVersion
+                : updateInfo.LatestVersion;
+            UpdateChangelog = string.IsNullOrWhiteSpace(updateInfo.ReleaseNotes)
+                ? T("Vm.Update.NoChangelog")
+                : updateInfo.ReleaseNotes.Trim();
+            UpdateStatus = updateInfo.Message;
+            IsUpdateAvailable = updateInfo.IsUpdateAvailable;
+
+            if (updateInfo.IsUpdateAvailable)
+            {
+                SetStatus(
+                    OperationState.Success,
+                    T("Vm.Status.UpdateAvailableTitle"),
+                    TF("Vm.Status.UpdateAvailableMessage", updateInfo.LatestVersion));
+                AppendLog($"Update available at startup: {updateInfo.LatestVersion}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Startup update check skipped: {ex.Message}");
+        }
+        finally
+        {
+            _isCheckingForUpdates = false;
         }
     }
 
@@ -1745,6 +1811,7 @@ public partial class MainViewModel : ObservableObject
 
             if (result.Success)
             {
+                TrySaveVerifiedInstallerKnowledge();
                 SetStatus(
                     OperationState.Success,
                     T("Vm.Status.PackageCreatedTitle"),
@@ -2331,6 +2398,29 @@ public partial class MainViewModel : ObservableObject
         return DateTimeOffset.UtcNow - _lastPreflightCompletedAtUtc.Value <= PreflightReuseWindow;
     }
 
+    private void TrySaveVerifiedInstallerKnowledge()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(SetupFilePath) || !File.Exists(SetupFilePath))
+            {
+                return;
+            }
+
+            var rules = BuildIntuneRules();
+            _installerCommandService.SaveVerifiedKnowledge(
+                SetupFilePath,
+                InstallerType,
+                InstallCommand,
+                UninstallCommand,
+                rules);
+        }
+        catch
+        {
+            // Non-blocking cache persistence.
+        }
+    }
+
     private void SetStatus(OperationState state, string title, string message)
     {
         OperationState = state;
@@ -2377,6 +2467,7 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(NextStepHint));
         OnPropertyChanged(nameof(CurrentVersionDisplay));
         OnPropertyChanged(nameof(LatestVersionDisplay));
+        OnPropertyChanged(nameof(UpdateNotificationText));
 
         if (_latestUpdateInfo is null)
         {

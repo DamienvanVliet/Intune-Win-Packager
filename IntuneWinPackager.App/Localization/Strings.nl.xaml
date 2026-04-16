@@ -171,6 +171,7 @@
     <sys:String x:Key="Vm.Update.InstallerStarted">Update-installer gestart.</sys:String>
     <sys:String x:Key="Vm.Update.SilentInstallerStarted">Stille update-installer gestart.</sys:String>
     <sys:String x:Key="Vm.Update.InstallFailedFormat">Update-installatie mislukt: {0}</sys:String>
+    <sys:String x:Key="Vm.Update.NotificationFormat">Update beschikbaar: {0} (jij zit op {1}).</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Klaar</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Wachten om te starten.</sys:String>

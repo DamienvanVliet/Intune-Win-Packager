@@ -171,6 +171,7 @@
     <sys:String x:Key="Vm.Update.InstallerStarted">Update installer started.</sys:String>
     <sys:String x:Key="Vm.Update.SilentInstallerStarted">Silent update installer started.</sys:String>
     <sys:String x:Key="Vm.Update.InstallFailedFormat">Update install failed: {0}</sys:String>
+    <sys:String x:Key="Vm.Update.NotificationFormat">Update available: {0} (you are on {1}).</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Ready</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Waiting to start.</sys:String>

@@ -1,8 +1,11 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Runtime.Versioning;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using IntuneWinPackager.Core.Interfaces;
@@ -14,12 +17,32 @@ namespace IntuneWinPackager.Core.Services;
 
 public sealed class InstallerCommandService : IInstallerCommandService
 {
+    private const int ProbeTimeoutMs = 2200;
+    private const int MaxKnowledgeEntries = 400;
+    private const int SuggestionConfidenceHighThreshold = 85;
+    private const int SuggestionConfidenceMediumThreshold = 60;
+
     private const string PlaceholderSilentArgs = "<silent-args>";
     private const string PlaceholderUninstallArgs = "<uninstall-args>";
     private const string PlaceholderPackageName = "<package-name>";
     private const string PlaceholderDetectionScript = "<detection-script>";
 
+    private static readonly JsonSerializerOptions KnowledgeSerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
+
     private static readonly Regex GuidRegex = new("\\{[0-9A-Fa-f\\-]{36}\\}", RegexOptions.Compiled);
+    private static readonly Regex HelpSwitchTokenRegex = new(@"(?<!\w)(--?[a-z][a-z0-9\-]*|/[a-z][a-z0-9\-]*)(?:[ =][^\r\n\t ]+)?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private readonly object _knowledgeLock = new();
+    private readonly string _knowledgeFilePath;
+    private readonly Dictionary<string, string> _shaCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ParameterProbeResult> _probeCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool _knowledgeLoaded;
+    private KnowledgeStore _knowledgeStore = new();
 
     private static readonly IReadOnlyList<SilentInstallPreset> ExePresets = new List<SilentInstallPreset>
     {
@@ -61,6 +84,15 @@ public sealed class InstallerCommandService : IInstallerCommandService
         },
         new()
         {
+            Name = "Squirrel",
+            Description = "Use for Squirrel-based installers/updaters.",
+            InstallArguments = "--silent",
+            UninstallArguments = "--uninstall --silent",
+            RequiresVerification = true,
+            Guidance = "Template for Squirrel installers. Verify against the exact vendor build before production use."
+        },
+        new()
+        {
             Name = "Custom (Manual)",
             Description = "Manual template for unknown EXE installer frameworks.",
             InstallArguments = PlaceholderSilentArgs,
@@ -79,7 +111,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
             InstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
             UninstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
             DetectionMarkers = ["inno setup", "innounp", "isxdl"],
-            Guidance = "Inno Setup framework detected from installer metadata/signatures."
+            Guidance = "Inno Setup framework detected from installer metadata/signatures.",
+            BaseConfidenceScore = 84
         },
         new()
         {
@@ -88,7 +121,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
             InstallArguments = "/S",
             UninstallArguments = "/S",
             DetectionMarkers = ["nullsoft", "nsis error", "software\\nsis"],
-            Guidance = "NSIS framework detected from installer metadata/signatures."
+            Guidance = "NSIS framework detected from installer metadata/signatures.",
+            BaseConfidenceScore = 80
         },
         new()
         {
@@ -97,7 +131,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
             InstallArguments = "/s /v\"/qn REBOOT=ReallySuppress\"",
             UninstallArguments = "/s /x /v\"/qn REBOOT=ReallySuppress\"",
             DetectionMarkers = ["installshield", "isscript"],
-            Guidance = "InstallShield framework detected from installer metadata/signatures."
+            Guidance = "InstallShield framework detected from installer metadata/signatures.",
+            BaseConfidenceScore = 75
         },
         new()
         {
@@ -106,9 +141,45 @@ public sealed class InstallerCommandService : IInstallerCommandService
             InstallArguments = "/quiet /norestart",
             UninstallArguments = "/uninstall /quiet /norestart",
             DetectionMarkers = ["bootstrapperapplicationdata", "wixstdba", "burnpipe", "wixburn"],
-            Guidance = "WiX Burn bootstrapper detected from installer metadata/signatures."
+            Guidance = "WiX Burn bootstrapper detected from installer metadata/signatures.",
+            BaseConfidenceScore = 78
+        },
+        new()
+        {
+            Framework = ExeInstallerFramework.Squirrel,
+            Name = "EXE - Squirrel",
+            InstallArguments = "--silent",
+            UninstallArguments = "--uninstall --silent",
+            DetectionMarkers = ["squirrel", "--squirrel-install", "--squirrel-uninstall", "update.exe --processstart"],
+            Guidance = "Squirrel-style updater/installer markers detected. Verify vendor behavior carefully.",
+            BaseConfidenceScore = 62
+        },
+        new()
+        {
+            Framework = ExeInstallerFramework.AdvancedInstaller,
+            Name = "EXE - Advanced Installer",
+            InstallArguments = "/quiet /norestart",
+            UninstallArguments = "/uninstall /quiet /norestart",
+            DetectionMarkers = ["advanced installer", "advinst", "aicustact.dll"],
+            Guidance = "Advanced Installer markers detected from metadata/resources.",
+            BaseConfidenceScore = 68
         }
     };
+
+    public InstallerCommandService(string? knowledgeFilePath = null)
+    {
+        if (!string.IsNullOrWhiteSpace(knowledgeFilePath))
+        {
+            _knowledgeFilePath = knowledgeFilePath;
+            return;
+        }
+
+        var defaultRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "IntuneWinPackager",
+            "knowledge");
+        _knowledgeFilePath = Path.Combine(defaultRoot, "installer-knowledge.v1.json");
+    }
 
     public InstallerType DetectInstallerType(string setupFilePath)
     {
@@ -142,6 +213,29 @@ public sealed class InstallerCommandService : IInstallerCommandService
             return new CommandSuggestion();
         }
 
+        var lookupContext = BuildKnowledgeLookupContext(setupFilePath, installerType);
+        if (lookupContext is not null && TryGetKnowledgeEntry(lookupContext, out var cachedEntry))
+        {
+            var cacheGuidance = string.IsNullOrWhiteSpace(cachedEntry.TemplateGuidance)
+                ? "Known-good commands reused from local knowledge cache for this installer hash + version."
+                : cachedEntry.TemplateGuidance + " Known-good commands reused from local knowledge cache.";
+
+            return new CommandSuggestion
+            {
+                InstallCommand = cachedEntry.InstallCommand,
+                UninstallCommand = cachedEntry.UninstallCommand,
+                SuggestedRules = cachedEntry.IntuneRules with
+                {
+                    TemplateGuidance = cacheGuidance
+                },
+                ConfidenceLevel = SuggestionConfidenceLevel.High,
+                ConfidenceScore = 98,
+                ConfidenceReason = "Matched verified knowledge cache entry.",
+                FingerprintEngine = cachedEntry.FingerprintEngine,
+                UsedKnowledgeCache = true
+            };
+        }
+
         return installerType switch
         {
             InstallerType.Msi => CreateMsiSuggestion(setupFileName, msiMetadata),
@@ -152,6 +246,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
             {
                 InstallCommand = $"\"{setupFileName}\"",
                 UninstallCommand = PlaceholderUninstallArgs,
+                ConfidenceLevel = SuggestionConfidenceLevel.Low,
+                ConfidenceScore = 20,
+                ConfidenceReason = "Installer type is unknown.",
+                FingerprintEngine = "Unknown",
                 SuggestedRules = new IntuneWin32AppRules
                 {
                     AppliedTemplateName = "Unknown Installer",
@@ -165,6 +263,101 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 }
             }
         };
+    }
+
+    public void SaveVerifiedKnowledge(
+        string setupFilePath,
+        InstallerType installerType,
+        string installCommand,
+        string uninstallCommand,
+        IntuneWin32AppRules intuneRules)
+    {
+        if (string.IsNullOrWhiteSpace(setupFilePath) ||
+            !File.Exists(setupFilePath) ||
+            installerType == InstallerType.Unknown)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(installCommand) ||
+            string.IsNullOrWhiteSpace(uninstallCommand) ||
+            ContainsPlaceholderArguments(installCommand) ||
+            ContainsPlaceholderArguments(uninstallCommand))
+        {
+            return;
+        }
+
+        if (intuneRules.DetectionRule.RuleType == IntuneDetectionRuleType.None)
+        {
+            return;
+        }
+
+        if (installerType == InstallerType.Exe &&
+            intuneRules.RequireSilentSwitchReview &&
+            !intuneRules.SilentSwitchesVerified)
+        {
+            return;
+        }
+
+        var lookupContext = BuildKnowledgeLookupContext(setupFilePath, installerType);
+        if (lookupContext is null)
+        {
+            return;
+        }
+
+        var fingerprint = installerType == InstallerType.Exe
+            ? DetectExeFrameworkTemplate(setupFilePath)
+            : null;
+
+        var now = DateTimeOffset.UtcNow;
+        lock (_knowledgeLock)
+        {
+            EnsureKnowledgeLoaded();
+
+            var existing = _knowledgeStore.Entries.FirstOrDefault(entry =>
+                entry.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase) &&
+                entry.ProductVersion.Equals(lookupContext.ProductVersion, StringComparison.OrdinalIgnoreCase) &&
+                entry.InstallerType == installerType);
+
+            if (existing is not null)
+            {
+                existing.InstallCommand = installCommand;
+                existing.UninstallCommand = uninstallCommand;
+                existing.IntuneRules = intuneRules;
+                existing.LastVerifiedAtUtc = now;
+                existing.UseCount++;
+                existing.TemplateGuidance = intuneRules.TemplateGuidance;
+                existing.FingerprintEngine = fingerprint?.Framework.ToString() ?? installerType.ToString();
+            }
+            else
+            {
+                _knowledgeStore.Entries.Add(new InstallerKnowledgeEntry
+                {
+                    InstallerSha256 = lookupContext.Sha256,
+                    ProductVersion = lookupContext.ProductVersion,
+                    ProductName = lookupContext.ProductName,
+                    SetupFileName = Path.GetFileName(setupFilePath),
+                    InstallerType = installerType,
+                    InstallCommand = installCommand,
+                    UninstallCommand = uninstallCommand,
+                    IntuneRules = intuneRules,
+                    LastVerifiedAtUtc = now,
+                    UseCount = 1,
+                    TemplateGuidance = intuneRules.TemplateGuidance,
+                    FingerprintEngine = fingerprint?.Framework.ToString() ?? installerType.ToString()
+                });
+            }
+
+            if (_knowledgeStore.Entries.Count > MaxKnowledgeEntries)
+            {
+                _knowledgeStore.Entries = _knowledgeStore.Entries
+                    .OrderByDescending(entry => entry.LastVerifiedAtUtc)
+                    .Take(MaxKnowledgeEntries)
+                    .ToList();
+            }
+
+            PersistKnowledgeStoreUnsafe();
+        }
     }
 
     private static CommandSuggestion CreateMsiSuggestion(string setupFileName, MsiMetadata? msiMetadata)
@@ -197,6 +390,14 @@ public sealed class InstallerCommandService : IInstallerCommandService
         {
             InstallCommand = installCommand,
             UninstallCommand = $"msiexec /x {uninstallTarget} /quiet",
+            ConfidenceLevel = string.IsNullOrWhiteSpace(msiMetadata?.ProductCode)
+                ? SuggestionConfidenceLevel.Medium
+                : SuggestionConfidenceLevel.High,
+            ConfidenceScore = string.IsNullOrWhiteSpace(msiMetadata?.ProductCode) ? 72 : 96,
+            ConfidenceReason = string.IsNullOrWhiteSpace(msiMetadata?.ProductCode)
+                ? "MSI detected but product code metadata was incomplete."
+                : "MSI detected with product code metadata.",
+            FingerprintEngine = "MSI",
             SuggestedRules = new IntuneWin32AppRules
             {
                 InstallContext = IntuneInstallContext.System,
@@ -211,22 +412,56 @@ public sealed class InstallerCommandService : IInstallerCommandService
         };
     }
 
-    private static CommandSuggestion CreateExeSuggestion(string setupFilePath, string setupFileName, SilentInstallPreset? preset)
+    private CommandSuggestion CreateExeSuggestion(string setupFilePath, string setupFileName, SilentInstallPreset? preset)
     {
+        var setupFileExists = File.Exists(setupFilePath);
         var template = preset is null
-            ? DetectExeFrameworkTemplate(setupFilePath)
+            ? (setupFileExists ? DetectExeFrameworkTemplate(setupFilePath) : new ExeFrameworkTemplate
+            {
+                Framework = ExeInstallerFramework.Unknown,
+                Name = "EXE - Unknown Framework",
+                InstallArguments = PlaceholderSilentArgs,
+                UninstallArguments = PlaceholderUninstallArgs,
+                Guidance = "Installer framework could not be determined. Provide vendor-specific silent install/uninstall switches.",
+                BaseConfidenceScore = 32
+            })
             : BuildTemplateFromPreset(preset);
 
         var quotedSetup = $"\"{setupFileName}\"";
-        var installCommand = BuildCommand(quotedSetup, template.InstallArguments);
-        var uninstallCommand = BuildCommand(quotedSetup, template.UninstallArguments);
+        var installArguments = template.InstallArguments;
+        var uninstallArguments = template.UninstallArguments;
 
-        var installedEvidence = TryResolveInstalledAppEvidence(setupFilePath);
+        var probe = setupFileExists
+            ? ProbeInstallerParameters(setupFilePath)
+            : ParameterProbeResult.Empty;
+        if (!string.IsNullOrWhiteSpace(probe.InstallArguments) &&
+            (ContainsPlaceholderArguments(installArguments) || probe.ConfidenceScore >= template.BaseConfidenceScore))
+        {
+            installArguments = probe.InstallArguments;
+        }
+
+        if (!string.IsNullOrWhiteSpace(probe.UninstallArguments) &&
+            (ContainsPlaceholderArguments(uninstallArguments) || probe.ConfidenceScore >= template.BaseConfidenceScore))
+        {
+            uninstallArguments = probe.UninstallArguments;
+        }
+
+        var installCommand = BuildCommand(quotedSetup, installArguments);
+        var uninstallCommand = BuildCommand(quotedSetup, uninstallArguments);
+
+        var installedEvidence = setupFileExists
+            ? TryResolveInstalledAppEvidence(setupFilePath)
+            : null;
         var guidanceParts = new List<string>
         {
             template.Guidance,
             "EXE switches and uninstall behavior must be verified for the exact vendor build."
         };
+
+        if (probe.HasEvidence)
+        {
+            guidanceParts.Add($"Parameter probe detected switches from local help output ({string.Join(", ", probe.HelpSwitchesTried)}).");
+        }
 
         var detectionRule = new IntuneDetectionRule
         {
@@ -241,14 +476,30 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
         else
         {
-            guidanceParts.Add("No high-confidence installed footprint match found. Configure detection manually (file/registry/script)."
-            );
+            guidanceParts.Add("No high-confidence installed footprint match found. Configure detection manually (file/registry/script).");
         }
+
+        var baseScore = Math.Max(template.BaseConfidenceScore, probe.ConfidenceScore);
+        var adjustedScore = installedEvidence is not null
+            ? Math.Min(99, baseScore + 8)
+            : baseScore;
+        var confidenceLevel = ToConfidenceLevel(adjustedScore);
+
+        var confidenceReason = confidenceLevel switch
+        {
+            SuggestionConfidenceLevel.High => "Static fingerprint + parameter probe strongly matched known installer behavior.",
+            SuggestionConfidenceLevel.Medium => "Installer behavior was partially inferred. Verify switches before production rollout.",
+            _ => "Installer behavior remains uncertain. Manual validation is required."
+        };
 
         return new CommandSuggestion
         {
             InstallCommand = installCommand,
             UninstallCommand = uninstallCommand,
+            ConfidenceLevel = confidenceLevel,
+            ConfidenceScore = adjustedScore,
+            ConfidenceReason = confidenceReason,
+            FingerprintEngine = template.Framework.ToString(),
             SuggestedRules = new IntuneWin32AppRules
             {
                 InstallContext = IntuneInstallContext.System,
@@ -257,7 +508,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 RequireSilentSwitchReview = true,
                 SilentSwitchesVerified = false,
                 AppliedTemplateName = template.Name,
-                TemplateGuidance = string.Join(" ", guidanceParts),
+                TemplateGuidance = string.Join(" ", guidanceParts) + $" Confidence: {confidenceLevel} ({adjustedScore}/100).",
                 DetectionRule = detectionRule
             }
         };
@@ -296,6 +547,14 @@ public sealed class InstallerCommandService : IInstallerCommandService
         {
             InstallCommand = installCommand,
             UninstallCommand = uninstallCommand,
+            ConfidenceLevel = string.IsNullOrWhiteSpace(packageIdentityName)
+                ? SuggestionConfidenceLevel.Medium
+                : SuggestionConfidenceLevel.High,
+            ConfidenceScore = string.IsNullOrWhiteSpace(packageIdentityName) ? 70 : 92,
+            ConfidenceReason = string.IsNullOrWhiteSpace(packageIdentityName)
+                ? "APPX/MSIX detected but package identity could not be extracted."
+                : "APPX/MSIX detected with package identity metadata.",
+            FingerprintEngine = "APPX/MSIX",
             SuggestedRules = new IntuneWin32AppRules
             {
                 InstallContext = IntuneInstallContext.User,
@@ -334,6 +593,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
         {
             InstallCommand = installCommand,
             UninstallCommand = uninstallCommand,
+            ConfidenceLevel = SuggestionConfidenceLevel.Medium,
+            ConfidenceScore = 65,
+            ConfidenceReason = "Script installer type detected from extension.",
+            FingerprintEngine = "Script",
             SuggestedRules = new IntuneWin32AppRules
             {
                 InstallContext = IntuneInstallContext.System,
@@ -364,6 +627,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
         var versionInfo = TryGetVersionInfo(setupFilePath);
         var productName = versionInfo?.ProductName?.ToLowerInvariant() ?? string.Empty;
         var fileDescription = versionInfo?.FileDescription?.ToLowerInvariant() ?? string.Empty;
+        var signerSubject = TryGetSignerSubject(setupFilePath).ToLowerInvariant();
 
         foreach (var template in ExeFrameworkTemplates)
         {
@@ -371,7 +635,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
                     markersText.Contains(marker, StringComparison.Ordinal) ||
                     fileName.Contains(marker, StringComparison.Ordinal) ||
                     productName.Contains(marker, StringComparison.Ordinal) ||
-                    fileDescription.Contains(marker, StringComparison.Ordinal)))
+                    fileDescription.Contains(marker, StringComparison.Ordinal) ||
+                    signerSubject.Contains(marker, StringComparison.Ordinal)))
             {
                 return template;
             }
@@ -383,7 +648,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
             Name = "EXE - Unknown Framework",
             InstallArguments = PlaceholderSilentArgs,
             UninstallArguments = PlaceholderUninstallArgs,
-            Guidance = "Installer framework could not be determined. Provide vendor-specific silent install/uninstall switches."
+            Guidance = "Installer framework could not be determined. Provide vendor-specific silent install/uninstall switches.",
+            BaseConfidenceScore = 32
         };
     }
 
@@ -395,7 +661,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
             Name = $"EXE - {preset.Name}",
             InstallArguments = preset.InstallArguments,
             UninstallArguments = preset.UninstallArguments,
-            Guidance = preset.Guidance
+            Guidance = preset.Guidance,
+            BaseConfidenceScore = preset.RequiresVerification ? 64 : 80
         };
     }
 
@@ -407,6 +674,359 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
 
         return $"{quotedSetupFileName} {arguments}".Trim();
+    }
+
+    private static bool ContainsPlaceholderArguments(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        return value.Contains('<') && value.Contains('>');
+    }
+
+    private static SuggestionConfidenceLevel ToConfidenceLevel(int score)
+    {
+        if (score >= SuggestionConfidenceHighThreshold)
+        {
+            return SuggestionConfidenceLevel.High;
+        }
+
+        if (score >= SuggestionConfidenceMediumThreshold)
+        {
+            return SuggestionConfidenceLevel.Medium;
+        }
+
+        return SuggestionConfidenceLevel.Low;
+    }
+
+    private KnowledgeLookupContext? BuildKnowledgeLookupContext(string setupFilePath, InstallerType installerType)
+    {
+        if (string.IsNullOrWhiteSpace(setupFilePath) || !File.Exists(setupFilePath))
+        {
+            return null;
+        }
+
+        var sha = ComputeFileSha256Cached(setupFilePath);
+        if (string.IsNullOrWhiteSpace(sha))
+        {
+            return null;
+        }
+
+        var versionInfo = TryGetVersionInfo(setupFilePath);
+        var productVersion = NormalizeVersion(versionInfo?.ProductVersion ?? versionInfo?.FileVersion);
+        if (string.IsNullOrWhiteSpace(productVersion))
+        {
+            productVersion = "unknown";
+        }
+
+        return new KnowledgeLookupContext
+        {
+            InstallerType = installerType,
+            Sha256 = sha,
+            ProductVersion = productVersion,
+            ProductName = versionInfo?.ProductName ?? Path.GetFileNameWithoutExtension(setupFilePath) ?? string.Empty
+        };
+    }
+
+    private bool TryGetKnowledgeEntry(KnowledgeLookupContext lookupContext, out InstallerKnowledgeEntry entry)
+    {
+        lock (_knowledgeLock)
+        {
+            EnsureKnowledgeLoaded();
+
+            entry = _knowledgeStore.Entries.FirstOrDefault(candidate =>
+                candidate.InstallerType == lookupContext.InstallerType &&
+                candidate.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase) &&
+                candidate.ProductVersion.Equals(lookupContext.ProductVersion, StringComparison.OrdinalIgnoreCase))
+                ?? _knowledgeStore.Entries.FirstOrDefault(candidate =>
+                    candidate.InstallerType == lookupContext.InstallerType &&
+                    candidate.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase))
+                ?? new InstallerKnowledgeEntry();
+
+            if (string.IsNullOrWhiteSpace(entry.InstallerSha256))
+            {
+                return false;
+            }
+
+            entry.UseCount++;
+            PersistKnowledgeStoreUnsafe();
+            return true;
+        }
+    }
+
+    private void EnsureKnowledgeLoaded()
+    {
+        if (_knowledgeLoaded)
+        {
+            return;
+        }
+
+        try
+        {
+            if (File.Exists(_knowledgeFilePath))
+            {
+                var json = File.ReadAllText(_knowledgeFilePath);
+                var parsed = JsonSerializer.Deserialize<KnowledgeStore>(json, KnowledgeSerializerOptions);
+                _knowledgeStore = parsed ?? new KnowledgeStore();
+            }
+            else
+            {
+                _knowledgeStore = new KnowledgeStore();
+            }
+        }
+        catch
+        {
+            _knowledgeStore = new KnowledgeStore();
+        }
+        finally
+        {
+            _knowledgeLoaded = true;
+        }
+    }
+
+    private void PersistKnowledgeStoreUnsafe()
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(_knowledgeFilePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var tempPath = _knowledgeFilePath + ".tmp";
+            var json = JsonSerializer.Serialize(_knowledgeStore, KnowledgeSerializerOptions);
+            File.WriteAllText(tempPath, json);
+            File.Copy(tempPath, _knowledgeFilePath, overwrite: true);
+            File.Delete(tempPath);
+        }
+        catch
+        {
+            // Best effort persistence.
+        }
+    }
+
+    private string ComputeFileSha256Cached(string setupFilePath)
+    {
+        try
+        {
+            var info = new FileInfo(setupFilePath);
+            if (!info.Exists)
+            {
+                return string.Empty;
+            }
+
+            var cacheKey = $"{setupFilePath.ToLowerInvariant()}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+            if (_shaCache.TryGetValue(cacheKey, out var cached))
+            {
+                return cached;
+            }
+
+            using var stream = File.OpenRead(setupFilePath);
+            using var sha = SHA256.Create();
+            var hash = Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
+            _shaCache[cacheKey] = hash;
+            return hash;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private ParameterProbeResult ProbeInstallerParameters(string setupFilePath)
+    {
+        if (string.IsNullOrWhiteSpace(setupFilePath) || !File.Exists(setupFilePath))
+        {
+            return ParameterProbeResult.Empty;
+        }
+
+        var info = new FileInfo(setupFilePath);
+        var cacheKey = $"{setupFilePath.ToLowerInvariant()}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+        if (_probeCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        var probeSwitches = new[] { "/?", "-?", "/help", "--help" };
+        var combinedOutput = new StringBuilder();
+        var switchesWithOutput = new List<string>();
+        var detectedSwitchTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var probeSwitch in probeSwitches)
+        {
+            var output = RunHelpProbe(setupFilePath, probeSwitch);
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                continue;
+            }
+
+            switchesWithOutput.Add(probeSwitch);
+            combinedOutput.AppendLine(output);
+            foreach (Match match in HelpSwitchTokenRegex.Matches(output))
+            {
+                var token = match.Value.Trim().TrimEnd('.', ',', ';', ':');
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    detectedSwitchTokens.Add(token.ToLowerInvariant());
+                }
+            }
+        }
+
+        if (switchesWithOutput.Count == 0)
+        {
+            _probeCache[cacheKey] = ParameterProbeResult.Empty;
+            return ParameterProbeResult.Empty;
+        }
+
+        var outputText = combinedOutput.ToString().ToLowerInvariant();
+
+        var hasVerySilent = outputText.Contains("/verysilent", StringComparison.Ordinal) || outputText.Contains("verysilent", StringComparison.Ordinal);
+        var hasSilent = outputText.Contains("/silent", StringComparison.Ordinal) || outputText.Contains("--silent", StringComparison.Ordinal) || outputText.Contains(" /s ", StringComparison.Ordinal);
+        var hasQuiet = outputText.Contains("/quiet", StringComparison.Ordinal) || outputText.Contains("--quiet", StringComparison.Ordinal);
+        var hasQn = outputText.Contains("/qn", StringComparison.Ordinal);
+        var hasNoRestart = outputText.Contains("/norestart", StringComparison.Ordinal) || outputText.Contains("norestart", StringComparison.Ordinal);
+        var hasUninstall = outputText.Contains("/uninstall", StringComparison.Ordinal) || outputText.Contains("--uninstall", StringComparison.Ordinal);
+
+        string installArguments = string.Empty;
+        string uninstallArguments = string.Empty;
+        var confidence = 35;
+
+        if (hasVerySilent)
+        {
+            installArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-";
+            uninstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART";
+            confidence = 88;
+        }
+        else if (hasQn)
+        {
+            installArguments = "/qn /norestart";
+            uninstallArguments = "/x /qn /norestart";
+            confidence = 82;
+        }
+        else if (hasQuiet)
+        {
+            installArguments = "/quiet /norestart";
+            uninstallArguments = hasUninstall ? "/uninstall /quiet /norestart" : "/quiet /norestart";
+            confidence = 78;
+        }
+        else if (hasSilent)
+        {
+            installArguments = hasNoRestart ? "/silent /norestart" : "/silent";
+            uninstallArguments = hasUninstall
+                ? (hasNoRestart ? "/uninstall /silent /norestart" : "/uninstall /silent")
+                : "/silent";
+            confidence = 70;
+        }
+
+        if (string.IsNullOrWhiteSpace(uninstallArguments) && hasUninstall)
+        {
+            uninstallArguments = hasQuiet
+                ? "/uninstall /quiet /norestart"
+                : "/uninstall";
+            confidence = Math.Max(confidence, 66);
+        }
+
+        var result = new ParameterProbeResult
+        {
+            HasEvidence = true,
+            InstallArguments = installArguments,
+            UninstallArguments = uninstallArguments,
+            ConfidenceScore = confidence,
+            HelpSwitchesTried = switchesWithOutput,
+            DetectedSwitches = detectedSwitchTokens.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).Take(30).ToList()
+        };
+
+        _probeCache[cacheKey] = result;
+        return result;
+    }
+
+    private static string RunHelpProbe(string setupFilePath, string helpSwitch)
+    {
+        try
+        {
+            using var process = new Process();
+            process.StartInfo = new ProcessStartInfo
+            {
+                FileName = setupFilePath,
+                Arguments = helpSwitch,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            if (!process.Start())
+            {
+                return string.Empty;
+            }
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+
+            if (!process.WaitForExit(ProbeTimeoutMs))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Ignore kill failures.
+                }
+            }
+
+            Task.WaitAll([stdoutTask, stderrTask], ProbeTimeoutMs);
+            var output = (stdoutTask.Result + Environment.NewLine + stderrTask.Result).Trim();
+            if (output.Length > 16000)
+            {
+                output = output[..16000];
+            }
+
+            return output;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string NormalizeVersion(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return string.Empty;
+        }
+
+        var normalized = version.Trim();
+        var plusIndex = normalized.IndexOf('+');
+        if (plusIndex > 0)
+        {
+            normalized = normalized[..plusIndex];
+        }
+
+        return normalized;
+    }
+
+    private static string TryGetSignerSubject(string setupFilePath)
+    {
+        try
+        {
+            var certificate = X509Certificate.CreateFromSignedFile(setupFilePath);
+            if (certificate is null)
+            {
+                return string.Empty;
+            }
+
+            using var certificate2 = new X509Certificate2(certificate);
+            return certificate2.Subject ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static string ReadBinaryMarkerText(string setupFilePath)
@@ -721,6 +1341,68 @@ public sealed class InstallerCommandService : IInstallerCommandService
         public IReadOnlyList<string> DetectionMarkers { get; init; } = [];
 
         public string Guidance { get; init; } = string.Empty;
+
+        public int BaseConfidenceScore { get; init; } = 40;
+    }
+
+    private sealed class KnowledgeStore
+    {
+        public List<InstallerKnowledgeEntry> Entries { get; set; } = [];
+    }
+
+    private sealed class InstallerKnowledgeEntry
+    {
+        public string InstallerSha256 { get; set; } = string.Empty;
+
+        public string ProductVersion { get; set; } = "unknown";
+
+        public string ProductName { get; set; } = string.Empty;
+
+        public string SetupFileName { get; set; } = string.Empty;
+
+        public InstallerType InstallerType { get; set; } = InstallerType.Unknown;
+
+        public string InstallCommand { get; set; } = string.Empty;
+
+        public string UninstallCommand { get; set; } = string.Empty;
+
+        public IntuneWin32AppRules IntuneRules { get; set; } = new();
+
+        public DateTimeOffset LastVerifiedAtUtc { get; set; }
+
+        public int UseCount { get; set; }
+
+        public string TemplateGuidance { get; set; } = string.Empty;
+
+        public string FingerprintEngine { get; set; } = string.Empty;
+    }
+
+    private sealed record KnowledgeLookupContext
+    {
+        public InstallerType InstallerType { get; init; } = InstallerType.Unknown;
+
+        public string Sha256 { get; init; } = string.Empty;
+
+        public string ProductVersion { get; init; } = "unknown";
+
+        public string ProductName { get; init; } = string.Empty;
+    }
+
+    private sealed record ParameterProbeResult
+    {
+        public static ParameterProbeResult Empty { get; } = new();
+
+        public bool HasEvidence { get; init; }
+
+        public string InstallArguments { get; init; } = string.Empty;
+
+        public string UninstallArguments { get; init; } = string.Empty;
+
+        public int ConfidenceScore { get; init; }
+
+        public IReadOnlyList<string> HelpSwitchesTried { get; init; } = [];
+
+        public IReadOnlyList<string> DetectedSwitches { get; init; } = [];
     }
 
     private sealed record RegistryUninstallEntry
@@ -752,6 +1434,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
         Nsis = 2,
         InstallShield = 3,
         WixBurn = 4,
-        Manual = 5
+        Squirrel = 5,
+        AdvancedInstaller = 6,
+        Manual = 7
     }
 }
