@@ -14,6 +14,10 @@ public sealed record AppSettings
 
     public bool EnableSilentAppUpdates { get; init; }
 
+    public string LastKnownLatestVersion { get; init; } = string.Empty;
+
+    public DateTimeOffset? LastUpdateCheckUtc { get; init; }
+
     public string UiLanguage { get; init; } = "en";
 
     public string UiTheme { get; init; } = "light";

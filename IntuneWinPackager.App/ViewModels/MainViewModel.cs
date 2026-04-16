@@ -40,10 +40,13 @@ public partial class MainViewModel : ObservableObject
     private readonly ReadOnlyObservableCollection<string> _readonlyLogs;
     private readonly ConcurrentQueue<string> _pendingLogQueue = new();
     private readonly WpfDispatcherTimer _logFlushTimer;
+    private readonly WpfDispatcherTimer _updateCheckTimer;
 
     private const int MaxVisibleLogLines = 500;
     private const int MaxLogFlushBatchSize = 40;
     private static readonly TimeSpan PreflightReuseWindow = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan BackgroundUpdateCheckInterval = TimeSpan.FromHours(4);
+    private static readonly TimeSpan MinimumUpdateRecheckInterval = TimeSpan.FromMinutes(10);
 
     private CancellationTokenSource? _msiInspectionCancellation;
     private bool _isInitialized;
@@ -51,6 +54,7 @@ public partial class MainViewModel : ObservableObject
     private bool _isApplyingPreferences;
     private bool _isCheckingForUpdates;
     private AppUpdateInfo? _latestUpdateInfo;
+    private DateTimeOffset? _lastUpdateCheckCompletedAtUtc;
     private DateTimeOffset? _lastPreflightCompletedAtUtc;
 
     [ObservableProperty]
@@ -313,6 +317,13 @@ public partial class MainViewModel : ObservableObject
         };
         _logFlushTimer.Tick += (_, _) => FlushPendingLogs(MaxLogFlushBatchSize);
         _logFlushTimer.Start();
+
+        _updateCheckTimer = new WpfDispatcherTimer(WpfDispatcherPriority.Background)
+        {
+            Interval = BackgroundUpdateCheckInterval
+        };
+        _updateCheckTimer.Tick += (_, _) => _ = CheckForUpdatesInBackgroundAsync();
+        _updateCheckTimer.Start();
 
         ValidationErrors.CollectionChanged += (_, _) =>
         {
@@ -1172,6 +1183,15 @@ public partial class MainViewModel : ObservableObject
         OutputFolder = settings.LastOutputFolder;
         UseLowImpactMode = settings.UseLowImpactMode;
         EnableSilentAppUpdates = settings.EnableSilentAppUpdates;
+        _lastUpdateCheckCompletedAtUtc = settings.LastUpdateCheckUtc;
+
+        if (!string.IsNullOrWhiteSpace(settings.LastKnownLatestVersion) &&
+            IsVersionGreaterForNotification(settings.LastKnownLatestVersion, CurrentVersion))
+        {
+            LatestVersion = settings.LastKnownLatestVersion;
+            IsUpdateAvailable = true;
+            UpdateStatus = TF("Vm.Update.NotificationFormat", LatestVersion, CurrentVersion);
+        }
 
         if (File.Exists(settings.LastSetupFilePath))
         {
@@ -1600,18 +1620,7 @@ public partial class MainViewModel : ObservableObject
             var updateInfo = await _appUpdateService.CheckForUpdatesAsync(
                 CurrentVersion,
                 ResolveCurrentBuildTimestampUtc());
-            _latestUpdateInfo = updateInfo;
-
-            LatestVersion = string.IsNullOrWhiteSpace(updateInfo.LatestVersion)
-                ? CurrentVersion
-                : updateInfo.LatestVersion;
-
-            UpdateChangelog = string.IsNullOrWhiteSpace(updateInfo.ReleaseNotes)
-                ? T("Vm.Update.NoChangelog")
-                : updateInfo.ReleaseNotes.Trim();
-
-            UpdateStatus = updateInfo.Message;
-            IsUpdateAvailable = updateInfo.IsUpdateAvailable;
+            ApplyUpdateInfo(updateInfo);
 
             if (updateInfo.IsUpdateAvailable)
             {
@@ -1651,6 +1660,8 @@ public partial class MainViewModel : ObservableObject
                         : updateInfo.Message);
                 }
             }
+
+            await PersistSettingsSafeAsync();
         }
         catch (Exception ex)
         {
@@ -1663,6 +1674,7 @@ public partial class MainViewModel : ObservableObject
         {
             IsBusy = false;
             _isCheckingForUpdates = false;
+            _lastUpdateCheckCompletedAtUtc = DateTimeOffset.UtcNow;
         }
     }
 
@@ -1680,16 +1692,7 @@ public partial class MainViewModel : ObservableObject
             var updateInfo = await _appUpdateService.CheckForUpdatesAsync(
                 CurrentVersion,
                 ResolveCurrentBuildTimestampUtc());
-
-            _latestUpdateInfo = updateInfo;
-            LatestVersion = string.IsNullOrWhiteSpace(updateInfo.LatestVersion)
-                ? CurrentVersion
-                : updateInfo.LatestVersion;
-            UpdateChangelog = string.IsNullOrWhiteSpace(updateInfo.ReleaseNotes)
-                ? T("Vm.Update.NoChangelog")
-                : updateInfo.ReleaseNotes.Trim();
-            UpdateStatus = updateInfo.Message;
-            IsUpdateAvailable = updateInfo.IsUpdateAvailable;
+            ApplyUpdateInfo(updateInfo);
 
             if (updateInfo.IsUpdateAvailable)
             {
@@ -1699,6 +1702,8 @@ public partial class MainViewModel : ObservableObject
                     TF("Vm.Status.UpdateAvailableMessage", updateInfo.LatestVersion));
                 AppendLog($"Update available at startup: {updateInfo.LatestVersion}.");
             }
+
+            await PersistSettingsSafeAsync();
         }
         catch (Exception ex)
         {
@@ -1707,7 +1712,68 @@ public partial class MainViewModel : ObservableObject
         finally
         {
             _isCheckingForUpdates = false;
+            _lastUpdateCheckCompletedAtUtc = DateTimeOffset.UtcNow;
         }
+    }
+
+    private async Task CheckForUpdatesInBackgroundAsync()
+    {
+        if (_isCheckingForUpdates || IsBusy)
+        {
+            return;
+        }
+
+        if (_lastUpdateCheckCompletedAtUtc.HasValue &&
+            DateTimeOffset.UtcNow - _lastUpdateCheckCompletedAtUtc.Value < MinimumUpdateRecheckInterval)
+        {
+            return;
+        }
+
+        _isCheckingForUpdates = true;
+        var hadUpdateAvailable = IsUpdateAvailable;
+
+        try
+        {
+            var updateInfo = await _appUpdateService.CheckForUpdatesAsync(
+                CurrentVersion,
+                ResolveCurrentBuildTimestampUtc());
+            ApplyUpdateInfo(updateInfo);
+
+            if (updateInfo.IsUpdateAvailable && !hadUpdateAvailable)
+            {
+                SetStatus(
+                    OperationState.Success,
+                    T("Vm.Status.UpdateAvailableTitle"),
+                    TF("Vm.Status.UpdateAvailableMessage", updateInfo.LatestVersion));
+                AppendLog($"Background update check found new version: {updateInfo.LatestVersion}.");
+            }
+
+            await PersistSettingsSafeAsync();
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Background update check skipped: {ex.Message}");
+        }
+        finally
+        {
+            _isCheckingForUpdates = false;
+            _lastUpdateCheckCompletedAtUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    private void ApplyUpdateInfo(AppUpdateInfo updateInfo)
+    {
+        _latestUpdateInfo = updateInfo;
+        LatestVersion = string.IsNullOrWhiteSpace(updateInfo.LatestVersion)
+            ? CurrentVersion
+            : updateInfo.LatestVersion;
+        UpdateChangelog = string.IsNullOrWhiteSpace(updateInfo.ReleaseNotes)
+            ? T("Vm.Update.NoChangelog")
+            : updateInfo.ReleaseNotes.Trim();
+        UpdateStatus = string.IsNullOrWhiteSpace(updateInfo.Message)
+            ? T("Vm.Update.NotChecked")
+            : updateInfo.Message;
+        IsUpdateAvailable = updateInfo.IsUpdateAvailable;
     }
 
     private async Task InstallUpdateAsync()
@@ -2298,6 +2364,8 @@ public partial class MainViewModel : ObservableObject
             LastSetupFilePath = SetupFilePath,
             UseLowImpactMode = UseLowImpactMode,
             EnableSilentAppUpdates = EnableSilentAppUpdates,
+            LastKnownLatestVersion = LatestVersion,
+            LastUpdateCheckUtc = _lastUpdateCheckCompletedAtUtc,
             UiLanguage = _localizationService.CurrentLanguageCode,
             UiTheme = _themeService.CurrentThemeCode,
             UiDensity = _densityService.CurrentDensityCode
@@ -2751,6 +2819,54 @@ public partial class MainViewModel : ObservableObject
         {
             _onReport(value);
         }
+    }
+
+    private static bool IsVersionGreaterForNotification(string candidateVersion, string currentVersion)
+    {
+        return CompareVersionsForNotification(candidateVersion, currentVersion) > 0;
+    }
+
+    private static int CompareVersionsForNotification(string leftVersion, string rightVersion)
+    {
+        var leftNormalized = NormalizeVersionForNotification(leftVersion);
+        var rightNormalized = NormalizeVersionForNotification(rightVersion);
+
+        if (Version.TryParse(leftNormalized, out var left) &&
+            Version.TryParse(rightNormalized, out var right))
+        {
+            return left.CompareTo(right);
+        }
+
+        return string.Compare(leftNormalized, rightNormalized, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeVersionForNotification(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "0.0.0";
+        }
+
+        var normalized = value.Trim();
+
+        if (normalized.StartsWith('v') || normalized.StartsWith('V'))
+        {
+            normalized = normalized[1..];
+        }
+
+        var plusIndex = normalized.IndexOf('+');
+        if (plusIndex > 0)
+        {
+            normalized = normalized[..plusIndex];
+        }
+
+        var dashIndex = normalized.IndexOf('-');
+        if (dashIndex > 0)
+        {
+            normalized = normalized[..dashIndex];
+        }
+
+        return normalized;
     }
 
     private static string ResolveCurrentVersion()
