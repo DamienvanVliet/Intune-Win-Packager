@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.14] - 2026-04-16
+
+### Added
+- Added Delete Profile button in Settings > Tooling & Profiles. - Added profile deletion backend support and status feedback. - Detection Rule dropdowns now show plain-language labels instead of technical enum names. - Added in-context guidance text explaining when to choose MSI/File/Registry/Script detection and operator usage.
+
 ## [1.1.13] - 2026-04-16
 
 ### Added
