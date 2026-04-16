@@ -22,6 +22,7 @@
     <sys:String x:Key="Ui.Commands.Title">Install Commands &amp; Intune Rules</sys:String>
     <sys:String x:Key="Ui.SilentPreset">EXE Switch Profile (optional)</sys:String>
     <sys:String x:Key="Ui.ApplyPreset">Apply Preset</sys:String>
+    <sys:String x:Key="Ui.SilentPresetHint">Not sure? Keep the auto-filled command first. Only use a preset if install fails.</sys:String>
     <sys:String x:Key="Ui.CommandProfile">Detected installer profile</sys:String>
     <sys:String x:Key="Ui.InstallCommand">Install Command (required)</sys:String>
     <sys:String x:Key="Ui.UninstallCommand">Uninstall Command (required)</sys:String>

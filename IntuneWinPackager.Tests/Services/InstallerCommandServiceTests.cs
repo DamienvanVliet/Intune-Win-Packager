@@ -27,7 +27,7 @@ public class InstallerCommandServiceTests
     public void CreateSuggestion_ForExe_UsesSelectedSilentPreset()
     {
         var sut = new InstallerCommandService();
-        var preset = sut.GetExeSilentPresets().First(p => p.Name == "NSIS");
+        var preset = sut.GetExeSilentPresets().First(p => p.InstallArguments == "/S");
 
         var suggestion = sut.CreateSuggestion(
             setupFilePath: @"C:\Temp\AcmeSetup.exe",

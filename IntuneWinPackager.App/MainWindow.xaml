@@ -311,6 +311,11 @@
                                                             Content="{DynamicResource Ui.ApplyPreset}"
                                                             Command="{Binding ApplyPresetCommand}" />
                                                 </DockPanel>
+                                                <TextBlock Text="{DynamicResource Ui.SilentPresetHint}"
+                                                           Style="{StaticResource BodyTextStyle}"
+                                                           FontSize="11"
+                                                           Margin="0,6,0,0"
+                                                           TextWrapping="Wrap" />
                                                 <StackPanel.Style>
                                                     <Style TargetType="StackPanel">
                                                         <Setter Property="Visibility" Value="Collapsed" />

@@ -48,57 +48,57 @@ public sealed class InstallerCommandService : IInstallerCommandService
     {
         new()
         {
-            Name = "Inno Setup",
-            Description = "Use when installer framework is Inno Setup.",
+            Name = "Most Common (Very Silent)",
+            Description = "First fallback for many setup-style installers.",
             InstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
             UninstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
             RequiresVerification = true,
-            Guidance = "Template for Inno Setup. Verify against the vendor build and documentation before production use."
+            Guidance = "Fallback profile. Use this when the default command does not work. Verify with one local test."
         },
         new()
         {
-            Name = "NSIS",
-            Description = "Use when installer framework is NSIS.",
+            Name = "Alternative (/S Silent)",
+            Description = "Use when the installer supports /S style silent mode.",
             InstallArguments = "/S",
             UninstallArguments = "/S",
             RequiresVerification = true,
-            Guidance = "Template for NSIS. Verify against the vendor build and documentation before production use."
+            Guidance = "Fallback profile for /S installers. Verify with one local test."
         },
         new()
         {
-            Name = "InstallShield",
-            Description = "Use when installer framework is InstallShield.",
+            Name = "Alternative (Shield Quiet)",
+            Description = "Quiet mode profile for shield-style installers.",
             InstallArguments = "/s /v\"/qn REBOOT=ReallySuppress\"",
             UninstallArguments = "/s /x /v\"/qn REBOOT=ReallySuppress\"",
             RequiresVerification = true,
-            Guidance = "Template for InstallShield. Verify against the vendor build and documentation before production use."
+            Guidance = "Fallback profile for shield-style installers. Verify with one local test."
         },
         new()
         {
-            Name = "WiX Burn",
-            Description = "Use for WiX Burn bootstrapper installers.",
+            Name = "Alternative (Bundle Quiet)",
+            Description = "Quiet mode profile for bundle/bootstrapper installers.",
             InstallArguments = "/quiet /norestart",
             UninstallArguments = "/uninstall /quiet /norestart",
             RequiresVerification = true,
-            Guidance = "Template for WiX Burn bootstrapper packages. Verify against the vendor build and documentation before production use."
+            Guidance = "Fallback profile for bundle installers. Verify with one local test."
         },
         new()
         {
-            Name = "Squirrel",
-            Description = "Use for Squirrel-based installers/updaters.",
+            Name = "Alternative (Updater Silent)",
+            Description = "Silent profile for updater-style installers.",
             InstallArguments = "--silent",
             UninstallArguments = "--uninstall --silent",
             RequiresVerification = true,
-            Guidance = "Template for Squirrel installers. Verify against the exact vendor build before production use."
+            Guidance = "Fallback profile for updater-style installers. Verify with one local test."
         },
         new()
         {
-            Name = "Custom (Manual)",
-            Description = "Manual template for unknown EXE installer frameworks.",
+            Name = "Manual (Enter Yourself)",
+            Description = "Leave template mode and enter your own install/uninstall arguments.",
             InstallArguments = PlaceholderSilentArgs,
             UninstallArguments = PlaceholderUninstallArgs,
             RequiresVerification = true,
-            Guidance = "Unknown EXE framework. Determine vendor-specific switches and update commands before deployment."
+            Guidance = "Manual mode. Use vendor documentation or local test results."
         }
     };
 

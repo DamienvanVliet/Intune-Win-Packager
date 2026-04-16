@@ -22,6 +22,7 @@
     <sys:String x:Key="Ui.Commands.Title">Installatiecommando's &amp; Intune-regels</sys:String>
     <sys:String x:Key="Ui.SilentPreset">EXE-switch profiel (optioneel)</sys:String>
     <sys:String x:Key="Ui.ApplyPreset">Preset Toepassen</sys:String>
+    <sys:String x:Key="Ui.SilentPresetHint">Twijfel je? Gebruik eerst het automatisch ingevulde commando. Kies alleen een preset als installatie faalt.</sys:String>
     <sys:String x:Key="Ui.CommandProfile">Gedetecteerd installerprofiel</sys:String>
     <sys:String x:Key="Ui.InstallCommand">Installatiecommando (verplicht)</sys:String>
     <sys:String x:Key="Ui.UninstallCommand">Uninstall-commando (verplicht)</sys:String>
