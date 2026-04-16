@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.15] - 2026-04-16
+
+### Added
+- Sharpened Intune detection UX with plain-language recommendations per installer type. - Added operator guidance (Exists vs comparison) directly in detection forms. - Hid irrelevant comparison value fields when Exists is selected to reduce confusion.
+
 ## [1.1.14] - 2026-04-16
 
 ### Added
