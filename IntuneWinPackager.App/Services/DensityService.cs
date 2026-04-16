@@ -6,25 +6,22 @@ public sealed class DensityService : IDensityService
 
     private static readonly Dictionary<string, string> DisplayToCode = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Comfortable"] = "comfortable",
-        ["Compact"] = "compact"
+        ["Comfortable"] = "comfortable"
     };
 
     private static readonly Dictionary<string, string> CodeToDisplay = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["comfortable"] = "Comfortable",
-        ["compact"] = "Compact"
+        ["comfortable"] = "Comfortable"
     };
 
     private static readonly Dictionary<string, string> CodeToResourceSource = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["comfortable"] = "Styles/Density.Comfortable.xaml",
-        ["compact"] = "Styles/Density.Compact.xaml"
+        ["comfortable"] = "Styles/Density.Comfortable.xaml"
     };
 
     public event EventHandler? DensityChanged;
 
-    public IReadOnlyList<string> DensityOptions { get; } = ["Comfortable", "Compact"];
+    public IReadOnlyList<string> DensityOptions { get; } = ["Comfortable"];
 
     public string CurrentDensity { get; private set; } = "Comfortable";
 

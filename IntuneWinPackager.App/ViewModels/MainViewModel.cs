@@ -266,6 +266,12 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string preflightSummary = string.Empty;
 
+    [ObservableProperty]
+    private bool suggestionUsedKnowledgeCache;
+
+    [ObservableProperty]
+    private string switchVerificationStatus = string.Empty;
+
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
         IValidationService validationService,
@@ -363,6 +369,7 @@ public partial class MainViewModel : ObservableObject
         PreflightSummary = T("Vm.Preflight.DefaultSummary");
         PackagingProgressStep = T("Vm.Progress.ReadyStep");
         PackagingProgressDetail = T("Vm.Progress.ReadyDetail");
+        RefreshSwitchVerificationStatus();
     }
 
     public ObservableCollection<string> ValidationErrors { get; } = new();
@@ -440,6 +447,8 @@ public partial class MainViewModel : ObservableObject
     public bool IsScriptDetectionRule => DetectionRuleType == IntuneDetectionRuleType.Script;
 
     public bool IsSilentSwitchReviewVisible => InstallerType == InstallerType.Exe && RequireSilentSwitchReview;
+
+    public bool IsSwitchVerificationStatusVisible => InstallerType == InstallerType.Exe;
 
     public bool HasValidationErrors => ValidationErrors.Count > 0;
 
@@ -698,6 +707,7 @@ public partial class MainViewModel : ObservableObject
 
         InvalidatePreflightIfNeeded();
         OnPropertyChanged(nameof(IsSilentSwitchReviewVisible));
+        RefreshSwitchVerificationStatus();
         UpdateValidation();
         NotifyReadinessChanged();
     }
@@ -710,6 +720,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         InvalidatePreflightIfNeeded();
+        RefreshSwitchVerificationStatus();
         UpdateValidation();
         NotifyReadinessChanged();
     }
@@ -926,8 +937,10 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsMsiInstaller));
         OnPropertyChanged(nameof(IsExeInstaller));
         OnPropertyChanged(nameof(IsSilentSwitchReviewVisible));
+        OnPropertyChanged(nameof(IsSwitchVerificationStatusVisible));
         OnPropertyChanged(nameof(InstallerTypeDisplay));
         OnPropertyChanged(nameof(InstallerTypeBrush));
+        RefreshSwitchVerificationStatus();
         UpdateValidation();
         NotifyReadinessChanged();
     }
@@ -1958,6 +1971,7 @@ public partial class MainViewModel : ObservableObject
             TemplateGuidance = string.Empty;
             RequireSilentSwitchReview = false;
             SilentSwitchesVerified = false;
+            SuggestionUsedKnowledgeCache = false;
             DetectionRuleType = IntuneDetectionRuleType.None;
             DetectionMsiProductCode = string.Empty;
             DetectionMsiProductVersion = string.Empty;
@@ -2287,6 +2301,8 @@ public partial class MainViewModel : ObservableObject
         bool overwriteCommands = true,
         bool overwriteRules = true)
     {
+        SuggestionUsedKnowledgeCache = suggestion.UsedKnowledgeCache;
+
         if (overwriteCommands)
         {
             InstallCommand = suggestion.InstallCommand;
@@ -2297,6 +2313,8 @@ public partial class MainViewModel : ObservableObject
         {
             ApplyIntuneRules(suggestion.SuggestedRules);
         }
+
+        RefreshSwitchVerificationStatus();
     }
 
     private void ApplyIntuneRules(IntuneWin32AppRules rules)
@@ -2485,6 +2503,31 @@ public partial class MainViewModel : ObservableObject
             PackagingProgressStep = T("Vm.Progress.ReadyStep");
             PackagingProgressDetail = T("Vm.Progress.ReadyDetail");
         }
+
+        RefreshSwitchVerificationStatus();
+    }
+
+    private void RefreshSwitchVerificationStatus()
+    {
+        if (InstallerType != InstallerType.Exe)
+        {
+            SwitchVerificationStatus = string.Empty;
+            return;
+        }
+
+        if (SuggestionUsedKnowledgeCache && SilentSwitchesVerified)
+        {
+            SwitchVerificationStatus = T("Vm.SwitchStatus.CacheVerified");
+            return;
+        }
+
+        if (SilentSwitchesVerified)
+        {
+            SwitchVerificationStatus = T("Vm.SwitchStatus.ManualVerified");
+            return;
+        }
+
+        SwitchVerificationStatus = T("Vm.SwitchStatus.NotVerified");
     }
 
     private void SetPackagingProgress(string step, string detail, double percentage, bool isIndeterminate = false)

@@ -20,13 +20,17 @@
     <sys:String x:Key="Ui.Browse">Browse</sys:String>
 
     <sys:String x:Key="Ui.Commands.Title">Install Commands &amp; Intune Rules</sys:String>
-    <sys:String x:Key="Ui.SilentPreset">Silent Preset (EXE)</sys:String>
+    <sys:String x:Key="Ui.SilentPreset">EXE Switch Profile (optional)</sys:String>
     <sys:String x:Key="Ui.ApplyPreset">Apply Preset</sys:String>
-    <sys:String x:Key="Ui.CommandProfile">Command profile</sys:String>
-    <sys:String x:Key="Ui.InstallCommand">Install Command</sys:String>
-    <sys:String x:Key="Ui.UninstallCommand">Uninstall Command</sys:String>
-    <sys:String x:Key="Ui.SilentSwitchVerified">Silent switches verified for this EXE build</sys:String>
+    <sys:String x:Key="Ui.CommandProfile">Detected installer profile</sys:String>
+    <sys:String x:Key="Ui.InstallCommand">Install Command (required)</sys:String>
+    <sys:String x:Key="Ui.UninstallCommand">Uninstall Command (required)</sys:String>
+    <sys:String x:Key="Ui.SilentSwitchVerified">I verified silent install/uninstall for this EXE</sys:String>
+    <sys:String x:Key="Ui.Commands.AutoHint">Commands are auto-filled when possible. Change only if needed.</sys:String>
     <sys:String x:Key="Ui.SmartStaging">Use smart source staging (prevents recursive output packaging)</sys:String>
+    <sys:String x:Key="Ui.SimpleModeHint">Simple view is active: only essential fields stay visible.</sys:String>
+    <sys:String x:Key="Ui.AdvancedSettings.Title">Advanced Settings (optional)</sys:String>
+    <sys:String x:Key="Ui.AdvancedSettings.Description">Open this only when you need custom EXE switches or advanced Intune requirements.</sys:String>
 
     <sys:String x:Key="Ui.IntuneInstallRules.Title">Intune Install Rules</sys:String>
     <sys:String x:Key="Ui.InstallContext">Install Context</sys:String>
@@ -46,6 +50,7 @@
     <sys:String x:Key="Ui.RequirementScriptSignature">Enforce requirement script signature check</sys:String>
 
     <sys:String x:Key="Ui.IntuneDetectionRule.Title">Intune Detection Rule</sys:String>
+    <sys:String x:Key="Ui.DetectionRuleHint">Choose one detection method so Intune can confirm the app is installed.</sys:String>
     <sys:String x:Key="Ui.RuleType">Rule Type</sys:String>
     <sys:String x:Key="Ui.ProductCode">Product Code</sys:String>
     <sys:String x:Key="Ui.ProductVersion">Product Version</sys:String>
@@ -172,6 +177,9 @@
     <sys:String x:Key="Vm.Update.SilentInstallerStarted">Silent update installer started.</sys:String>
     <sys:String x:Key="Vm.Update.InstallFailedFormat">Update install failed: {0}</sys:String>
     <sys:String x:Key="Vm.Update.NotificationFormat">Update available: {0} (you are on {1}).</sys:String>
+    <sys:String x:Key="Vm.SwitchStatus.CacheVerified">Silent switches verified from local history for this exact installer build.</sys:String>
+    <sys:String x:Key="Vm.SwitchStatus.ManualVerified">Silent switches marked as verified by you. This will be saved locally after successful packaging.</sys:String>
+    <sys:String x:Key="Vm.SwitchStatus.NotVerified">Silent switches are not verified yet. Test once, then tick the verification checkbox.</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Ready</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Waiting to start.</sys:String>
