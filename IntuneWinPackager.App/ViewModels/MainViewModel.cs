@@ -355,6 +355,7 @@ public partial class MainViewModel : ObservableObject
         OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder, CanOpenOutputFolder);
         SaveProfileCommand = new AsyncRelayCommand(SaveProfileAsync, () => !IsBusy);
         LoadProfileCommand = new AsyncRelayCommand(LoadProfileAsync, () => !IsBusy);
+        DeleteProfileCommand = new AsyncRelayCommand(DeleteProfileAsync, CanDeleteProfile);
         CheckForUpdatesCommand = new AsyncRelayCommand(CheckForUpdatesAsync, () => !IsBusy);
         InstallUpdateCommand = new AsyncRelayCommand(InstallUpdateAsync, CanInstallUpdate);
 
@@ -449,6 +450,16 @@ public partial class MainViewModel : ObservableObject
     public bool IsSilentSwitchReviewVisible => InstallerType == InstallerType.Exe && RequireSilentSwitchReview;
 
     public bool IsSwitchVerificationStatusVisible => InstallerType == InstallerType.Exe;
+
+    public string DetectionRuleTypeGuidance => DetectionRuleType switch
+    {
+        IntuneDetectionRuleType.None => T("Vm.Detection.Guidance.None"),
+        IntuneDetectionRuleType.MsiProductCode => T("Vm.Detection.Guidance.Msi"),
+        IntuneDetectionRuleType.File => T("Vm.Detection.Guidance.File"),
+        IntuneDetectionRuleType.Registry => T("Vm.Detection.Guidance.Registry"),
+        IntuneDetectionRuleType.Script => T("Vm.Detection.Guidance.Script"),
+        _ => T("Vm.Detection.Guidance.None")
+    };
 
     public bool HasValidationErrors => ValidationErrors.Count > 0;
 
@@ -599,6 +610,8 @@ public partial class MainViewModel : ObservableObject
 
     public IAsyncRelayCommand LoadProfileCommand { get; }
 
+    public IAsyncRelayCommand DeleteProfileCommand { get; }
+
     public IAsyncRelayCommand CheckForUpdatesCommand { get; }
 
     public IAsyncRelayCommand InstallUpdateCommand { get; }
@@ -732,6 +745,7 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsFileDetectionRule));
         OnPropertyChanged(nameof(IsRegistryDetectionRule));
         OnPropertyChanged(nameof(IsScriptDetectionRule));
+        OnPropertyChanged(nameof(DetectionRuleTypeGuidance));
         UpdateValidation();
         NotifyReadinessChanged();
     }
@@ -938,11 +952,22 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsExeInstaller));
         OnPropertyChanged(nameof(IsSilentSwitchReviewVisible));
         OnPropertyChanged(nameof(IsSwitchVerificationStatusVisible));
+        OnPropertyChanged(nameof(DetectionRuleTypeGuidance));
         OnPropertyChanged(nameof(InstallerTypeDisplay));
         OnPropertyChanged(nameof(InstallerTypeBrush));
         RefreshSwitchVerificationStatus();
         UpdateValidation();
         NotifyReadinessChanged();
+    }
+
+    partial void OnProfileNameChanged(string value)
+    {
+        DeleteProfileCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSelectedProfileNameChanged(string? value)
+    {
+        DeleteProfileCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnOperationStateChanged(OperationState value)
@@ -959,6 +984,7 @@ public partial class MainViewModel : ObservableObject
         ResetCommand.NotifyCanExecuteChanged();
         SaveProfileCommand.NotifyCanExecuteChanged();
         LoadProfileCommand.NotifyCanExecuteChanged();
+        DeleteProfileCommand.NotifyCanExecuteChanged();
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
         CheckForUpdatesCommand.NotifyCanExecuteChanged();
         InstallUpdateCommand.NotifyCanExecuteChanged();
@@ -1141,6 +1167,12 @@ public partial class MainViewModel : ObservableObject
         {
             SelectedProfileName = ProfileName;
         }
+        else if (!string.IsNullOrWhiteSpace(SelectedProfileName) && !AvailableProfiles.Contains(SelectedProfileName))
+        {
+            SelectedProfileName = null;
+        }
+
+        DeleteProfileCommand.NotifyCanExecuteChanged();
     }
 
     private async Task RefreshHistoryAsync()
@@ -1505,6 +1537,15 @@ public partial class MainViewModel : ObservableObject
     private bool CanInstallUpdate()
     {
         return !IsBusy && IsUpdateAvailable;
+    }
+
+    private bool CanDeleteProfile()
+    {
+        var name = !string.IsNullOrWhiteSpace(SelectedProfileName)
+            ? SelectedProfileName
+            : ProfileName;
+
+        return !IsBusy && !string.IsNullOrWhiteSpace(name);
     }
 
     private async Task CheckForUpdatesAsync()
@@ -1950,6 +1991,49 @@ public partial class MainViewModel : ObservableObject
             OperationState.Idle,
             T("Vm.Status.ProfileLoadedTitle"),
             TF("Vm.Status.ProfileLoadedMessage", profile.Name));
+    }
+
+    private async Task DeleteProfileAsync()
+    {
+        var nameToDelete = !string.IsNullOrWhiteSpace(SelectedProfileName)
+            ? SelectedProfileName
+            : ProfileName;
+
+        if (string.IsNullOrWhiteSpace(nameToDelete))
+        {
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.NoProfileSelectedTitle"),
+                T("Vm.Status.NoProfileSelectedMessage"));
+            return;
+        }
+
+        var deleted = await _profileService.DeleteProfileAsync(nameToDelete);
+        if (!deleted)
+        {
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.ProfileMissingTitle"),
+                TF("Vm.Status.ProfileMissingMessage", nameToDelete));
+            return;
+        }
+
+        if (string.Equals(ProfileName, nameToDelete, StringComparison.OrdinalIgnoreCase))
+        {
+            ProfileName = string.Empty;
+        }
+
+        if (string.Equals(SelectedProfileName, nameToDelete, StringComparison.OrdinalIgnoreCase))
+        {
+            SelectedProfileName = null;
+        }
+
+        await RefreshProfileListAsync();
+
+        SetStatus(
+            OperationState.Idle,
+            T("Vm.Status.ProfileDeletedTitle"),
+            TF("Vm.Status.ProfileDeletedMessage", nameToDelete));
     }
 
     private void ResetConfiguration()
@@ -2481,6 +2565,7 @@ public partial class MainViewModel : ObservableObject
     private void HandleLanguageChanged(object? sender, EventArgs e)
     {
         OnPropertyChanged(nameof(InstallerTypeDisplay));
+        OnPropertyChanged(nameof(DetectionRuleTypeGuidance));
         OnPropertyChanged(nameof(ReadinessSummary));
         OnPropertyChanged(nameof(NextStepHint));
         OnPropertyChanged(nameof(CurrentVersionDisplay));

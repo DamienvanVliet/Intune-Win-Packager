@@ -56,4 +56,26 @@ public sealed class ProfileService : IProfileService
         return profiles.FirstOrDefault(profile =>
             string.Equals(profile.Name, profileName, StringComparison.OrdinalIgnoreCase));
     }
+
+    public async Task<bool> DeleteProfileAsync(string profileName, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(profileName))
+        {
+            return false;
+        }
+
+        DataPathProvider.EnsureBaseDirectory();
+
+        var profiles = (await _store.ReadAsync(DataPathProvider.ProfilesFilePath, new List<PackageProfile>(), cancellationToken)).ToList();
+        var removedCount = profiles.RemoveAll(profile =>
+            string.Equals(profile.Name, profileName, StringComparison.OrdinalIgnoreCase));
+
+        if (removedCount <= 0)
+        {
+            return false;
+        }
+
+        await _store.WriteAsync(DataPathProvider.ProfilesFilePath, profiles, cancellationToken);
+        return true;
+    }
 }

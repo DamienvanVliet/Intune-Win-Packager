@@ -9,4 +9,6 @@ public interface IProfileService
     Task SaveProfileAsync(PackageProfile profile, CancellationToken cancellationToken = default);
 
     Task<PackageProfile?> GetProfileAsync(string profileName, CancellationToken cancellationToken = default);
+
+    Task<bool> DeleteProfileAsync(string profileName, CancellationToken cancellationToken = default);
 }
