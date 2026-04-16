@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.16] - 2026-04-17
+
+### Added
+- Added resilient in-app update notifications with periodic background checks. - Cached latest known version in app settings so update banner can still show after restart. - Improved startup/manual update flow via shared update info application logic.
+
 ## [1.1.15] - 2026-04-16
 
 ### Added
