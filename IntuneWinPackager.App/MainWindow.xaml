@@ -17,6 +17,7 @@
         Background="{DynamicResource PageBackgroundBrush}">
     <Window.Resources>
         <converters:EnumDisplayConverter x:Key="EnumDisplayConverter" />
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     </Window.Resources>
 
     <Grid Margin="24">
@@ -501,6 +502,12 @@
                                                Margin="0,0,0,8"
                                                TextWrapping="Wrap" />
                                     <TextBlock Text="{DynamicResource Ui.RuleType}" Style="{StaticResource BodyTextStyle}" />
+                                    <TextBlock Text="{Binding DetectionSelectionHint}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               FontSize="11"
+                                               Margin="0,4,0,6"
+                                               TextWrapping="Wrap" />
                                     <ComboBox ItemsSource="{Binding DetectionRuleTypes}"
                                               SelectedItem="{Binding DetectionRuleType}"
                                               Margin="0,6,0,10"
@@ -573,6 +580,7 @@
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
                                         <TextBlock Grid.Row="0" Grid.Column="0"
@@ -607,15 +615,25 @@
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
 
-                                        <TextBlock Grid.Row="3" Grid.Column="0"
+                                        <TextBlock Grid.Row="3" Grid.Column="1"
+                                                   Text="{Binding DetectionFileOperatorGuidance}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   FontSize="11"
+                                                   Margin="8,-2,0,8"
+                                                   TextWrapping="Wrap" />
+
+                                        <TextBlock Grid.Row="4" Grid.Column="0"
                                                    Text="{DynamicResource Ui.Value}"
                                                    Style="{StaticResource BodyTextStyle}"
-                                                   VerticalAlignment="Center" />
-                                        <TextBox Grid.Row="3" Grid.Column="1"
+                                                   VerticalAlignment="Center"
+                                                   Visibility="{Binding IsDetectionFileComparisonOperator, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <TextBox Grid.Row="4" Grid.Column="1"
                                                  Margin="8,0,0,8"
-                                                 Text="{Binding DetectionFileValue, UpdateSourceTrigger=PropertyChanged}" />
+                                                 Text="{Binding DetectionFileValue, UpdateSourceTrigger=PropertyChanged}"
+                                                 Visibility="{Binding IsDetectionFileComparisonOperator, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
-                                        <CheckBox Grid.Row="4" Grid.Column="1"
+                                        <CheckBox Grid.Row="5" Grid.Column="1"
                                                   Content="{DynamicResource Ui.Check32BitPath}"
                                                   IsChecked="{Binding DetectionFileCheck32BitOn64System}"
                                                   Margin="8,0,0,0" />
@@ -643,6 +661,7 @@
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
                                         <TextBlock Grid.Row="0" Grid.Column="0"
@@ -664,7 +683,7 @@
                                                  Text="{Binding DetectionRegistryKeyPath, UpdateSourceTrigger=PropertyChanged}" />
 
                                         <TextBlock Grid.Row="2" Grid.Column="0"
-                                                   Text="{DynamicResource Ui.ValueName}"
+                                                   Text="{Binding DetectionRegistryValueNameLabel}"
                                                    Style="{StaticResource BodyTextStyle}"
                                                    VerticalAlignment="Center" />
                                         <TextBox Grid.Row="2" Grid.Column="1"
@@ -687,15 +706,25 @@
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
 
-                                        <TextBlock Grid.Row="4" Grid.Column="0"
+                                        <TextBlock Grid.Row="4" Grid.Column="1"
+                                                   Text="{Binding DetectionRegistryOperatorGuidance}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   FontSize="11"
+                                                   Margin="8,-2,0,8"
+                                                   TextWrapping="Wrap" />
+
+                                        <TextBlock Grid.Row="5" Grid.Column="0"
                                                    Text="{DynamicResource Ui.Value}"
                                                    Style="{StaticResource BodyTextStyle}"
-                                                   VerticalAlignment="Center" />
-                                        <TextBox Grid.Row="4" Grid.Column="1"
+                                                   VerticalAlignment="Center"
+                                                   Visibility="{Binding IsDetectionRegistryComparisonOperator, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <TextBox Grid.Row="5" Grid.Column="1"
                                                  Margin="8,0,0,8"
-                                                 Text="{Binding DetectionRegistryValue, UpdateSourceTrigger=PropertyChanged}" />
+                                                 Text="{Binding DetectionRegistryValue, UpdateSourceTrigger=PropertyChanged}"
+                                                 Visibility="{Binding IsDetectionRegistryComparisonOperator, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
-                                        <CheckBox Grid.Row="5" Grid.Column="1"
+                                        <CheckBox Grid.Row="6" Grid.Column="1"
                                                   Content="{DynamicResource Ui.Use32BitRegistry}"
                                                   IsChecked="{Binding DetectionRegistryCheck32BitOn64System}"
                                                   Margin="8,0,0,0" />

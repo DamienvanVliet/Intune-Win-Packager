@@ -63,6 +63,7 @@
     <sys:String x:Key="Ui.Hive">Hive</sys:String>
     <sys:String x:Key="Ui.KeyPath">Key Path</sys:String>
     <sys:String x:Key="Ui.ValueName">Value Name</sys:String>
+    <sys:String x:Key="Ui.ValueNameOptional">Value Name (optional)</sys:String>
     <sys:String x:Key="Ui.Use32BitRegistry">Use 32-bit registry on 64-bit clients</sys:String>
     <sys:String x:Key="Ui.DetectionScript">Detection Script</sys:String>
     <sys:String x:Key="Ui.RunScript32">Run script as 32-bit process on 64-bit clients</sys:String>
@@ -182,11 +183,20 @@
     <sys:String x:Key="Vm.SwitchStatus.CacheVerified">Silent switches verified from local history for this exact installer build.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.ManualVerified">Silent switches marked as verified by you. This will be saved locally after successful packaging.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.NotVerified">Silent switches are not verified yet. Test once, then tick the verification checkbox.</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Unknown">Recommendation: load a setup file first, then choose the suggested rule.</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Msi">Recommendation for this installer: MSI Product Code (most reliable for MSI).</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Exe">Recommendation for this installer: Registry with Exists. Use File if no stable registry footprint exists.</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Appx">Recommendation for this installer: Script detection (Get-AppxPackage) unless you have a better enterprise standard.</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Script">Recommendation for this installer: Script detection.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.None">Pick a detection type before packaging. If unsure, use Registry for EXE or MSI Product Code for MSI.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Msi">Best for MSI installers. Use this when Product Code is available (most reliable).</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.File">Use when the app always creates a stable file/folder path. Operator tip: use Exists in most cases.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Registry">Best common choice for EXE apps. Use a stable uninstall key/value. Operator tip: use Exists unless you must compare a version.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Script">Advanced fallback only. Use script detection when File/Registry/MSI cannot identify install state reliably.</sys:String>
+    <sys:String x:Key="Vm.Detection.OperatorHint.FileExists">Exists is the safe default: Intune only checks whether this file/folder is present.</sys:String>
+    <sys:String x:Key="Vm.Detection.OperatorHint.FileCompare">Comparison mode: fill Value with the expected file property value.</sys:String>
+    <sys:String x:Key="Vm.Detection.OperatorHint.RegistryExists">Exists is the safe default: Intune checks whether this key (or value name, if provided) exists.</sys:String>
+    <sys:String x:Key="Vm.Detection.OperatorHint.RegistryCompare">Comparison mode: provide Value Name and Value (for example an app version string).</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Ready</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Waiting to start.</sys:String>

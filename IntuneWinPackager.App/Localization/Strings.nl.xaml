@@ -63,6 +63,7 @@
     <sys:String x:Key="Ui.Hive">Hive</sys:String>
     <sys:String x:Key="Ui.KeyPath">Sleutelpad</sys:String>
     <sys:String x:Key="Ui.ValueName">Waardenaam</sys:String>
+    <sys:String x:Key="Ui.ValueNameOptional">Waardenaam (optioneel)</sys:String>
     <sys:String x:Key="Ui.Use32BitRegistry">Gebruik 32-bit register op 64-bit clients</sys:String>
     <sys:String x:Key="Ui.DetectionScript">Detectiescript</sys:String>
     <sys:String x:Key="Ui.RunScript32">Script als 32-bit proces uitvoeren op 64-bit clients</sys:String>
@@ -182,11 +183,20 @@
     <sys:String x:Key="Vm.SwitchStatus.CacheVerified">Silent switches zijn geverifieerd vanuit lokale historie voor exact deze installer-build.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.ManualVerified">Silent switches zijn door jou als geverifieerd gemarkeerd. Dit wordt lokaal opgeslagen na succesvolle packaging.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.NotVerified">Silent switches zijn nog niet geverifieerd. Test een keer en vink daarna de verificatie aan.</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Unknown">Aanbeveling: laad eerst een setup-bestand en kies daarna de voorgestelde regel.</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Msi">Aanbeveling voor deze installer: MSI Product Code (meest betrouwbaar voor MSI).</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Exe">Aanbeveling voor deze installer: Registry met Exists. Gebruik File als er geen stabiele registry-footprint is.</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Appx">Aanbeveling voor deze installer: Script-detectie (Get-AppxPackage), tenzij je een betere enterprise-standaard hebt.</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Script">Aanbeveling voor deze installer: Script-detectie.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.None">Kies een detectietype voor packaging. Twijfel je? Gebruik Registry voor EXE of MSI Product Code voor MSI.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Msi">Beste keuze voor MSI-installers. Gebruik dit wanneer Product Code beschikbaar is (meest betrouwbaar).</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.File">Gebruik dit wanneer de app altijd een stabiel bestand-/mappad maakt. Operator-tip: meestal Exists gebruiken.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Registry">Meest gebruikte keuze voor EXE-apps. Gebruik een stabiele uninstall key/value. Operator-tip: gebruik Exists tenzij je expliciet een versie wilt vergelijken.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Script">Alleen als geavanceerde fallback. Gebruik script-detectie wanneer File/Registry/MSI de installatiestatus niet betrouwbaar kan bepalen.</sys:String>
+    <sys:String x:Key="Vm.Detection.OperatorHint.FileExists">Exists is de veilige standaard: Intune controleert alleen of dit bestand/deze map bestaat.</sys:String>
+    <sys:String x:Key="Vm.Detection.OperatorHint.FileCompare">Vergelijkingsmodus: vul Waarde in met de verwachte bestandsproperty.</sys:String>
+    <sys:String x:Key="Vm.Detection.OperatorHint.RegistryExists">Exists is de veilige standaard: Intune controleert of deze sleutel (of waardenaam, als ingevuld) bestaat.</sys:String>
+    <sys:String x:Key="Vm.Detection.OperatorHint.RegistryCompare">Vergelijkingsmodus: vul Waardenaam en Waarde in (bijvoorbeeld een appversie).</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Klaar</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Wachten om te starten.</sys:String>

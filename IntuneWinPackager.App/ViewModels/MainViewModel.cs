@@ -447,9 +447,22 @@ public partial class MainViewModel : ObservableObject
 
     public bool IsScriptDetectionRule => DetectionRuleType == IntuneDetectionRuleType.Script;
 
+    public bool IsDetectionFileComparisonOperator => DetectionFileOperator != IntuneDetectionOperator.Exists;
+
+    public bool IsDetectionRegistryComparisonOperator => DetectionRegistryOperator != IntuneDetectionOperator.Exists;
+
     public bool IsSilentSwitchReviewVisible => InstallerType == InstallerType.Exe && RequireSilentSwitchReview;
 
     public bool IsSwitchVerificationStatusVisible => InstallerType == InstallerType.Exe;
+
+    public string DetectionSelectionHint => InstallerType switch
+    {
+        InstallerType.Msi => T("Vm.Detection.SelectionHint.Msi"),
+        InstallerType.Exe => T("Vm.Detection.SelectionHint.Exe"),
+        InstallerType.AppxMsix => T("Vm.Detection.SelectionHint.Appx"),
+        InstallerType.Script => T("Vm.Detection.SelectionHint.Script"),
+        _ => T("Vm.Detection.SelectionHint.Unknown")
+    };
 
     public string DetectionRuleTypeGuidance => DetectionRuleType switch
     {
@@ -460,6 +473,18 @@ public partial class MainViewModel : ObservableObject
         IntuneDetectionRuleType.Script => T("Vm.Detection.Guidance.Script"),
         _ => T("Vm.Detection.Guidance.None")
     };
+
+    public string DetectionFileOperatorGuidance => DetectionFileOperator == IntuneDetectionOperator.Exists
+        ? T("Vm.Detection.OperatorHint.FileExists")
+        : T("Vm.Detection.OperatorHint.FileCompare");
+
+    public string DetectionRegistryOperatorGuidance => DetectionRegistryOperator == IntuneDetectionOperator.Exists
+        ? T("Vm.Detection.OperatorHint.RegistryExists")
+        : T("Vm.Detection.OperatorHint.RegistryCompare");
+
+    public string DetectionRegistryValueNameLabel => IsDetectionRegistryComparisonOperator
+        ? T("Ui.ValueName")
+        : T("Ui.ValueNameOptional");
 
     public bool HasValidationErrors => ValidationErrors.Count > 0;
 
@@ -788,6 +813,8 @@ public partial class MainViewModel : ObservableObject
     partial void OnDetectionFileOperatorChanged(IntuneDetectionOperator value)
     {
         InvalidatePreflightIfNeeded();
+        OnPropertyChanged(nameof(IsDetectionFileComparisonOperator));
+        OnPropertyChanged(nameof(DetectionFileOperatorGuidance));
         UpdateValidation();
         NotifyReadinessChanged();
     }
@@ -830,6 +857,9 @@ public partial class MainViewModel : ObservableObject
     partial void OnDetectionRegistryOperatorChanged(IntuneDetectionOperator value)
     {
         InvalidatePreflightIfNeeded();
+        OnPropertyChanged(nameof(IsDetectionRegistryComparisonOperator));
+        OnPropertyChanged(nameof(DetectionRegistryOperatorGuidance));
+        OnPropertyChanged(nameof(DetectionRegistryValueNameLabel));
         UpdateValidation();
         NotifyReadinessChanged();
     }
@@ -953,6 +983,7 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsSilentSwitchReviewVisible));
         OnPropertyChanged(nameof(IsSwitchVerificationStatusVisible));
         OnPropertyChanged(nameof(DetectionRuleTypeGuidance));
+        OnPropertyChanged(nameof(DetectionSelectionHint));
         OnPropertyChanged(nameof(InstallerTypeDisplay));
         OnPropertyChanged(nameof(InstallerTypeBrush));
         RefreshSwitchVerificationStatus();
@@ -2565,7 +2596,11 @@ public partial class MainViewModel : ObservableObject
     private void HandleLanguageChanged(object? sender, EventArgs e)
     {
         OnPropertyChanged(nameof(InstallerTypeDisplay));
+        OnPropertyChanged(nameof(DetectionSelectionHint));
         OnPropertyChanged(nameof(DetectionRuleTypeGuidance));
+        OnPropertyChanged(nameof(DetectionFileOperatorGuidance));
+        OnPropertyChanged(nameof(DetectionRegistryOperatorGuidance));
+        OnPropertyChanged(nameof(DetectionRegistryValueNameLabel));
         OnPropertyChanged(nameof(ReadinessSummary));
         OnPropertyChanged(nameof(NextStepHint));
         OnPropertyChanged(nameof(CurrentVersionDisplay));
