@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.11] - 2026-04-16
+
+### Added
+- Added static installer fingerprinting (MSI, MSIX/APPX, Inno, NSIS, InstallShield, Burn, Squirrel and more) with confidence scoring. - Added non-installing parameter probe (/?, -?, /help, --help) and command suggestion extraction. - Added verified knowledge cache by SHA256 and product version for install/uninstall/detection reuse. - Added startup update check and clear in-app update-available notification banner.
+
 ## [1.1.10] - 2026-04-14
 
 ### Added
