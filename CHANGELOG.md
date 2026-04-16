@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.12] - 2026-04-16
+
+### Added
+- Simplified Packaging UI: essential fields stay visible, advanced Intune settings moved behind one optional section. - Reduced technical wording in command areas and added clearer helper text. - Added clear EXE silent-switch verification status (local history match vs manual verification pending). - Removed Compact density mode; Comfortable is now the only density.
+
 ## [1.1.11] - 2026-04-16
 
 ### Added
