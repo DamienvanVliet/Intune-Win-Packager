@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.21] - 2026-04-17
+
+### Fixed
+- Replaced PowerShell-based deferred updater launch with a dedicated `cmd` launcher script that waits for the current app process to fully exit before starting setup.
+- Removed unsafe immediate-launch fallback path that could still trigger installer file lock errors (`DeleteFile failed; code 32`) while the app executable was in use.
+- Added safer scheduling failure handling so update flow surfaces a clear error instead of starting setup too early.
+
 ## [1.1.20] - 2026-04-17
 
 ### Fixed

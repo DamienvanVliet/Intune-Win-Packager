@@ -286,17 +286,14 @@ public sealed class AppUpdateService : IAppUpdateService
 
             if (!TryScheduleInstallerAfterCurrentProcessExit(installerPath, installerArguments, out var scheduleError))
             {
-                logProgress?.Report($"Deferred launch failed ({scheduleError}). Falling back to immediate installer start...");
-
-                var fallbackStartInfo = new ProcessStartInfo
+                return new AppUpdateInstallResult
                 {
-                    FileName = installerPath,
-                    UseShellExecute = true,
-                    WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory,
-                    Arguments = installerArguments
+                    Success = false,
+                    Message = WithCode(
+                        "UPD-LAUNCH-SCHED",
+                        $"Installer could not be scheduled safely after app shutdown. {scheduleError}"),
+                    InstallerPath = installerPath
                 };
-
-                Process.Start(fallbackStartInfo);
             }
 
             return new AppUpdateInstallResult
@@ -330,14 +327,28 @@ public sealed class AppUpdateService : IAppUpdateService
 
         try
         {
+            if (string.IsNullOrWhiteSpace(installerPath) || !File.Exists(installerPath))
+            {
+                errorMessage = "Installer file was not found on disk.";
+                return false;
+            }
+
             var currentPid = Environment.ProcessId;
-            var script = BuildDeferredInstallerScript(currentPid, installerPath, installerArguments);
-            var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+            var currentProcessName = Process.GetCurrentProcess().ProcessName;
+            var launcherScriptPath = Path.Combine(
+                Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory,
+                $"launch-update-{Guid.NewGuid():N}.cmd");
+            var script = BuildDeferredInstallerBatch(
+                currentPid,
+                currentProcessName,
+                installerPath,
+                installerArguments);
+            File.WriteAllText(launcherScriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
             var launcherStartInfo = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand {encodedScript}",
+                FileName = "cmd.exe",
+                Arguments = $"/c \"\"{launcherScriptPath}\"\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory
@@ -353,27 +364,55 @@ public sealed class AppUpdateService : IAppUpdateService
         }
     }
 
-    private static string BuildDeferredInstallerScript(
+    private static string BuildDeferredInstallerBatch(
         int processId,
+        string processName,
         string installerPath,
         string installerArguments)
     {
-        var escapedPath = EscapePowerShellSingleQuoted(installerPath);
-        var escapedArgs = EscapePowerShellSingleQuoted(installerArguments);
+        var targetImage = processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? processName
+            : $"{processName}.exe";
+
+        var escapedImage = EscapeBatchVariableValue(targetImage);
+        var escapedInstallerPath = EscapeBatchVariableValue(installerPath);
+        var escapedInstallerArgs = EscapeBatchVariableValue(installerArguments);
 
         return string.Join(
-            "; ",
-            $"$pidToWait = {processId}",
-            $"$installerPath = '{escapedPath}'",
-            $"$installerArgs = '{escapedArgs}'",
-            "while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }",
-            "Start-Sleep -Milliseconds 200",
-            "if ([string]::IsNullOrWhiteSpace($installerArgs)) { Start-Process -FilePath $installerPath | Out-Null } else { Start-Process -FilePath $installerPath -ArgumentList $installerArgs | Out-Null }");
+            Environment.NewLine,
+            "@echo off",
+            "setlocal",
+            $"set \"TARGET_PID={processId}\"",
+            $"set \"TARGET_IMAGE={escapedImage}\"",
+            $"set \"INSTALLER_PATH={escapedInstallerPath}\"",
+            $"set \"INSTALLER_ARGS={escapedInstallerArgs}\"",
+            ":wait_pid",
+            "tasklist /FI \"PID eq %TARGET_PID%\" /NH | findstr /R /C:\" %TARGET_PID% \" >NUL",
+            "if not errorlevel 1 (",
+            "  timeout /t 1 /nobreak >NUL",
+            "  goto wait_pid",
+            ")",
+            ":wait_image",
+            "tasklist /FI \"IMAGENAME eq %TARGET_IMAGE%\" /NH | findstr /I /C:\"%TARGET_IMAGE%\" >NUL",
+            "if not errorlevel 1 (",
+            "  timeout /t 1 /nobreak >NUL",
+            "  goto wait_image",
+            ")",
+            "timeout /t 1 /nobreak >NUL",
+            "if \"%INSTALLER_ARGS%\"==\"\" (",
+            "  start \"\" \"%INSTALLER_PATH%\"",
+            ") else (",
+            "  start \"\" \"%INSTALLER_PATH%\" %INSTALLER_ARGS%",
+            ")",
+            "del \"%~f0\" >NUL 2>&1",
+            "endlocal");
     }
 
-    private static string EscapePowerShellSingleQuoted(string value)
+    private static string EscapeBatchVariableValue(string value)
     {
-        return value.Replace("'", "''", StringComparison.Ordinal);
+        return value
+            .Replace("%", "%%", StringComparison.Ordinal)
+            .Replace("\"", "\"\"", StringComparison.Ordinal);
     }
 
     private async Task<AppUpdateInfo?> TryCheckWithGhCliAsync(
