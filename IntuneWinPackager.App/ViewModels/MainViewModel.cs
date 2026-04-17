@@ -1945,7 +1945,7 @@ public partial class MainViewModel : ObservableObject
             UpdateStatus = EnableSilentAppUpdates
                 ? T("Vm.Update.SilentInstallerStarted")
                 : T("Vm.Update.InstallerStarted");
-            AppendLog("Installer launched. Closing app to allow update installation...");
+            AppendLog("Installer scheduled. Closing app to allow update installation...");
 
             await Task.Delay(700);
             WpfApplication.Current.Shutdown();

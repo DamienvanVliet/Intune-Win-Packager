@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.20] - 2026-04-17
+
+### Fixed
+- Updater now schedules installer launch only after the current app process fully exits, preventing file lock errors (`code 32`) on `IntuneWinPackager.App.exe`.
+- Kept no-force-close behavior while removing update race condition between running app and installer file replacement.
+
 ## [1.1.19] - 2026-04-17
 
 ### Fixed

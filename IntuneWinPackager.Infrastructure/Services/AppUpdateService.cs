@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using IntuneWinPackager.Core.Interfaces;
@@ -277,27 +278,33 @@ public sealed class AppUpdateService : IAppUpdateService
     {
         try
         {
-            logProgress?.Report("Launching update installer...");
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = installerPath,
-                UseShellExecute = true,
-                WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory
-            };
+            var installerArguments = silentInstall
+                ? "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS"
+                : string.Empty;
 
-            if (silentInstall)
+            logProgress?.Report("Scheduling update installer after app shutdown...");
+
+            if (!TryScheduleInstallerAfterCurrentProcessExit(installerPath, installerArguments, out var scheduleError))
             {
-                startInfo.Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS";
+                logProgress?.Report($"Deferred launch failed ({scheduleError}). Falling back to immediate installer start...");
+
+                var fallbackStartInfo = new ProcessStartInfo
+                {
+                    FileName = installerPath,
+                    UseShellExecute = true,
+                    WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory,
+                    Arguments = installerArguments
+                };
+
+                Process.Start(fallbackStartInfo);
             }
-
-            Process.Start(startInfo);
 
             return new AppUpdateInstallResult
             {
                 Success = true,
                 Message = silentInstall
-                    ? $"Silent installer launched successfully ({installerFileName})."
-                    : $"Installer launched successfully ({installerFileName}).",
+                    ? $"Silent installer scheduled successfully ({installerFileName})."
+                    : $"Installer scheduled successfully ({installerFileName}).",
                 InstallerPath = installerPath
             };
         }
@@ -312,6 +319,61 @@ public sealed class AppUpdateService : IAppUpdateService
                 InstallerPath = installerPath
             };
         }
+    }
+
+    private static bool TryScheduleInstallerAfterCurrentProcessExit(
+        string installerPath,
+        string installerArguments,
+        out string errorMessage)
+    {
+        errorMessage = string.Empty;
+
+        try
+        {
+            var currentPid = Environment.ProcessId;
+            var script = BuildDeferredInstallerScript(currentPid, installerPath, installerArguments);
+            var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+
+            var launcherStartInfo = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand {encodedScript}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory
+            };
+
+            Process.Start(launcherStartInfo);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            return false;
+        }
+    }
+
+    private static string BuildDeferredInstallerScript(
+        int processId,
+        string installerPath,
+        string installerArguments)
+    {
+        var escapedPath = EscapePowerShellSingleQuoted(installerPath);
+        var escapedArgs = EscapePowerShellSingleQuoted(installerArguments);
+
+        return string.Join(
+            "; ",
+            $"$pidToWait = {processId}",
+            $"$installerPath = '{escapedPath}'",
+            $"$installerArgs = '{escapedArgs}'",
+            "while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }",
+            "Start-Sleep -Milliseconds 200",
+            "if ([string]::IsNullOrWhiteSpace($installerArgs)) { Start-Process -FilePath $installerPath | Out-Null } else { Start-Process -FilePath $installerPath -ArgumentList $installerArgs | Out-Null }");
+    }
+
+    private static string EscapePowerShellSingleQuoted(string value)
+    {
+        return value.Replace("'", "''", StringComparison.Ordinal);
     }
 
     private async Task<AppUpdateInfo?> TryCheckWithGhCliAsync(
