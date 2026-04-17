@@ -2275,7 +2275,7 @@ public partial class MainViewModel : ObservableObject
 
     private bool CanPackage()
     {
-        return !IsBusy && IsConfigurationValid;
+        return !IsBusy;
     }
 
     private bool CanOpenOutputFolder()
@@ -2308,6 +2308,15 @@ public partial class MainViewModel : ObservableObject
         if (!CanPackage())
         {
             UpdateValidation();
+            return;
+        }
+
+        if (!IsConfigurationValid)
+        {
+            UpdateValidation();
+            var blockingReason = ValidationErrors.FirstOrDefault() ?? NextStepHint;
+            SetStatus(OperationState.Error, T("Vm.Status.PackagingFailedTitle"), blockingReason);
+            AppendLog($"Packaging blocked: {blockingReason}");
             return;
         }
 

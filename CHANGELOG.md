@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.25] - 2026-04-17
+
+### Fixed
+- Improved Start Packaging behavior when configuration is incomplete: button click now shows a clear blocking reason in status/log instead of appearing to do nothing.
+- Start Packaging is now disabled only while busy, so users can always click once to get actionable feedback on missing fields.
+
 ## [1.1.24] - 2026-04-17
 
 ### Fixed
