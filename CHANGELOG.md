@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.31] - 2026-04-18
+
+### Added
+- Product Store: added optional GitHub Releases source.
+- Product Store: WinGet now discovers configured non-explicit sources (for example winget + msstore).
+- Product Store: added clear readiness states (Ready, Needs review, Blocked).
+- Store reliability: removed automatic EXE silent-switch auto-verification without evidence.
+- Added phase backlog document for Store scaling work.
+
 ## [1.1.30] - 2026-04-18
 
 ### Added
