@@ -109,10 +109,11 @@
     <sys:String x:Key="Ui.RecentPackages.Title">Recente Packages</sys:String>
     <sys:String x:Key="Ui.RecentPackages.Description">Meest recente lokale packaging-runs.</sys:String>
     <sys:String x:Key="Ui.Store.Title">Package Store (Catalogus)</sys:String>
-    <sys:String x:Key="Ui.Store.Description">Zoek in WinGet en Chocolatey om snel app-naam, buildversie, bron en packaging-hints te zien.</sys:String>
+    <sys:String x:Key="Ui.Store.Description">Zoek in WinGet, Chocolatey en GitHub Releases om snel app-naam, buildversie, bron en packaging-hints te zien.</sys:String>
     <sys:String x:Key="Ui.Store.SearchButton">Zoek in Store</sys:String>
     <sys:String x:Key="Ui.Store.SourceWinget">WinGet-bron</sys:String>
     <sys:String x:Key="Ui.Store.SourceChocolatey">Chocolatey-bron</sys:String>
+    <sys:String x:Key="Ui.Store.SourceGitHubReleases">GitHub Releases</sys:String>
     <sys:String x:Key="Ui.Store.Results">Resultaten</sys:String>
     <sys:String x:Key="Ui.Store.Details">Geselecteerde Package Details</sys:String>
     <sys:String x:Key="Ui.Store.SelectHint">Zoek en selecteer een package om details te tonen.</sys:String>
@@ -128,6 +129,9 @@
     <sys:String x:Key="Ui.Store.Badge.Verified">Geverifieerd profiel</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Likely">Waarschijnlijk klaar</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Manual">Handmatige controle</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.Ready">Klaar</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.NeedsReview">Controle nodig</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.Blocked">Geblokkeerd</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Upgrade">Upgrade vanaf</sys:String>
     <sys:String x:Key="Ui.Store.Badge.PreparedLocal">Lokaal voorbereid</sys:String>
     <sys:String x:Key="Ui.Store.Trust.HashMatched">Hash geverifieerd</sys:String>
@@ -208,7 +212,7 @@
     <sys:String x:Key="Vm.Update.InstallFailedFormat">Update-installatie mislukt: {0}</sys:String>
     <sys:String x:Key="Vm.Update.NotificationFormat">Update beschikbaar: {0} (jij zit op {1}).</sys:String>
     <sys:String x:Key="Vm.Store.Ready">Vul een packagenaam in (minimaal 2 tekens) en klik op Zoek in Store.</sys:String>
-    <sys:String x:Key="Vm.Store.SelectSource">Selecteer minimaal een bron (WinGet of Chocolatey).</sys:String>
+    <sys:String x:Key="Vm.Store.SelectSource">Selecteer minimaal een bron (WinGet, Chocolatey of GitHub Releases).</sys:String>
     <sys:String x:Key="Vm.Store.QueryTooShort">Zoekterm moet minimaal 2 tekens zijn.</sys:String>
     <sys:String x:Key="Vm.Store.Searching">Package-catalogus wordt doorzocht...</sys:String>
     <sys:String x:Key="Vm.Store.NoResults">Geen catalogusresultaten gevonden voor '{0}'.</sys:String>

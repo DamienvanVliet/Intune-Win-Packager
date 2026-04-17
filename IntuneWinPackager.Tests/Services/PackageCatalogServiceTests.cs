@@ -114,6 +114,148 @@ public sealed class PackageCatalogServiceTests
         }
     }
 
+    [Fact]
+    public async Task SearchAsync_GitHubReleasesSource_ReturnsReleaseInstallerEntry()
+    {
+        var processRunner = new StubProcessRunner([]);
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.Contains("/search/repositories", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "items": [
+                        {
+                          "name": "contoso-app",
+                          "full_name": "contoso/contoso-app",
+                          "description": "Contoso desktop app",
+                          "html_url": "https://github.com/contoso/contoso-app",
+                          "owner": {
+                            "login": "contoso",
+                            "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4"
+                          }
+                        }
+                      ]
+                    }
+                    """)
+                };
+            }
+
+            if (url.Contains("/repos/contoso/contoso-app/releases/latest", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "tag_name": "v2.5.0",
+                      "name": "v2.5.0",
+                      "published_at": "2026-04-01T10:00:00Z",
+                      "assets": [
+                        {
+                          "name": "ContosoApp-x64.msi",
+                          "browser_download_url": "https://github.com/contoso/contoso-app/releases/download/v2.5.0/ContosoApp-x64.msi",
+                          "content_type": "application/x-msi",
+                          "size": 424242
+                        }
+                      ]
+                    }
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = "contoso",
+            IncludeWinget = false,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = true
+        });
+
+        var entry = Assert.Single(results);
+        Assert.Equal(PackageCatalogSource.GitHubReleases, entry.Source);
+        Assert.Equal("contoso/contoso-app", entry.PackageId);
+        Assert.Equal("contoso/contoso-app", entry.SourceChannel);
+        Assert.Equal("2.5.0", entry.Version);
+        Assert.Equal(InstallerType.Msi, entry.InstallerType);
+        Assert.Contains(".msi", entry.InstallerDownloadUrl, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SearchAsync_WingetSourceList_UsesConfiguredNonExplicitSources()
+    {
+        var processRunner = new RoutingProcessRunner(request =>
+        {
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("source list", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name        Argument                                      Explicit",
+                    "------------------------------------------------------------------",
+                    "msstore     https://storeedgefd.dsx.mp.microsoft.com/v9.0  false",
+                    "winget      https://cdn.winget.microsoft.com/cache        false",
+                    "winget-font https://cdn.winget.microsoft.com/fonts        true"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("search ", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.Contains("--source winget", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name      Id                         Version Match",
+                    "----------------------------------------------------",
+                    "App One   Vendor.AppOne              1.0.0   Tag"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("search ", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.Contains("--source msstore", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name       Id                         Version Match",
+                    "----------------------------------------------------",
+                    "Store App  Vendor.StoreApp            4.2.0   Tag"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("show ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(1, []);
+            }
+
+            return new StubProcessResult(1, []);
+        });
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.NotFound)));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = "app",
+            IncludeWinget = true,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = false
+        });
+
+        Assert.NotEmpty(results);
+        Assert.Contains(results, entry => entry.Source == PackageCatalogSource.Winget && entry.SourceChannel.Equals("winget", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(results, entry => entry.Source == PackageCatalogSource.Winget && entry.SourceChannel.Equals("msstore", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(results, entry => entry.Source == PackageCatalogSource.Winget && entry.SourceChannel.Equals("winget-font", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static void TryDeleteDirectory(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
@@ -136,6 +278,7 @@ public sealed class PackageCatalogServiceTests
     private sealed class StubProcessRunner : IProcessRunner
     {
         private readonly Queue<StubProcessResult> _results;
+        private readonly object _gate = new();
 
         public StubProcessRunner(IEnumerable<StubProcessResult> results)
         {
@@ -147,12 +290,50 @@ public sealed class PackageCatalogServiceTests
             IProgress<ProcessOutputLine>? outputProgress = null,
             CancellationToken cancellationToken = default)
         {
-            if (_results.Count == 0)
+            StubProcessResult result;
+            lock (_gate)
             {
-                throw new InvalidOperationException("No stubbed process result is available.");
+                if (_results.Count == 0)
+                {
+                    throw new InvalidOperationException("No stubbed process result is available.");
+                }
+
+                result = _results.Dequeue();
             }
 
-            var result = _results.Dequeue();
+            foreach (var line in result.Lines)
+            {
+                outputProgress?.Report(new ProcessOutputLine
+                {
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    Severity = LogSeverity.Info,
+                    Text = line
+                });
+            }
+
+            return Task.FromResult(new ProcessRunResult
+            {
+                ExitCode = result.ExitCode,
+                TimedOut = false
+            });
+        }
+    }
+
+    private sealed class RoutingProcessRunner : IProcessRunner
+    {
+        private readonly Func<ProcessRunRequest, StubProcessResult> _resolver;
+
+        public RoutingProcessRunner(Func<ProcessRunRequest, StubProcessResult> resolver)
+        {
+            _resolver = resolver;
+        }
+
+        public Task<ProcessRunResult> RunAsync(
+            ProcessRunRequest request,
+            IProgress<ProcessOutputLine>? outputProgress = null,
+            CancellationToken cancellationToken = default)
+        {
+            var result = _resolver(request);
             foreach (var line in result.Lines)
             {
                 outputProgress?.Report(new ProcessOutputLine

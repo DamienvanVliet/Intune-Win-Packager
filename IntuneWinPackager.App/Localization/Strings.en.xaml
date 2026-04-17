@@ -109,10 +109,11 @@
     <sys:String x:Key="Ui.RecentPackages.Title">Recent Packages</sys:String>
     <sys:String x:Key="Ui.RecentPackages.Description">Most recent local packaging runs.</sys:String>
     <sys:String x:Key="Ui.Store.Title">Package Store (Catalog)</sys:String>
-    <sys:String x:Key="Ui.Store.Description">Search WinGet and Chocolatey to quickly see app name, build version, source, and ready-to-review packaging hints.</sys:String>
+    <sys:String x:Key="Ui.Store.Description">Search WinGet, Chocolatey, and GitHub Releases to quickly see app name, build version, source, and ready-to-review packaging hints.</sys:String>
     <sys:String x:Key="Ui.Store.SearchButton">Search Store</sys:String>
     <sys:String x:Key="Ui.Store.SourceWinget">WinGet Source</sys:String>
     <sys:String x:Key="Ui.Store.SourceChocolatey">Chocolatey Source</sys:String>
+    <sys:String x:Key="Ui.Store.SourceGitHubReleases">GitHub Releases</sys:String>
     <sys:String x:Key="Ui.Store.Results">Results</sys:String>
     <sys:String x:Key="Ui.Store.Details">Selected Package Details</sys:String>
     <sys:String x:Key="Ui.Store.SelectHint">Search and select a package to show details.</sys:String>
@@ -128,6 +129,9 @@
     <sys:String x:Key="Ui.Store.Badge.Verified">Verified profile</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Likely">Likely ready</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Manual">Manual review</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.Ready">Ready</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.NeedsReview">Needs review</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.Blocked">Blocked</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Upgrade">Upgrade from</sys:String>
     <sys:String x:Key="Ui.Store.Badge.PreparedLocal">Prepared locally</sys:String>
     <sys:String x:Key="Ui.Store.Trust.HashMatched">Hash matched</sys:String>
@@ -208,7 +212,7 @@
     <sys:String x:Key="Vm.Update.InstallFailedFormat">Update install failed: {0}</sys:String>
     <sys:String x:Key="Vm.Update.NotificationFormat">Update available: {0} (you are on {1}).</sys:String>
     <sys:String x:Key="Vm.Store.Ready">Enter a package name (minimum 2 characters) and click Search Store.</sys:String>
-    <sys:String x:Key="Vm.Store.SelectSource">Select at least one source (WinGet or Chocolatey).</sys:String>
+    <sys:String x:Key="Vm.Store.SelectSource">Select at least one source (WinGet, Chocolatey, or GitHub Releases).</sys:String>
     <sys:String x:Key="Vm.Store.QueryTooShort">Search query must be at least 2 characters.</sys:String>
     <sys:String x:Key="Vm.Store.Searching">Searching package catalog...</sys:String>
     <sys:String x:Key="Vm.Store.NoResults">No catalog results found for '{0}'.</sys:String>

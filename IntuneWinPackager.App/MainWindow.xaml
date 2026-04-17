@@ -1151,7 +1151,10 @@
                                                   IsChecked="{Binding IncludeWingetCatalogSource}"
                                                   Margin="0,0,12,0" />
                                         <CheckBox Content="{DynamicResource Ui.Store.SourceChocolatey}"
-                                                  IsChecked="{Binding IncludeChocolateyCatalogSource}" />
+                                                  IsChecked="{Binding IncludeChocolateyCatalogSource}"
+                                                  Margin="0,0,12,0" />
+                                        <CheckBox Content="{DynamicResource Ui.Store.SourceGitHubReleases}"
+                                                  IsChecked="{Binding IncludeGitHubCatalogSource}" />
                                     </WrapPanel>
 
                                     <TextBlock Text="{Binding PackageCatalogStatus}"
@@ -1222,7 +1225,7 @@
                                                                         CornerRadius="8"
                                                                         Padding="6,2"
                                                                         Margin="0,0,6,0">
-                                                                    <TextBlock Text="{Binding ConfidenceBadgeText}"
+                                                                    <TextBlock Text="{Binding ReadinessBadgeText}"
                                                                                Style="{StaticResource BodyTextStyle}"
                                                                                FontSize="10"
                                                                                FontWeight="SemiBold" />
@@ -1376,7 +1379,7 @@
                                                     CornerRadius="8"
                                                     Padding="8,3"
                                                     Margin="0,0,6,6">
-                                                <TextBlock Text="{Binding CatalogEntryDetails.ConfidenceBadgeText, TargetNullValue='Manual review'}"
+                                                <TextBlock Text="{Binding CatalogEntryDetails.ReadinessBadgeText, TargetNullValue='Needs review'}"
                                                            Style="{StaticResource BodyTextStyle}"
                                                            FontSize="11"
                                                            FontWeight="SemiBold" />

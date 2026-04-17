@@ -9,4 +9,6 @@ public sealed record PackageCatalogQuery
     public bool IncludeWinget { get; init; } = true;
 
     public bool IncludeChocolatey { get; init; } = true;
+
+    public bool IncludeGitHubReleases { get; init; }
 }

@@ -11,6 +11,7 @@ public interface IPackageProfileStoreService
 
     Task PromoteProfileAsync(
         PackageCatalogSource source,
+        string sourceChannel,
         string packageId,
         string version,
         string installerSha256,

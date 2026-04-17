@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using IntuneWinPackager.Core.Interfaces;
@@ -18,6 +19,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
 {
     private static readonly Regex MultiSpaceRegex = new(@"\s{2,}", RegexOptions.Compiled);
     private static readonly Regex UrlRegex = new(@"https?://[^\s'""`]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex GitHubRepoIdRegex = new(@"^(?<owner>[A-Za-z0-9_.-]+)/(?<repo>[A-Za-z0-9_.-]+)$", RegexOptions.Compiled);
     private static readonly string[] SupportedInstallerExtensions =
     [
         ".msi",
@@ -42,6 +44,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("IntuneWinPackager/1.0");
         _httpClient.DefaultRequestHeaders.Accept.Clear();
+        _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/atom+xml"));
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/xml"));
     }
@@ -50,13 +53,17 @@ public sealed class PackageCatalogService : IPackageCatalogService
     {
         query ??= new PackageCatalogQuery();
         var term = query.SearchTerm?.Trim() ?? string.Empty;
-        if (term.Length < 2 || (!query.IncludeWinget && !query.IncludeChocolatey))
+        if (term.Length < 2 || (!query.IncludeWinget && !query.IncludeChocolatey && !query.IncludeGitHubReleases))
         {
             return [];
         }
 
         var max = Math.Clamp(query.MaxResults, 1, 50);
-        var perSource = query.IncludeWinget && query.IncludeChocolatey ? Math.Max(6, max) : max;
+        var enabledSourceCount =
+            (query.IncludeWinget ? 1 : 0) +
+            (query.IncludeChocolatey ? 1 : 0) +
+            (query.IncludeGitHubReleases ? 1 : 0);
+        var perSource = enabledSourceCount > 1 ? Math.Max(6, max) : max;
 
         var wingetTask = query.IncludeWinget
             ? SearchWingetAsync(term, perSource, cancellationToken)
@@ -64,12 +71,16 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var chocolateyTask = query.IncludeChocolatey
             ? SearchChocolateyAsync(term, perSource, cancellationToken)
             : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
+        var githubTask = query.IncludeGitHubReleases
+            ? SearchGitHubReleasesAsync(term, perSource, cancellationToken)
+            : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
 
-        await Task.WhenAll(wingetTask, chocolateyTask);
+        await Task.WhenAll(wingetTask, chocolateyTask, githubTask);
 
         return wingetTask.Result
             .Concat(chocolateyTask.Result)
-            .GroupBy(entry => $"{entry.Source}:{entry.PackageId}", StringComparer.OrdinalIgnoreCase)
+            .Concat(githubTask.Result)
+            .GroupBy(entry => $"{entry.Source}:{entry.SourceChannel}:{entry.PackageId}", StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .OrderByDescending(entry => Relevance(entry, term))
             .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
@@ -90,6 +101,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
             {
                 PackageCatalogSource.Winget => await GetWingetDetailsAsync(entry, cancellationToken),
                 PackageCatalogSource.Chocolatey => await GetChocolateyDetailsAsync(entry, cancellationToken),
+                PackageCatalogSource.GitHubReleases => await GetGitHubReleaseDetailsAsync(entry, cancellationToken),
                 _ => entry
             };
         }
@@ -126,6 +138,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
             {
                 PackageCatalogSource.Winget => await DownloadWingetInstallerAsync(entry, workingFolder, progress, cancellationToken),
                 PackageCatalogSource.Chocolatey => await DownloadChocolateyInstallerAsync(entry, workingFolder, progress, cancellationToken),
+                PackageCatalogSource.GitHubReleases => await DownloadGitHubReleaseInstallerAsync(entry, workingFolder, progress, cancellationToken),
                 _ => new PackageCatalogDownloadResult
                 {
                     Success = false,
@@ -223,9 +236,50 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
     private async Task<IReadOnlyList<PackageCatalogEntry>> SearchWingetAsync(string term, int limit, CancellationToken cancellationToken)
     {
+        var sources = await GetWingetSearchSourcesAsync(cancellationToken);
+        if (sources.Count == 0)
+        {
+            return [];
+        }
+
+        var perSourceLimit = Math.Clamp(limit + 4, 1, 1000);
+        var searchTasks = sources
+            .Select(source => SearchWingetSourceAsync(term, source.Name, perSourceLimit, cancellationToken))
+            .ToArray();
+        await Task.WhenAll(searchTasks);
+
+        var entries = searchTasks
+            .SelectMany(task => task.Result)
+            .ToList();
+        if (entries.Count == 0)
+        {
+            return [];
+        }
+
+        var ordered = entries
+            .OrderByDescending(entry => Relevance(entry, term))
+            .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Clamp(limit * 2, limit, 90))
+            .ToList();
+
+        var enrichCount = Math.Min(ordered.Count, 6);
+        for (var i = 0; i < enrichCount; i++)
+        {
+            ordered[i] = await GetWingetDetailsAsync(ordered[i], cancellationToken);
+        }
+
+        return ordered;
+    }
+
+    private async Task<IReadOnlyList<PackageCatalogEntry>> SearchWingetSourceAsync(
+        string term,
+        string sourceName,
+        int limit,
+        CancellationToken cancellationToken)
+    {
         var (exitCode, lines) = await RunProcessCaptureAsync(
             "winget",
-            $"search --query {QuoteArgument(term)} --count {Math.Clamp(limit, 1, 1000)} --source winget --accept-source-agreements --disable-interactivity",
+            $"search --query {QuoteArgument(term)} --count {Math.Clamp(limit, 1, 1000)} --source {QuoteArgument(sourceName)} --accept-source-agreements --disable-interactivity",
             cancellationToken);
         if (exitCode != 0 || lines.Count == 0)
         {
@@ -233,34 +287,39 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
 
         var rows = ParseWingetRows(lines);
-        var entries = rows.Select(row => new PackageCatalogEntry
+        if (rows.Count == 0)
+        {
+            return [];
+        }
+
+        var displayName = sourceName.Equals("winget", StringComparison.OrdinalIgnoreCase)
+            ? "WinGet"
+            : $"WinGet ({sourceName})";
+
+        return rows.Select(row => new PackageCatalogEntry
         {
             Source = PackageCatalogSource.Winget,
-            SourceDisplayName = "WinGet",
+            SourceDisplayName = displayName,
+            SourceChannel = sourceName,
             PackageId = row.Id,
             Name = row.Name,
             Version = row.Version,
             BuildVersion = row.Version,
             Description = row.Match,
             IconUrl = ResolveIconUrl(null, null, row.Id),
-            MetadataNotes = "Basic result from WinGet search.",
+            MetadataNotes = $"Basic result from WinGet source '{sourceName}'.",
             ConfidenceScore = 25
         }).ToList();
-
-        var enrichCount = Math.Min(entries.Count, 4);
-        for (var i = 0; i < enrichCount; i++)
-        {
-            entries[i] = await GetWingetDetailsAsync(entries[i], cancellationToken);
-        }
-
-        return entries;
     }
 
     private async Task<PackageCatalogEntry> GetWingetDetailsAsync(PackageCatalogEntry entry, CancellationToken cancellationToken)
     {
+        var sourceName = string.IsNullOrWhiteSpace(entry.SourceChannel)
+            ? "winget"
+            : entry.SourceChannel;
         var (exitCode, lines) = await RunProcessCaptureAsync(
             "winget",
-            $"show --id {QuoteArgument(entry.PackageId)} --exact --source winget --accept-source-agreements --disable-interactivity --locale en-US",
+            $"show --id {QuoteArgument(entry.PackageId)} --exact --source {QuoteArgument(sourceName)} --accept-source-agreements --disable-interactivity --locale en-US",
             cancellationToken);
         if (exitCode != 0 || lines.Count == 0)
         {
@@ -327,7 +386,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
             DetectionGuidance = template.DetectionGuidance,
             ConfidenceScore = template.ConfidenceScore,
             MetadataNotes = string.IsNullOrWhiteSpace(map.GetValueOrDefault("Installer Url"))
-                ? "Detailed metadata from WinGet."
+                ? $"Detailed metadata from WinGet source '{sourceName}'."
                 : $"Installer URL: {map["Installer Url"]}",
             PublishedAtUtc = releaseDate,
             HasDetailedMetadata = true
@@ -415,6 +474,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
             {
                 Source = PackageCatalogSource.Chocolatey,
                 SourceDisplayName = "Chocolatey",
+                SourceChannel = "community",
                 PackageId = id,
                 Name = name,
                 Version = version,
@@ -438,14 +498,204 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return parsed;
     }
 
+    private async Task<IReadOnlyList<PackageCatalogEntry>> SearchGitHubReleasesAsync(string term, int limit, CancellationToken cancellationToken)
+    {
+        var query = $"{term} in:name,description,readme archived:false";
+        var url =
+            $"https://api.github.com/search/repositories?q={Uri.EscapeDataString(query)}&sort=stars&order=desc&per_page={Math.Clamp(limit * 2, 8, 30)}";
+
+        using var request = CreateGitHubRequest(HttpMethod.Get, url);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return [];
+        }
+
+        await using var payload = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var json = await JsonDocument.ParseAsync(payload, cancellationToken: cancellationToken);
+        if (!json.RootElement.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var entries = new List<PackageCatalogEntry>();
+        foreach (var repo in items.EnumerateArray())
+        {
+            if (entries.Count >= limit)
+            {
+                break;
+            }
+
+            var owner = repo.TryGetProperty("owner", out var ownerElement)
+                ? GetJsonStringOrDefault(ownerElement, "login")
+                : string.Empty;
+            var repoName = GetJsonStringOrDefault(repo, "name");
+            var fullName = GetJsonStringOrDefault(repo, "full_name");
+            if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repoName) || string.IsNullOrWhiteSpace(fullName))
+            {
+                continue;
+            }
+
+            GitHubReleaseInfo? release;
+            try
+            {
+                release = await TryGetLatestGitHubReleaseAsync(owner, repoName, cancellationToken);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (release is null)
+            {
+                continue;
+            }
+
+            var asset = SelectPreferredGitHubAsset(release.Assets);
+            if (asset is null)
+            {
+                continue;
+            }
+
+            var installerType = InferInstallerType(Path.GetExtension(asset.FileName), asset.ContentType);
+            var template = BuildTemplate(fullName, installerType, Path.GetExtension(asset.FileName));
+            entries.Add(new PackageCatalogEntry
+            {
+                Source = PackageCatalogSource.GitHubReleases,
+                SourceDisplayName = "GitHub Releases",
+                SourceChannel = fullName,
+                PackageId = fullName,
+                Name = Coalesce(GetJsonStringOrDefault(repo, "name"), fullName),
+                Version = NormalizeGitHubTagVersion(release.TagName),
+                BuildVersion = NormalizeGitHubTagVersion(release.TagName),
+                Publisher = owner,
+                Description = Truncate(Coalesce(GetJsonStringOrDefault(repo, "description"), release.ReleaseName), 260),
+                HomepageUrl = Coalesce(GetJsonStringOrDefault(repo, "html_url"), $"https://github.com/{fullName}"),
+                IconUrl = Coalesce(repo.TryGetProperty("owner", out var ownerObject)
+                    ? GetJsonStringOrDefault(ownerObject, "avatar_url")
+                    : string.Empty),
+                InstallerDownloadUrl = asset.DownloadUrl,
+                InstallerType = installerType,
+                InstallerTypeRaw = Path.GetExtension(asset.FileName),
+                SuggestedInstallCommand = template.InstallCommand,
+                SuggestedUninstallCommand = template.UninstallCommand,
+                DetectionGuidance = template.DetectionGuidance,
+                MetadataNotes = $"GitHub release asset: {asset.FileName}",
+                ConfidenceScore = Math.Max(52, template.ConfidenceScore - 18),
+                HasDetailedMetadata = true,
+                PublishedAtUtc = release.PublishedAtUtc
+            });
+        }
+
+        return entries;
+    }
+
+    private async Task<PackageCatalogEntry> GetGitHubReleaseDetailsAsync(PackageCatalogEntry entry, CancellationToken cancellationToken)
+    {
+        if (!TryParseGitHubOwnerRepo(entry, out var owner, out var repo))
+        {
+            return entry;
+        }
+
+        GitHubReleaseInfo? release;
+        try
+        {
+            release = await TryGetLatestGitHubReleaseAsync(owner, repo, cancellationToken);
+        }
+        catch
+        {
+            return entry;
+        }
+
+        if (release is null)
+        {
+            return entry;
+        }
+
+        var asset = SelectPreferredGitHubAsset(release.Assets);
+        if (asset is null)
+        {
+            return entry;
+        }
+
+        var installerType = InferInstallerType(Path.GetExtension(asset.FileName), asset.ContentType);
+        var template = BuildTemplate(entry.PackageId, installerType, Path.GetExtension(asset.FileName));
+
+        return entry with
+        {
+            SourceDisplayName = "GitHub Releases",
+            SourceChannel = $"{owner}/{repo}",
+            Version = NormalizeGitHubTagVersion(release.TagName),
+            BuildVersion = NormalizeGitHubTagVersion(release.TagName),
+            Description = Truncate(Coalesce(entry.Description, release.ReleaseName), 260),
+            InstallerDownloadUrl = asset.DownloadUrl,
+            InstallerType = installerType,
+            InstallerTypeRaw = Path.GetExtension(asset.FileName),
+            SuggestedInstallCommand = template.InstallCommand,
+            SuggestedUninstallCommand = template.UninstallCommand,
+            DetectionGuidance = template.DetectionGuidance,
+            MetadataNotes = $"Latest GitHub release asset: {asset.FileName}",
+            ConfidenceScore = Math.Max(entry.ConfidenceScore, Math.Max(56, template.ConfidenceScore - 16)),
+            HasDetailedMetadata = true,
+            PublishedAtUtc = release.PublishedAtUtc
+        };
+    }
+
+    private async Task<PackageCatalogDownloadResult> DownloadGitHubReleaseInstallerAsync(
+        PackageCatalogEntry entry,
+        string workingFolder,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var details = entry;
+        if (string.IsNullOrWhiteSpace(details.InstallerDownloadUrl))
+        {
+            details = await GetGitHubReleaseDetailsAsync(entry, cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(details.InstallerDownloadUrl))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = "No downloadable GitHub release asset was available for this package.",
+                WorkingFolderPath = workingFolder
+            };
+        }
+
+        var fileName = BuildDownloadFileNameFromUrl(details.InstallerDownloadUrl, entry.PackageId, details.Version);
+        var targetPath = Path.Combine(workingFolder, fileName);
+
+        await DownloadFileAsync(details.InstallerDownloadUrl, targetPath, progress, cancellationToken);
+        var resolvedInstaller = await ResolveDownloadedInstallerPathAsync(targetPath, workingFolder, progress, cancellationToken);
+        if (string.IsNullOrWhiteSpace(resolvedInstaller))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = "Downloaded GitHub release asset did not contain a supported installer file.",
+                WorkingFolderPath = workingFolder
+            };
+        }
+
+        return BuildSuccessfulDownloadResult(
+            resolvedInstaller,
+            Path.GetDirectoryName(resolvedInstaller) ?? workingFolder,
+            "Downloaded installer from GitHub release asset.",
+            hashVerifiedBySource: false);
+    }
+
     private async Task<PackageCatalogDownloadResult> DownloadWingetInstallerAsync(
         PackageCatalogEntry entry,
         string workingFolder,
         IProgress<string>? progress,
         CancellationToken cancellationToken)
     {
+        var sourceName = string.IsNullOrWhiteSpace(entry.SourceChannel)
+            ? "winget"
+            : entry.SourceChannel;
         var downloadArguments =
-            $"download --id {QuoteArgument(entry.PackageId)} --exact --source winget --accept-source-agreements --download-directory {QuoteArgument(workingFolder)} --disable-interactivity";
+            $"download --id {QuoteArgument(entry.PackageId)} --exact --source {QuoteArgument(sourceName)} --accept-source-agreements --download-directory {QuoteArgument(workingFolder)} --disable-interactivity";
         var (downloadExitCode, downloadLines) = await RunProcessCaptureAsync("winget", downloadArguments, cancellationToken);
         foreach (var line in downloadLines.TakeLast(8))
         {
@@ -842,6 +1092,32 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return (result.ExitCode, lines.ToArray());
     }
 
+    private async Task<IReadOnlyList<WingetSourceInfo>> GetWingetSearchSourcesAsync(CancellationToken cancellationToken)
+    {
+        var (exitCode, lines) = await RunProcessCaptureAsync(
+            "winget",
+            "source list --disable-interactivity",
+            cancellationToken);
+        if (exitCode != 0 || lines.Count == 0)
+        {
+            return [new WingetSourceInfo("winget", false)];
+        }
+
+        var parsed = ParseWingetSourceRows(lines)
+            .Where(source => !source.IsExplicit)
+            .Where(source => !string.IsNullOrWhiteSpace(source.Name))
+            .GroupBy(source => source.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+
+        if (!parsed.Any(source => source.Name.Equals("winget", StringComparison.OrdinalIgnoreCase)))
+        {
+            parsed.Insert(0, new WingetSourceInfo("winget", false));
+        }
+
+        return parsed;
+    }
+
     private static IReadOnlyList<(string Name, string Id, string Version, string Match)> ParseWingetRows(IReadOnlyList<string> lines)
     {
         var rows = new List<(string Name, string Id, string Version, string Match)>();
@@ -874,6 +1150,191 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
 
         return rows;
+    }
+
+    private static IReadOnlyList<WingetSourceInfo> ParseWingetSourceRows(IReadOnlyList<string> lines)
+    {
+        var rows = new List<WingetSourceInfo>();
+        var inTable = false;
+
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            if (!inTable &&
+                line.Contains("Name", StringComparison.OrdinalIgnoreCase) &&
+                line.Contains("Argument", StringComparison.OrdinalIgnoreCase) &&
+                line.Contains("Explicit", StringComparison.OrdinalIgnoreCase))
+            {
+                inTable = true;
+                continue;
+            }
+
+            if (!inTable || line.All(character => character is '-' or ' '))
+            {
+                continue;
+            }
+
+            var cols = MultiSpaceRegex.Split(line).Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+            if (cols.Length < 3)
+            {
+                continue;
+            }
+
+            var name = cols[0].Trim();
+            var explicitRaw = cols[^1].Trim();
+            var isExplicit = explicitRaw.Equals("true", StringComparison.OrdinalIgnoreCase);
+            rows.Add(new WingetSourceInfo(name, isExplicit));
+        }
+
+        return rows;
+    }
+
+    private async Task<GitHubReleaseInfo?> TryGetLatestGitHubReleaseAsync(string owner, string repo, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
+        {
+            return null;
+        }
+
+        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/releases/latest";
+        using var request = CreateGitHubRequest(HttpMethod.Get, url);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        await using var payload = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var json = await JsonDocument.ParseAsync(payload, cancellationToken: cancellationToken);
+        var root = json.RootElement;
+
+        var tagName = GetJsonStringOrDefault(root, "tag_name");
+        var releaseName = GetJsonStringOrDefault(root, "name");
+        DateTimeOffset? publishedAtUtc = null;
+        if (DateTimeOffset.TryParse(
+                GetJsonStringOrDefault(root, "published_at"),
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal,
+                out var published))
+        {
+            publishedAtUtc = published.ToUniversalTime();
+        }
+
+        var assets = new List<GitHubAssetInfo>();
+        if (root.TryGetProperty("assets", out var assetArray) && assetArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var asset in assetArray.EnumerateArray())
+            {
+                var fileName = GetJsonStringOrDefault(asset, "name");
+                var urlValue = GetJsonStringOrDefault(asset, "browser_download_url");
+                if (string.IsNullOrWhiteSpace(fileName) || string.IsNullOrWhiteSpace(urlValue))
+                {
+                    continue;
+                }
+
+                assets.Add(new GitHubAssetInfo(
+                    fileName,
+                    urlValue,
+                    GetJsonStringOrDefault(asset, "content_type"),
+                    GetJsonInt32OrDefault(asset, "size")));
+            }
+        }
+
+        return new GitHubReleaseInfo(tagName, releaseName, publishedAtUtc, assets);
+    }
+
+    private static GitHubAssetInfo? SelectPreferredGitHubAsset(IEnumerable<GitHubAssetInfo> assets)
+    {
+        return assets
+            .Where(asset => !string.IsNullOrWhiteSpace(asset.DownloadUrl))
+            .Select(asset => new
+            {
+                Asset = asset,
+                Extension = Path.GetExtension(asset.FileName),
+                Priority = InstallerPriority(asset.FileName)
+            })
+            .Where(candidate =>
+                !string.IsNullOrWhiteSpace(candidate.Extension) &&
+                (IsSupportedInstallerFile(candidate.Asset.FileName) ||
+                 candidate.Extension.Equals(".zip", StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(candidate => candidate.Priority)
+            .ThenByDescending(candidate => candidate.Asset.FileSize)
+            .Select(candidate => candidate.Asset)
+            .FirstOrDefault();
+    }
+
+    private static bool TryParseGitHubOwnerRepo(PackageCatalogEntry entry, out string owner, out string repo)
+    {
+        owner = string.Empty;
+        repo = string.Empty;
+
+        var candidates = new[]
+        {
+            entry.PackageId,
+            entry.SourceChannel
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            var match = GitHubRepoIdRegex.Match(candidate.Trim());
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            owner = match.Groups["owner"].Value;
+            repo = match.Groups["repo"].Value;
+            return true;
+        }
+
+        return false;
+    }
+
+    private HttpRequestMessage CreateGitHubRequest(HttpMethod method, string url)
+    {
+        var request = new HttpRequestMessage(method, url);
+        request.Headers.Accept.Clear();
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
+
+        var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
+        }
+
+        return request;
+    }
+
+    private static string NormalizeGitHubTagVersion(string tagName)
+    {
+        if (string.IsNullOrWhiteSpace(tagName))
+        {
+            return string.Empty;
+        }
+
+        var normalized = tagName.Trim();
+        if (normalized.StartsWith('v') || normalized.StartsWith('V'))
+        {
+            normalized = normalized[1..];
+        }
+
+        return normalized;
     }
 
     private static TemplateSuggestion BuildTemplate(string packageId, InstallerType installerType, string? raw)
@@ -933,6 +1394,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
         if (id.StartsWith(t, StringComparison.Ordinal)) score += 85;
         if (id.Contains(t, StringComparison.Ordinal)) score += 55;
         if (entry.Source == PackageCatalogSource.Winget) score += 5;
+        if (entry.Source == PackageCatalogSource.Chocolatey) score += 3;
+        if (entry.Source == PackageCatalogSource.GitHubReleases) score += 2;
         return score;
     }
 
@@ -1053,7 +1516,48 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return value[..(maxLength - 1)].TrimEnd() + "...";
     }
 
+    private static string GetJsonStringOrDefault(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return string.Empty;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.String => property.GetString()?.Trim() ?? string.Empty,
+            JsonValueKind.Number => property.ToString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => string.Empty
+        };
+    }
+
+    private static int GetJsonInt32OrDefault(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return 0;
+        }
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var value))
+        {
+            return value;
+        }
+
+        if (property.ValueKind == JsonValueKind.String &&
+            int.TryParse(property.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        return 0;
+    }
+
     private sealed record TemplateSuggestion(string InstallCommand, string UninstallCommand, string DetectionGuidance, int ConfidenceScore);
+    private sealed record WingetSourceInfo(string Name, bool IsExplicit);
+    private sealed record GitHubReleaseInfo(string TagName, string ReleaseName, DateTimeOffset? PublishedAtUtc, IReadOnlyList<GitHubAssetInfo> Assets);
+    private sealed record GitHubAssetInfo(string FileName, string DownloadUrl, string ContentType, int FileSize);
 
     private static string ComputeStableHash(string value)
     {

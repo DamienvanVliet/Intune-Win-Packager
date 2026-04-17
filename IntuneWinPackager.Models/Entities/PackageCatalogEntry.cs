@@ -8,6 +8,8 @@ public sealed record PackageCatalogEntry
 
     public string SourceDisplayName { get; init; } = string.Empty;
 
+    public string SourceChannel { get; init; } = string.Empty;
+
     public string PackageId { get; init; } = string.Empty;
 
     public string Name { get; init; } = string.Empty;
@@ -47,6 +49,10 @@ public sealed record PackageCatalogEntry
     public CatalogProfileConfidence ProfileConfidence { get; init; } = CatalogProfileConfidence.ManualReview;
 
     public string ConfidenceBadgeText { get; init; } = string.Empty;
+
+    public CatalogReadinessState ReadinessState { get; init; } = CatalogReadinessState.NeedsReview;
+
+    public string ReadinessBadgeText { get; init; } = string.Empty;
 
     public bool IsUpgradeAvailable { get; init; }
 

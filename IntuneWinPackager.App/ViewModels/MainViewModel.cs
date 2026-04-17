@@ -294,6 +294,9 @@ public partial class MainViewModel : ObservableObject
     private bool includeChocolateyCatalogSource = true;
 
     [ObservableProperty]
+    private bool includeGitHubCatalogSource;
+
+    [ObservableProperty]
     private bool isPackageCatalogBusy;
 
     [ObservableProperty]
@@ -1104,6 +1107,11 @@ public partial class MainViewModel : ObservableObject
     }
 
     partial void OnIncludeChocolateyCatalogSourceChanged(bool value)
+    {
+        SearchCatalogCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIncludeGitHubCatalogSourceChanged(bool value)
     {
         SearchCatalogCommand.NotifyCanExecuteChanged();
     }
@@ -2006,7 +2014,7 @@ public partial class MainViewModel : ObservableObject
     private bool CanSearchCatalog()
     {
         var hasQuery = !string.IsNullOrWhiteSpace(PackageCatalogSearchTerm) && PackageCatalogSearchTerm.Trim().Length >= 2;
-        var hasSource = IncludeWingetCatalogSource || IncludeChocolateyCatalogSource;
+        var hasSource = IncludeWingetCatalogSource || IncludeChocolateyCatalogSource || IncludeGitHubCatalogSource;
         return !IsBusy && !IsPackageCatalogBusy && hasQuery && hasSource;
     }
 
@@ -2037,7 +2045,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (!CanSearchCatalog())
         {
-            if (!IncludeWingetCatalogSource && !IncludeChocolateyCatalogSource)
+            if (!IncludeWingetCatalogSource && !IncludeChocolateyCatalogSource && !IncludeGitHubCatalogSource)
             {
                 PackageCatalogStatus = T("Vm.Store.SelectSource");
             }
@@ -2070,7 +2078,8 @@ public partial class MainViewModel : ObservableObject
                 SearchTerm = PackageCatalogSearchTerm.Trim(),
                 MaxResults = 24,
                 IncludeWinget = IncludeWingetCatalogSource,
-                IncludeChocolatey = IncludeChocolateyCatalogSource
+                IncludeChocolatey = IncludeChocolateyCatalogSource,
+                IncludeGitHubReleases = IncludeGitHubCatalogSource
             }, cancellationToken);
 
             foreach (var item in results)
@@ -2213,6 +2222,7 @@ public partial class MainViewModel : ObservableObject
             CatalogEntryDetails = refreshedEntry;
             _activeCatalogSelectionContext = new CatalogSelectionContext(
                 refreshedEntry.Source,
+                refreshedEntry.SourceChannel,
                 refreshedEntry.PackageId,
                 refreshedEntry.Version,
                 downloadResult.InstallerSha256,
@@ -2334,8 +2344,7 @@ public partial class MainViewModel : ObservableObject
                 !ContainsCatalogTemplatePlaceholder(InstallCommand) &&
                 !ContainsCatalogTemplatePlaceholder(UninstallCommand))
             {
-                SilentSwitchesVerified = true;
-                autoFixes.Add("Catalog automation marked EXE silent switches as verified.");
+                autoFixes.Add("Catalog automation prepared EXE commands. Silent switch verification still requires evidence (probe or manual validation).");
             }
         }
 
@@ -2428,6 +2437,7 @@ public partial class MainViewModel : ObservableObject
         var packageProfiles = _catalogProfiles
             .Where(profile =>
                 profile.Source == entry.Source &&
+                IsCatalogSourceChannelMatch(profile.SourceChannel, entry.SourceChannel) &&
                 profile.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
@@ -2449,6 +2459,13 @@ public partial class MainViewModel : ObservableObject
             CatalogProfileConfidence.Likely => T("Ui.Store.Badge.Likely"),
             _ => T("Ui.Store.Badge.Manual")
         };
+        var readiness = DetermineCatalogReadinessState(exactProfile);
+        var readinessText = readiness switch
+        {
+            CatalogReadinessState.Ready => T("Ui.Store.Readiness.Ready"),
+            CatalogReadinessState.Blocked => T("Ui.Store.Readiness.Blocked"),
+            _ => T("Ui.Store.Readiness.NeedsReview")
+        };
 
         var effectiveProfile = exactProfile ?? latestPreparedProfile;
         var isUpgradeAvailable = latestPreparedProfile is not null &&
@@ -2459,6 +2476,8 @@ public partial class MainViewModel : ObservableObject
         {
             ProfileConfidence = confidence,
             ConfidenceBadgeText = confidenceText,
+            ReadinessState = readiness,
+            ReadinessBadgeText = readinessText,
             IsUpgradeAvailable = isUpgradeAvailable,
             UpgradeFromVersion = isUpgradeAvailable ? latestPreparedProfile?.Version ?? string.Empty : string.Empty,
             HashVerifiedBySource = exactProfile?.HashVerifiedBySource ?? entry.HashVerifiedBySource,
@@ -2471,6 +2490,29 @@ public partial class MainViewModel : ObservableObject
             LastPreparedAtUtc = effectiveProfile?.LastPreparedAtUtc ?? entry.LastPreparedAtUtc,
             LastVerifiedAtUtc = effectiveProfile?.LastVerifiedAtUtc ?? entry.LastVerifiedAtUtc
         };
+    }
+
+    private static CatalogReadinessState DetermineCatalogReadinessState(CatalogPackageProfile? profile)
+    {
+        if (profile is null)
+        {
+            return CatalogReadinessState.NeedsReview;
+        }
+
+        var hasInstaller = !string.IsNullOrWhiteSpace(profile.InstallerPath) && File.Exists(profile.InstallerPath);
+        var detectionReady = profile.DetectionReady && profile.DetectionRuleType != IntuneDetectionRuleType.None;
+        var hasPlaceholders =
+            ContainsCatalogTemplatePlaceholder(profile.InstallCommand) ||
+            ContainsCatalogTemplatePlaceholder(profile.UninstallCommand);
+
+        if (!hasInstaller || !detectionReady || hasPlaceholders)
+        {
+            return CatalogReadinessState.Blocked;
+        }
+
+        return profile.Confidence == CatalogProfileConfidence.Verified
+            ? CatalogReadinessState.Ready
+            : CatalogReadinessState.NeedsReview;
     }
 
     private void RefreshCatalogEntriesFromProfiles()
@@ -2592,6 +2634,7 @@ public partial class MainViewModel : ObservableObject
         var profile = new CatalogPackageProfile
         {
             Source = entry.Source,
+            SourceChannel = entry.SourceChannel,
             PackageId = entry.PackageId,
             Name = entry.Name,
             Version = string.IsNullOrWhiteSpace(entry.Version) ? entry.BuildVersion : entry.Version,
@@ -2623,6 +2666,7 @@ public partial class MainViewModel : ObservableObject
         var profile = _catalogProfiles
             .Where(candidate =>
                 candidate.Source == entry.Source &&
+                IsCatalogSourceChannelMatch(candidate.SourceChannel, entry.SourceChannel) &&
                 candidate.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase) &&
                 IsCatalogVersionMatch(candidate.Version, entry.Version))
             .OrderByDescending(candidate => candidate.LastVerifiedAtUtc ?? DateTimeOffset.MinValue)
@@ -2667,6 +2711,7 @@ public partial class MainViewModel : ObservableObject
 
         _activeCatalogSelectionContext = new CatalogSelectionContext(
             profile.Source,
+            profile.SourceChannel,
             profile.PackageId,
             profile.Version,
             profile.InstallerSha256,
@@ -2686,6 +2731,7 @@ public partial class MainViewModel : ObservableObject
 
         await _packageProfileStoreService.PromoteProfileAsync(
             _activeCatalogSelectionContext.Source,
+            _activeCatalogSelectionContext.SourceChannel,
             _activeCatalogSelectionContext.PackageId,
             _activeCatalogSelectionContext.Version,
             _activeCatalogSelectionContext.InstallerSha256);
@@ -2698,6 +2744,16 @@ public partial class MainViewModel : ObservableObject
     {
         return NormalizeVersionForNotification(left)
             .Equals(NormalizeVersionForNotification(right), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCatalogSourceChannelMatch(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+        {
+            return true;
+        }
+
+        return left.Equals(right, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string CoalescePath(string? left, string right)
@@ -3806,6 +3862,7 @@ public partial class MainViewModel : ObservableObject
 
     private sealed record CatalogSelectionContext(
         PackageCatalogSource Source,
+        string SourceChannel,
         string PackageId,
         string Version,
         string InstallerSha256,

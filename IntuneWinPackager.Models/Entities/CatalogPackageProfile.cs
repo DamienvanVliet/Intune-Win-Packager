@@ -6,6 +6,8 @@ public sealed record CatalogPackageProfile
 {
     public PackageCatalogSource Source { get; init; } = PackageCatalogSource.Winget;
 
+    public string SourceChannel { get; init; } = string.Empty;
+
     public string PackageId { get; init; } = string.Empty;
 
     public string Name { get; init; } = string.Empty;

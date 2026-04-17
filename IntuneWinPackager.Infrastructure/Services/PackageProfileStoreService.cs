@@ -38,6 +38,7 @@ public sealed class PackageProfileStoreService : IPackageProfileStoreService
 
         var index = entries.FindIndex(existing =>
             existing.Source == profile.Source &&
+            IsSameSourceChannel(existing.SourceChannel, profile.SourceChannel) &&
             existing.PackageId.Equals(profile.PackageId, StringComparison.OrdinalIgnoreCase) &&
             existing.Version.Equals(profile.Version, StringComparison.OrdinalIgnoreCase));
 
@@ -68,6 +69,7 @@ public sealed class PackageProfileStoreService : IPackageProfileStoreService
 
     public async Task PromoteProfileAsync(
         PackageCatalogSource source,
+        string sourceChannel,
         string packageId,
         string version,
         string installerSha256,
@@ -84,6 +86,7 @@ public sealed class PackageProfileStoreService : IPackageProfileStoreService
 
         var index = entries.FindIndex(existing =>
             existing.Source == source &&
+            IsSameSourceChannel(existing.SourceChannel, sourceChannel) &&
             existing.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase) &&
             existing.Version.Equals(version, StringComparison.OrdinalIgnoreCase) &&
             (string.IsNullOrWhiteSpace(installerSha256) ||
@@ -121,6 +124,7 @@ public sealed class PackageProfileStoreService : IPackageProfileStoreService
         return existing with
         {
             Name = Coalesce(incoming.Name, existing.Name),
+            SourceChannel = Coalesce(incoming.SourceChannel, existing.SourceChannel),
             BuildVersion = Coalesce(incoming.BuildVersion, existing.BuildVersion),
             InstallerPath = Coalesce(incoming.InstallerPath, existing.InstallerPath),
             InstallerSha256 = Coalesce(incoming.InstallerSha256, existing.InstallerSha256),
@@ -150,6 +154,16 @@ public sealed class PackageProfileStoreService : IPackageProfileStoreService
     private static string Coalesce(string incoming, string fallback)
     {
         return string.IsNullOrWhiteSpace(incoming) ? fallback : incoming;
+    }
+
+    private static bool IsSameSourceChannel(string existing, string requested)
+    {
+        if (string.IsNullOrWhiteSpace(existing) || string.IsNullOrWhiteSpace(requested))
+        {
+            return true;
+        }
+
+        return existing.Equals(requested, StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record CatalogProfileSnapshot
