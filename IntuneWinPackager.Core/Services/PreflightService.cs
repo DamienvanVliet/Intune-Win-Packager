@@ -13,6 +13,7 @@ public sealed class PreflightService : IPreflightService
     private const int ToolProbeTimeoutSeconds = 8;
     private static readonly Regex ProductCodeRegex = new("^\\{[0-9A-Fa-f\\-]{36}\\}$", RegexOptions.Compiled);
     private static readonly Regex PlaceholderRegex = new("<[^>]+>", RegexOptions.Compiled);
+    private static readonly Regex AppxVersionCheckRegex = new(@"Version\s*\.ToString\(\)\s*-eq", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly HashSet<string> SupportedArchitectures = new(StringComparer.OrdinalIgnoreCase)
     {
         "x64",
@@ -34,6 +35,17 @@ public sealed class PreflightService : IPreflightService
         ".vbs",
         ".wsf"
     ];
+
+    private static readonly HashSet<string> GenericDetectionNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "setup.exe",
+        "installer.exe",
+        "install.exe",
+        "uninstall.exe",
+        "update.exe",
+        "updater.exe",
+        "app.exe"
+    };
 
     private readonly IProcessRunner _processRunner;
 
@@ -513,6 +525,26 @@ public sealed class PreflightService : IPreflightService
                         titleKey: "Core.Preflight.Title.FileDetection",
                         messageKey: "Core.Preflight.Message.FileDetectionValueRequired"));
                 }
+
+                if (IsGenericDetectionPath(detection.File.Path))
+                {
+                    checks.Add(Error(
+                        "detection-file-path-generic",
+                        "File Detection",
+                        "File detection path is too generic. Use a unique, vendor-specific install path.",
+                        titleKey: "Core.Preflight.Title.FileDetection",
+                        messageKey: "Core.Preflight.Message.FileDetectionPathTooGeneric"));
+                }
+
+                if (IsGenericDetectionName(detection.File.FileOrFolderName))
+                {
+                    checks.Add(Error(
+                        "detection-file-name-generic",
+                        "File Detection",
+                        "File detection name is too generic. Target a unique binary or folder.",
+                        titleKey: "Core.Preflight.Title.FileDetection",
+                        messageKey: "Core.Preflight.Message.FileDetectionNameTooGeneric"));
+                }
                 break;
 
             case IntuneDetectionRuleType.Registry:
@@ -552,6 +584,39 @@ public sealed class PreflightService : IPreflightService
                             messageKey: "Core.Preflight.Message.RegistryDetectionValueRequired"));
                     }
                 }
+
+                if (installerType == InstallerType.Exe)
+                {
+                    if (detection.Registry.Operator != IntuneDetectionOperator.Equals)
+                    {
+                        checks.Add(Error(
+                            "detection-registry-exe-operator",
+                            "Registry Detection",
+                            "For EXE detection, use Registry operator Equals with an exact value.",
+                            titleKey: "Core.Preflight.Title.RegistryDetection",
+                            messageKey: "Core.Preflight.Message.RegistryDetectionExeRequiresEquals"));
+                    }
+
+                    if (!detection.Registry.ValueName.Equals("DisplayVersion", StringComparison.OrdinalIgnoreCase))
+                    {
+                        checks.Add(Error(
+                            "detection-registry-exe-name",
+                            "Registry Detection",
+                            "For EXE detection, use Value Name 'DisplayVersion' to enforce exact version detection.",
+                            titleKey: "Core.Preflight.Title.RegistryDetection",
+                            messageKey: "Core.Preflight.Message.RegistryDetectionExeRequiresDisplayVersion"));
+                    }
+
+                    if (string.IsNullOrWhiteSpace(detection.Registry.Value))
+                    {
+                        checks.Add(Error(
+                            "detection-registry-exe-value",
+                            "Registry Detection",
+                            "For EXE detection, DisplayVersion value is required.",
+                            titleKey: "Core.Preflight.Title.RegistryDetection",
+                            messageKey: "Core.Preflight.Message.RegistryDetectionExeVersionRequired"));
+                    }
+                }
                 break;
 
             case IntuneDetectionRuleType.Script:
@@ -576,6 +641,27 @@ public sealed class PreflightService : IPreflightService
                 else
                 {
                     checks.Add(Pass("detection-script", "Script Detection", "Script detection content is configured."));
+                }
+
+                if (installerType != InstallerType.AppxMsix && installerType != InstallerType.Script)
+                {
+                    checks.Add(Error(
+                        "detection-script-last-resort",
+                        "Script Detection",
+                        "Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.",
+                        titleKey: "Core.Preflight.Title.ScriptDetection",
+                        messageKey: "Core.Preflight.Message.ScriptDetectionLastResortOnly"));
+                }
+
+                if (installerType == InstallerType.AppxMsix &&
+                    !IsAppxDetectionScriptPrecise(detection.Script.ScriptBody))
+                {
+                    checks.Add(Error(
+                        "detection-script-appx-precision",
+                        "Script Detection",
+                        "APPX/MSIX script detection must check exact package identity and version.",
+                        titleKey: "Core.Preflight.Title.ScriptDetection",
+                        messageKey: "Core.Preflight.Message.ScriptDetectionAppxMustCheckVersion"));
                 }
                 break;
         }
@@ -771,6 +857,43 @@ public sealed class PreflightService : IPreflightService
     private static bool ContainsPlaceholder(string value)
     {
         return PlaceholderRegex.IsMatch(value);
+    }
+
+    private static bool IsGenericDetectionPath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim().Replace('/', '\\');
+        return normalized.Equals(@"%ProgramFiles%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals(@"%ProgramFiles(x86)%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals(@"C:\Program Files", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals(@"C:\Program Files (x86)", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals(@"C:\Windows", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGenericDetectionName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return GenericDetectionNames.Contains(value.Trim());
+    }
+
+    private static bool IsAppxDetectionScriptPrecise(string? scriptBody)
+    {
+        if (string.IsNullOrWhiteSpace(scriptBody))
+        {
+            return false;
+        }
+
+        return scriptBody.Contains("Get-AppxPackage", StringComparison.OrdinalIgnoreCase) &&
+               scriptBody.Contains("-Name", StringComparison.OrdinalIgnoreCase) &&
+               AppxVersionCheckRegex.IsMatch(scriptBody);
     }
 
     private static string FormatBytes(long bytes)

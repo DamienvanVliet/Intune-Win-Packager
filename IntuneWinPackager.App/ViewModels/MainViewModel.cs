@@ -15,7 +15,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using IntuneWinPackager.App.Services;
 using IntuneWinPackager.Core.Interfaces;
-using IntuneWinPackager.Core.Services;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 
@@ -2342,11 +2341,9 @@ public partial class MainViewModel : ObservableObject
 
         if (DetectionRuleType == IntuneDetectionRuleType.None)
         {
-            DetectionRuleType = IntuneDetectionRuleType.Script;
-            DetectionScriptBody = BuildCatalogDetectionScript(entry);
-            DetectionScriptRunAs32BitOn64System = false;
-            DetectionScriptEnforceSignatureCheck = false;
-            autoFixes.Add("Catalog automation generated a detection script.");
+            autoFixes.Add(
+                "Catalog automation did not create a heuristic detection rule. " +
+                "Configure a deterministic MSI/Registry/File detection rule before packaging.");
         }
 
         UpdateValidation();
@@ -2356,11 +2353,6 @@ public partial class MainViewModel : ObservableObject
         {
             AppendLog(autoFix);
         }
-    }
-
-    private static string BuildCatalogDetectionScript(PackageCatalogEntry entry)
-    {
-        return CatalogPackageHeuristics.BuildDetectionScript(entry);
     }
 
     private static string BuildCatalogAdaptiveUninstallCommand(PackageCatalogEntry entry)
@@ -2384,7 +2376,35 @@ public partial class MainViewModel : ObservableObject
 
     private static List<string> BuildCatalogMatchPatterns(PackageCatalogEntry entry)
     {
-        return CatalogPackageHeuristics.BuildMatchPatterns(entry).ToList();
+        var patterns = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(entry.Name))
+        {
+            patterns.Add(entry.Name.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.PackageId))
+        {
+            patterns.Add(entry.PackageId.Trim());
+
+            var shortId = entry.PackageId
+                .Split(['.', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .LastOrDefault();
+            if (!string.IsNullOrWhiteSpace(shortId))
+            {
+                patterns.Add(shortId);
+            }
+        }
+
+        if (patterns.Count == 0)
+        {
+            patterns.Add("Package");
+        }
+
+        return patterns
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToList();
     }
 
     private static string EscapePowerShellSingleQuoted(string value)

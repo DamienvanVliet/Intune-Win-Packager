@@ -10,6 +10,7 @@ public sealed class PackagingValidationService : IValidationService
 {
     private static readonly Regex ProductCodeRegex = new("^\\{[0-9A-Fa-f\\-]{36}\\}$", RegexOptions.Compiled);
     private static readonly Regex PlaceholderRegex = new("<[^>]+>", RegexOptions.Compiled);
+    private static readonly Regex AppxVersionCheckRegex = new(@"Version\s*\.ToString\(\)\s*-eq", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly HashSet<string> SupportedArchitectures = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -32,6 +33,17 @@ public sealed class PackagingValidationService : IValidationService
         ".vbs",
         ".wsf"
     ];
+
+    private static readonly HashSet<string> GenericDetectionNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "setup.exe",
+        "installer.exe",
+        "install.exe",
+        "uninstall.exe",
+        "update.exe",
+        "updater.exe",
+        "app.exe"
+    };
 
     public ValidationResult Validate(PackagingRequest request)
     {
@@ -205,6 +217,22 @@ public sealed class PackagingValidationService : IValidationService
                 {
                     AddIssue(issues, "Core.Validation.FileDetectionValueRequired", "File detection operator requires a comparison value.");
                 }
+
+                if (IsGenericDetectionPath(detection.File.Path))
+                {
+                    AddIssue(
+                        issues,
+                        "Core.Validation.FileDetectionPathTooGeneric",
+                        "File detection path is too generic. Use a unique, vendor-specific install path.");
+                }
+
+                if (IsGenericDetectionName(detection.File.FileOrFolderName))
+                {
+                    AddIssue(
+                        issues,
+                        "Core.Validation.FileDetectionNameTooGeneric",
+                        "File detection name is too generic. Target a unique binary or folder.");
+                }
                 break;
 
             case IntuneDetectionRuleType.Registry:
@@ -229,6 +257,33 @@ public sealed class PackagingValidationService : IValidationService
                 {
                     AddIssue(issues, "Core.Validation.RegistryDetectionValueRequired", "Registry comparison detection requires a comparison value.");
                 }
+
+                if (installerType == InstallerType.Exe)
+                {
+                    if (detection.Registry.Operator != IntuneDetectionOperator.Equals)
+                    {
+                        AddIssue(
+                            issues,
+                            "Core.Validation.RegistryDetectionExeRequiresEquals",
+                            "For EXE detection, use Registry operator Equals with an exact value.");
+                    }
+
+                    if (!detection.Registry.ValueName.Equals("DisplayVersion", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AddIssue(
+                            issues,
+                            "Core.Validation.RegistryDetectionExeRequiresDisplayVersion",
+                            "For EXE detection, use Value Name 'DisplayVersion' to enforce exact version detection.");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(detection.Registry.Value))
+                    {
+                        AddIssue(
+                            issues,
+                            "Core.Validation.RegistryDetectionExeVersionRequired",
+                            "For EXE detection, DisplayVersion value is required.");
+                    }
+                }
                 break;
 
             case IntuneDetectionRuleType.Script:
@@ -242,6 +297,23 @@ public sealed class PackagingValidationService : IValidationService
                         issues,
                         "Core.Validation.ScriptDetectionHasPlaceholder",
                         "Script detection still contains placeholders. Replace placeholders with production detection logic.");
+                }
+
+                if (installerType != InstallerType.AppxMsix && installerType != InstallerType.Script)
+                {
+                    AddIssue(
+                        issues,
+                        "Core.Validation.ScriptDetectionLastResortOnly",
+                        "Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.");
+                }
+
+                if (installerType == InstallerType.AppxMsix &&
+                    !IsAppxDetectionScriptPrecise(detection.Script.ScriptBody))
+                {
+                    AddIssue(
+                        issues,
+                        "Core.Validation.ScriptDetectionAppxMustCheckVersion",
+                        "APPX/MSIX script detection must check exact package identity and version.");
                 }
                 break;
         }
@@ -307,6 +379,43 @@ public sealed class PackagingValidationService : IValidationService
     private static bool ContainsPlaceholder(string value)
     {
         return PlaceholderRegex.IsMatch(value);
+    }
+
+    private static bool IsGenericDetectionPath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim().Replace('/', '\\');
+        return normalized.Equals(@"%ProgramFiles%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals(@"%ProgramFiles(x86)%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals(@"C:\Program Files", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals(@"C:\Program Files (x86)", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals(@"C:\Windows", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGenericDetectionName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return GenericDetectionNames.Contains(value.Trim());
+    }
+
+    private static bool IsAppxDetectionScriptPrecise(string? scriptBody)
+    {
+        if (string.IsNullOrWhiteSpace(scriptBody))
+        {
+            return false;
+        }
+
+        return scriptBody.Contains("Get-AppxPackage", StringComparison.OrdinalIgnoreCase) &&
+               scriptBody.Contains("-Name", StringComparison.OrdinalIgnoreCase) &&
+               AppxVersionCheckRegex.IsMatch(scriptBody);
     }
 
     private static bool IsPathInsideFolder(string filePath, string folderPath)

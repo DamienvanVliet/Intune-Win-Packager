@@ -250,7 +250,7 @@ public class PackagingValidationServiceTests
                         RuleType = IntuneDetectionRuleType.Script,
                         Script = new ScriptDetectionRule
                         {
-                            ScriptBody = "$p = Get-AppxPackage -Name 'Contoso.App' -ErrorAction SilentlyContinue\nif ($null -ne $p) { exit 0 }\nexit 1"
+                            ScriptBody = "$p = Get-AppxPackage -Name 'Contoso.App' -ErrorAction SilentlyContinue | Where-Object { $_.Version.ToString() -eq '1.2.3.4' }\nif ($null -ne $p) { exit 0 }\nexit 1"
                         }
                     }
                 }
@@ -262,6 +262,108 @@ public class PackagingValidationServiceTests
         var result = sut.Validate(request);
 
         Assert.True(result.IsValid);
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
+    public void Validate_ReturnsError_WhenExeRegistryDetectionIsNotDeterministic()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "app.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        var request = new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.Exe,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "\"app.exe\" /S",
+                UninstallCommand = "\"app.exe\" /S",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Registry,
+                        Registry = new RegistryDetectionRule
+                        {
+                            Hive = "HKEY_LOCAL_MACHINE",
+                            KeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ContosoApp",
+                            Operator = IntuneDetectionOperator.Exists
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PackagingValidationService();
+        var result = sut.Validate(request);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Contains("DisplayVersion", StringComparison.OrdinalIgnoreCase));
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
+    public void Validate_ReturnsError_WhenScriptDetectionIsUsedForExe()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "app.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        var request = new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.Exe,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "\"app.exe\" /S",
+                UninstallCommand = "\"app.exe\" /S",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Script,
+                        Script = new ScriptDetectionRule
+                        {
+                            ScriptBody = "if (Test-Path 'C:\\Program Files\\Contoso') { exit 0 } exit 1"
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PackagingValidationService();
+        var result = sut.Validate(request);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Contains("last resort", StringComparison.OrdinalIgnoreCase));
 
         Directory.Delete(tempRoot, recursive: true);
     }

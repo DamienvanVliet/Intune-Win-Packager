@@ -93,7 +93,7 @@ public class PreflightServiceTests
                         File = new FileDetectionRule
                         {
                             Path = @"%ProgramFiles%\\Contoso",
-                            FileOrFolderName = "installer.exe",
+                            FileOrFolderName = "ContosoAgent.exe",
                             Operator = IntuneDetectionOperator.Exists
                         }
                     }
@@ -201,7 +201,7 @@ public class PreflightServiceTests
                         RuleType = IntuneDetectionRuleType.Script,
                         Script = new ScriptDetectionRule
                         {
-                            ScriptBody = "$pkg = Get-AppxPackage -Name 'Contoso.App' -ErrorAction SilentlyContinue\nif ($null -ne $pkg) { exit 0 }\nexit 1"
+                            ScriptBody = "$pkg = Get-AppxPackage -Name 'Contoso.App' -ErrorAction SilentlyContinue | Where-Object { $_.Version.ToString() -eq '1.2.3.4' }\nif ($null -ne $pkg) { exit 0 }\nexit 1"
                         }
                     }
                 }
@@ -214,6 +214,55 @@ public class PreflightServiceTests
 
         Assert.False(result.HasErrors);
         Assert.Contains(result.Checks, check => check.Key == "detection-script" && check.Passed);
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReturnsError_WhenScriptDetectionIsUsedForExe()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "installer.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        var request = new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.Exe,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "\"installer.exe\" /S",
+                UninstallCommand = "\"installer.exe\" /S",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Script,
+                        Script = new ScriptDetectionRule
+                        {
+                            ScriptBody = "if (Test-Path 'C:\\Program Files\\Contoso') { exit 0 } exit 1"
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PreflightService(new FakeProcessRunner(0));
+        var result = await sut.RunAsync(request);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Checks, check => check.Key == "detection-script-last-resort" && !check.Passed);
 
         Directory.Delete(tempRoot, recursive: true);
     }

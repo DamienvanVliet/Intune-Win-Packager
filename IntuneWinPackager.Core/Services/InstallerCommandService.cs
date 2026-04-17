@@ -474,11 +474,15 @@ public sealed class InstallerCommandService : IInstallerCommandService
         {
             detectionRule = installedEvidence.DetectionRule;
             uninstallCommand = installedEvidence.UninstallCommand;
-            guidanceParts.Add($"Local installed footprint matched '{installedEvidence.DisplayName}' and was used for registry detection + uninstall suggestion.");
+            guidanceParts.Add(
+                $"Deterministic local footprint matched '{installedEvidence.DisplayName}' " +
+                $"(exact DisplayName/Publisher/DisplayVersion) and was used for registry detection + uninstall suggestion.");
         }
         else
         {
-            guidanceParts.Add("No high-confidence installed footprint match found. Configure detection manually (file/registry/script).");
+            guidanceParts.Add(
+                "No deterministic installed footprint match was found. Configure an exact detection rule manually " +
+                "(MSI Product Code, exact Registry value, or stable File path).");
         }
 
         var baseScore = Math.Max(template.BaseConfidenceScore, probe.ConfidenceScore);
@@ -489,9 +493,9 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
         var confidenceReason = confidenceLevel switch
         {
-            SuggestionConfidenceLevel.High => "Static fingerprint + parameter probe strongly matched known installer behavior.",
-            SuggestionConfidenceLevel.Medium => "Installer behavior was partially inferred. Verify switches before production rollout.",
-            _ => "Installer behavior remains uncertain. Manual validation is required."
+            SuggestionConfidenceLevel.High => "Installer behavior matched deterministic local evidence and verified switch hints.",
+            SuggestionConfidenceLevel.Medium => "Installer behavior was inferred. Verify switches and detection before production rollout.",
+            _ => "Installer behavior remains uncertain. Manual production validation is required."
         };
 
         return new CommandSuggestion
@@ -519,44 +523,47 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
     private static CommandSuggestion CreateAppxMsixSuggestion(string setupFilePath, string setupFileName)
     {
-        var packageIdentityName = TryReadAppxIdentityName(setupFilePath);
+        var packageIdentity = TryReadAppxIdentity(setupFilePath);
         var quotedSetup = $"\"{setupFileName}\"";
 
         var installCommand =
             $"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Add-AppxPackage -Path {quotedSetup}\"";
 
-        var uninstallCommand = string.IsNullOrWhiteSpace(packageIdentityName)
+        var uninstallCommand = packageIdentity is null || string.IsNullOrWhiteSpace(packageIdentity.Name)
             ? $"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Get-AppxPackage -Name '{PlaceholderPackageName}' | Remove-AppxPackage\""
-            : $"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Get-AppxPackage -Name '{packageIdentityName}' | Remove-AppxPackage\"";
+            : $"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Get-AppxPackage -Name '{packageIdentity.Name}' | Remove-AppxPackage\"";
 
-        var detectionRule = new IntuneDetectionRule
+        var detectionRule = packageIdentity is null
+            ? new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.None
+            }
+            : new IntuneDetectionRule
         {
             RuleType = IntuneDetectionRuleType.Script,
             Script = new ScriptDetectionRule
             {
-                ScriptBody = string.IsNullOrWhiteSpace(packageIdentityName)
-                    ? BuildPlaceholderDetectionScript("Define AppX/MSIX detection script")
-                    : BuildAppxDetectionScript(packageIdentityName),
+                ScriptBody = BuildAppxDetectionScript(packageIdentity),
                 RunAs32BitOn64System = false,
                 EnforceSignatureCheck = false
             }
         };
 
-        var guidance = string.IsNullOrWhiteSpace(packageIdentityName)
-            ? "APPX/MSIX detected. Package identity could not be extracted, update uninstall command and detection script manually."
-            : "APPX/MSIX detected. Package identity was extracted and script detection was prefilled.";
+        var guidance = packageIdentity is null
+            ? "APPX/MSIX detected, but package identity metadata could not be extracted. Configure an exact detection rule manually."
+            : "APPX/MSIX detected. Exact package identity metadata was extracted and deterministic script detection was prefilled.";
 
         return new CommandSuggestion
         {
             InstallCommand = installCommand,
             UninstallCommand = uninstallCommand,
-            ConfidenceLevel = string.IsNullOrWhiteSpace(packageIdentityName)
+            ConfidenceLevel = packageIdentity is null
                 ? SuggestionConfidenceLevel.Medium
                 : SuggestionConfidenceLevel.High,
-            ConfidenceScore = string.IsNullOrWhiteSpace(packageIdentityName) ? 70 : 92,
-            ConfidenceReason = string.IsNullOrWhiteSpace(packageIdentityName)
-                ? "APPX/MSIX detected but package identity could not be extracted."
-                : "APPX/MSIX detected with package identity metadata.",
+            ConfidenceScore = packageIdentity is null ? 66 : 94,
+            ConfidenceReason = packageIdentity is null
+                ? "APPX/MSIX detected but exact package identity could not be extracted."
+                : "APPX/MSIX detected with exact identity metadata (name/publisher/version).",
             FingerprintEngine = "APPX/MSIX",
             ParameterProbeDetected = false,
             SuggestedRules = new IntuneWin32AppRules
@@ -1082,54 +1089,59 @@ public sealed class InstallerCommandService : IInstallerCommandService
     private static InstalledAppEvidence? TryResolveInstalledAppEvidenceWindows(string setupFilePath)
     {
         var version = TryGetVersionInfo(setupFilePath);
-        var fileBaseName = Path.GetFileNameWithoutExtension(setupFilePath) ?? string.Empty;
-
-        var terms = new[]
+        var expectedDisplayNames = new[]
         {
             Normalize(version?.ProductName),
-            Normalize(version?.FileDescription),
-            Normalize(fileBaseName)
+            Normalize(version?.FileDescription)
         }
-        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .Where(value => !string.IsNullOrWhiteSpace(value) && value.Length >= 3)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
 
-        var company = Normalize(version?.CompanyName);
+        var expectedPublisher = Normalize(version?.CompanyName);
+        var expectedVersion = NormalizeVersion(version?.ProductVersion);
 
-        RegistryUninstallEntry? bestMatch = null;
-        var bestScore = 0;
-
-        foreach (var entry in EnumerateUninstallEntries())
-        {
-            var score = ScoreUninstallEntry(entry, terms, company);
-            if (score <= bestScore)
-            {
-                continue;
-            }
-
-            bestScore = score;
-            bestMatch = entry;
-        }
-
-        if (bestMatch is null || bestScore < 55)
+        if (expectedDisplayNames.Count == 0 ||
+            string.IsNullOrWhiteSpace(expectedPublisher) ||
+            string.IsNullOrWhiteSpace(expectedVersion))
         {
             return null;
         }
 
+        var matches = EnumerateUninstallEntries()
+            .Where(entry => expectedDisplayNames.Contains(Normalize(entry.DisplayName), StringComparer.OrdinalIgnoreCase))
+            .Where(entry => Normalize(entry.Publisher).Equals(expectedPublisher, StringComparison.OrdinalIgnoreCase))
+            .Where(entry => NormalizeVersion(entry.DisplayVersion).Equals(expectedVersion, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (matches.Count == 0)
+        {
+            return null;
+        }
+
+        var match = matches
+            .OrderBy(entry => entry.HiveName.Equals("HKEY_CURRENT_USER", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(entry => entry.Check32BitOn64System ? 1 : 0)
+            .ThenBy(entry => entry.KeyPath, StringComparer.OrdinalIgnoreCase)
+            .First();
+
         return new InstalledAppEvidence
         {
-            DisplayName = bestMatch.DisplayName,
+            DisplayName = match.DisplayName,
             DetectionRule = new IntuneDetectionRule
             {
                 RuleType = IntuneDetectionRuleType.Registry,
                 Registry = new RegistryDetectionRule
                 {
-                    Hive = bestMatch.HiveName,
-                    KeyPath = bestMatch.KeyPath,
-                    Operator = IntuneDetectionOperator.Exists
+                    Hive = match.HiveName,
+                    KeyPath = match.KeyPath,
+                    ValueName = "DisplayVersion",
+                    Check32BitOn64System = match.Check32BitOn64System,
+                    Operator = IntuneDetectionOperator.Equals,
+                    Value = match.DisplayVersion
                 }
             },
-            UninstallCommand = NormalizeUninstallCommand(bestMatch.UninstallString)
+            UninstallCommand = NormalizeUninstallCommand(match.UninstallString)
         };
     }
 
@@ -1138,9 +1150,9 @@ public sealed class InstallerCommandService : IInstallerCommandService
     {
         var roots = new[]
         {
-            (Hive: RegistryHive.LocalMachine, View: RegistryView.Registry64, Path: @"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
-            (Hive: RegistryHive.LocalMachine, View: RegistryView.Registry32, Path: @"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
-            (Hive: RegistryHive.CurrentUser, View: RegistryView.Default, Path: @"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall")
+            (Hive: RegistryHive.LocalMachine, View: RegistryView.Registry64, Path: @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (Hive: RegistryHive.LocalMachine, View: RegistryView.Registry32, Path: @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (Hive: RegistryHive.CurrentUser, View: RegistryView.Default, Path: @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")
         };
 
         foreach (var root in roots)
@@ -1195,6 +1207,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
                             KeyPath = $"{root.Path}\\{subKeyName}",
                             DisplayName = displayName,
                             Publisher = appKey.GetValue("Publisher")?.ToString() ?? string.Empty,
+                            DisplayVersion = appKey.GetValue("DisplayVersion")?.ToString() ?? string.Empty,
+                            Check32BitOn64System = root.Hive == RegistryHive.LocalMachine && root.View == RegistryView.Registry32,
                             UninstallString = appKey.GetValue("QuietUninstallString")?.ToString()
                                 ?? appKey.GetValue("UninstallString")?.ToString()
                                 ?? string.Empty
@@ -1203,50 +1217,6 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 }
             }
         }
-    }
-
-    private static int ScoreUninstallEntry(RegistryUninstallEntry entry, IReadOnlyCollection<string> terms, string company)
-    {
-        if (string.IsNullOrWhiteSpace(entry.DisplayName))
-        {
-            return 0;
-        }
-
-        var displayName = Normalize(entry.DisplayName);
-        var publisher = Normalize(entry.Publisher);
-
-        var score = 0;
-
-        foreach (var term in terms)
-        {
-            if (string.IsNullOrWhiteSpace(term) || term.Length < 3)
-            {
-                continue;
-            }
-
-            if (displayName.Equals(term, StringComparison.OrdinalIgnoreCase))
-            {
-                score += 70;
-                continue;
-            }
-
-            if (displayName.Contains(term, StringComparison.OrdinalIgnoreCase))
-            {
-                score += 35;
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(company) && publisher.Contains(company, StringComparison.OrdinalIgnoreCase))
-        {
-            score += 15;
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.UninstallString))
-        {
-            score += 5;
-        }
-
-        return score;
     }
 
     private static string NormalizeUninstallCommand(string uninstallString)
@@ -1285,7 +1255,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
         return builder.ToString().Trim();
     }
 
-    private static string? TryReadAppxIdentityName(string setupFilePath)
+    private static AppxIdentity? TryReadAppxIdentity(string setupFilePath)
     {
         try
         {
@@ -1301,7 +1271,20 @@ public sealed class InstallerCommandService : IInstallerCommandService
             using var stream = manifest.Open();
             var document = XDocument.Load(stream);
             var identity = document.Descendants().FirstOrDefault(element => element.Name.LocalName == "Identity");
-            return identity?.Attribute("Name")?.Value;
+            var name = identity?.Attribute("Name")?.Value;
+            var publisher = identity?.Attribute("Publisher")?.Value;
+            var version = identity?.Attribute("Version")?.Value;
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(version))
+            {
+                return null;
+            }
+
+            return new AppxIdentity
+            {
+                Name = name,
+                Publisher = publisher ?? string.Empty,
+                Version = version
+            };
         }
         catch
         {
@@ -1309,11 +1292,21 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
     }
 
-    private static string BuildAppxDetectionScript(string packageIdentityName)
+    private static string BuildAppxDetectionScript(AppxIdentity identity)
     {
+        var escapedName = identity.Name.Replace("\"", "`\"", StringComparison.Ordinal);
+        var escapedVersion = identity.Version.Replace("\"", "`\"", StringComparison.Ordinal);
+        var escapedPublisher = identity.Publisher.Replace("\"", "`\"", StringComparison.Ordinal);
+
+        var publisherFilter = string.IsNullOrWhiteSpace(escapedPublisher)
+            ? string.Empty
+            : $" -and $_.Publisher -eq \"{escapedPublisher}\"";
+
         return string.Join(Environment.NewLine,
         [
-            "$package = Get-AppxPackage -Name \"" + packageIdentityName + "\" -ErrorAction SilentlyContinue",
+            "$package = Get-AppxPackage -Name \"" + escapedName + "\" -ErrorAction SilentlyContinue | Where-Object {",
+            "    $_.Version.ToString() -eq \"" + escapedVersion + "\"" + publisherFilter,
+            "} | Select-Object -First 1",
             "if ($null -ne $package) {",
             "    Write-Output \"Detected\"",
             "    exit 0",
@@ -1331,6 +1324,15 @@ public sealed class InstallerCommandService : IInstallerCommandService
             PlaceholderDetectionScript,
             "exit 1"
         ]);
+    }
+
+    private sealed record AppxIdentity
+    {
+        public string Name { get; init; } = string.Empty;
+
+        public string Publisher { get; init; } = string.Empty;
+
+        public string Version { get; init; } = string.Empty;
     }
 
     private sealed record ExeFrameworkTemplate
@@ -1419,6 +1421,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
         public string DisplayName { get; init; } = string.Empty;
 
         public string Publisher { get; init; } = string.Empty;
+
+        public string DisplayVersion { get; init; } = string.Empty;
+
+        public bool Check32BitOn64System { get; init; }
 
         public string UninstallString { get; init; } = string.Empty;
     }

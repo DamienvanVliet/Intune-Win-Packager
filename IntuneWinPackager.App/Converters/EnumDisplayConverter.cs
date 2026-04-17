@@ -13,10 +13,10 @@ public sealed class EnumDisplayConverter : IValueConverter
             IntuneDetectionRuleType.None => "None (let app suggest)",
             IntuneDetectionRuleType.MsiProductCode => "MSI Product Code (best for MSI)",
             IntuneDetectionRuleType.File => "File / Folder",
-            IntuneDetectionRuleType.Registry => "Registry (common for EXE)",
-            IntuneDetectionRuleType.Script => "Script (advanced)",
+            IntuneDetectionRuleType.Registry => "Registry (deterministic for EXE)",
+            IntuneDetectionRuleType.Script => "Script (last resort)",
 
-            IntuneDetectionOperator.Exists => "Exists (recommended)",
+            IntuneDetectionOperator.Exists => "Exists",
             IntuneDetectionOperator.Equals => "Equals (exact value)",
             IntuneDetectionOperator.NotEquals => "Not equals",
             IntuneDetectionOperator.GreaterThan => "Greater than",

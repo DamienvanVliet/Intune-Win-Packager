@@ -1,4 +1,5 @@
-﻿using IntuneWinPackager.Core.Services;
+using System.IO.Compression;
+using IntuneWinPackager.Core.Services;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 
@@ -70,18 +71,48 @@ public class InstallerCommandServiceTests
     }
 
     [Fact]
-    public void CreateSuggestion_ForAppxMsix_UsesPowerShellAndScriptDetection()
+    public void CreateSuggestion_ForAppxMsixWithIdentity_UsesDeterministicScriptDetection()
+    {
+        var sut = new InstallerCommandService();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-appx-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var packagePath = Path.Combine(tempRoot, "Contoso.msix");
+
+        try
+        {
+            CreateAppxLikeArchive(
+                packagePath,
+                identityName: "Contoso.App",
+                publisher: "CN=Contoso",
+                version: "2.1.3.0");
+
+            var suggestion = sut.CreateSuggestion(
+                setupFilePath: packagePath,
+                installerType: InstallerType.AppxMsix);
+
+            Assert.Contains("Add-AppxPackage", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Get-AppxPackage", suggestion.UninstallCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(IntuneDetectionRuleType.Script, suggestion.SuggestedRules.DetectionRule.RuleType);
+            Assert.Contains("Contoso.App", suggestion.SuggestedRules.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+            Assert.Contains("Version.ToString()", suggestion.SuggestedRules.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+            Assert.Contains("2.1.3.0", suggestion.SuggestedRules.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateSuggestion_ForAppxMsixWithoutIdentity_LeavesDetectionUnset()
     {
         var sut = new InstallerCommandService();
 
         var suggestion = sut.CreateSuggestion(
-            setupFilePath: @"C:\Temp\Contoso.msix",
+            setupFilePath: @"C:\Temp\MissingManifest.msix",
             installerType: InstallerType.AppxMsix);
 
-        Assert.Contains("Add-AppxPackage", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Get-AppxPackage", suggestion.UninstallCommand, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(IntuneDetectionRuleType.Script, suggestion.SuggestedRules.DetectionRule.RuleType);
-        Assert.Contains("<detection-script>", suggestion.SuggestedRules.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+        Assert.Equal(IntuneDetectionRuleType.None, suggestion.SuggestedRules.DetectionRule.RuleType);
     }
 
     [Fact]
@@ -134,5 +165,23 @@ public class InstallerCommandServiceTests
         {
             Directory.Delete(tempRoot, recursive: true);
         }
+    }
+
+    private static void CreateAppxLikeArchive(
+        string packagePath,
+        string identityName,
+        string publisher,
+        string version)
+    {
+        using var archive = ZipFile.Open(packagePath, ZipArchiveMode.Create);
+        var manifestEntry = archive.CreateEntry("AppxManifest.xml");
+        using var stream = manifestEntry.Open();
+        using var writer = new StreamWriter(stream);
+        writer.Write($"""
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10">
+  <Identity Name="{identityName}" Publisher="{publisher}" Version="{version}" />
+</Package>
+""");
     }
 }
