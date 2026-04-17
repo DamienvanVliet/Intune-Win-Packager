@@ -15,6 +15,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using IntuneWinPackager.App.Services;
 using IntuneWinPackager.Core.Interfaces;
+using IntuneWinPackager.Core.Services;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 
@@ -2359,28 +2360,7 @@ public partial class MainViewModel : ObservableObject
 
     private static string BuildCatalogDetectionScript(PackageCatalogEntry entry)
     {
-        var patterns = BuildCatalogMatchPatterns(entry);
-        var patternValues = string.Join(", ", patterns.Select(pattern => $"'{EscapePowerShellSingleQuoted(pattern)}'"));
-
-        return string.Join(
-            Environment.NewLine,
-            $"$patterns = @({patternValues})",
-            "$roots = @(",
-            "  'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
-            "  'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
-            "  'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'",
-            ")",
-            "$apps = Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue",
-            "$match = $apps | Where-Object {",
-            "  $displayName = $_.DisplayName",
-            "  if ([string]::IsNullOrWhiteSpace($displayName)) { return $false }",
-            "  foreach ($pattern in $patterns) {",
-            "    if ($displayName -like ('*' + $pattern + '*')) { return $true }",
-            "  }",
-            "  return $false",
-            "} | Select-Object -First 1",
-            "if ($null -ne $match) { exit 0 }",
-            "exit 1");
+        return CatalogPackageHeuristics.BuildDetectionScript(entry);
     }
 
     private static string BuildCatalogAdaptiveUninstallCommand(PackageCatalogEntry entry)
@@ -2404,35 +2384,7 @@ public partial class MainViewModel : ObservableObject
 
     private static List<string> BuildCatalogMatchPatterns(PackageCatalogEntry entry)
     {
-        var patterns = new List<string>();
-
-        if (!string.IsNullOrWhiteSpace(entry.Name))
-        {
-            patterns.Add(entry.Name.Trim());
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.PackageId))
-        {
-            patterns.Add(entry.PackageId.Trim());
-
-            var shortId = entry.PackageId
-                .Split(['.', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .LastOrDefault();
-            if (!string.IsNullOrWhiteSpace(shortId))
-            {
-                patterns.Add(shortId);
-            }
-        }
-
-        if (patterns.Count == 0)
-        {
-            patterns.Add("Package");
-        }
-
-        return patterns
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .ToList();
+        return CatalogPackageHeuristics.BuildMatchPatterns(entry).ToList();
     }
 
     private static string EscapePowerShellSingleQuoted(string value)
