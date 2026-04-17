@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.30] - 2026-04-18
+
+### Added
+- Detection rules rebuilt to deterministic Intune-first behavior.
+- EXE detection now requires exact registry DisplayVersion equality (no fuzzy matching).
+- MSI detection remains ProductCode-first and authoritative.
+- Script detection is blocked by validation/preflight unless truly required (APPX/MSIX or explicit script type).
+- Added stricter preflight and validation checks for generic file/registry detection to prevent false positives.
+
 ## [1.1.29] - 2026-04-17
 
 ### Added
