@@ -44,6 +44,38 @@ public sealed record PackageCatalogEntry
 
     public DateTimeOffset? PublishedAtUtc { get; init; }
 
+    public CatalogProfileConfidence ProfileConfidence { get; init; } = CatalogProfileConfidence.ManualReview;
+
+    public string ConfidenceBadgeText { get; init; } = string.Empty;
+
+    public bool IsUpgradeAvailable { get; init; }
+
+    public string UpgradeFromVersion { get; init; } = string.Empty;
+
+    public bool HashVerifiedBySource { get; init; }
+
+    public bool VendorSigned { get; init; }
+
+    public bool SilentSwitchProbeDetected { get; init; }
+
+    public bool DetectionReady { get; init; }
+
+    public string LocalInstallerPath { get; init; } = string.Empty;
+
+    public string InstallerSha256 { get; init; } = string.Empty;
+
+    public string CachedIconPath { get; init; } = string.Empty;
+
+    public DateTimeOffset? LastPreparedAtUtc { get; init; }
+
+    public DateTimeOffset? LastVerifiedAtUtc { get; init; }
+
+    public bool HasPreparedProfile => LastPreparedAtUtc.HasValue;
+
+    public string EffectiveIconPath => string.IsNullOrWhiteSpace(CachedIconPath)
+        ? IconUrl
+        : CachedIconPath;
+
     public string Monogram
     {
         get

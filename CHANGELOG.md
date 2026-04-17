@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.1.27] - 2026-04-17
+
+### Added
+- Added a local Package Store profile cache (package id + version + installer hash) so prepared package commands and detection can be reused with confidence markers (`Verified`, `Likely`, `Manual review`).
+- Added one-click Store flow improvements: `Prepare In Packaging` now first tries exact local prepared profiles, then falls back to download + auto-prepare.
+- Added Store trust signals in UI: hash verification, vendor signature, silent switch probe evidence, and detection readiness badges.
+- Added upgrade-aware Store indicators to highlight when a newer catalog version is available compared to a locally prepared version.
+- Added Store advanced-details toggle to keep default view simpler and reduce technical clutter.
+
+### Changed
+- Package catalog download metadata now tracks installer SHA256, source hash-verification signal, and vendor signing details.
+- Store icons are now cached locally to improve scroll stability and reduce repeated remote icon fetches.
+- Catalog downloads now persist profile snapshots used to feed trust badges and reuse logic.
+
+### Fixed
+- Improved command suggestion metadata flow by exposing parameter-probe detection state to downstream UI/profile trust scoring.
+- Strengthened UI smoke tests for new Store advanced toggle and trust/upgrade indicators.
+
 ## [1.1.26] - 2026-04-17
 
 ### Fixed

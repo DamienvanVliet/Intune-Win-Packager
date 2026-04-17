@@ -20,6 +20,10 @@ internal static class DataPathProvider
 
     public static string CatalogDownloadsDirectory => Path.Combine(BaseDirectory, "catalog-downloads");
 
+    public static string CatalogProfilesFilePath => Path.Combine(BaseDirectory, "catalog-profiles.v1.json");
+
+    public static string CatalogIconsDirectory => Path.Combine(BaseDirectory, "catalog-icons");
+
     public static void EnsureBaseDirectory()
     {
         Directory.CreateDirectory(BaseDirectory);

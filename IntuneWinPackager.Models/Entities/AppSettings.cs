@@ -23,5 +23,7 @@ public sealed record AppSettings
     public string UiTheme { get; init; } = "light";
 
     public string UiDensity { get; init; } = "comfortable";
+
+    public bool StoreShowAdvancedDetails { get; init; }
 }
 

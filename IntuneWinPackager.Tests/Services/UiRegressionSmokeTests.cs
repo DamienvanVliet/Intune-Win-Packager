@@ -22,6 +22,9 @@ public class UiRegressionSmokeTests
 
         Assert.Contains("Density.Scale", xaml, StringComparison.Ordinal);
         Assert.Contains("Ui.Density", xaml, StringComparison.Ordinal);
+        Assert.Contains("ShowStoreAdvancedDetails", xaml, StringComparison.Ordinal);
+        Assert.Contains("Ui.Store.Badge.Upgrade", xaml, StringComparison.Ordinal);
+        Assert.Contains("Ui.Store.Trust.HashMatched", xaml, StringComparison.Ordinal);
     }
 
     [Fact]

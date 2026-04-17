@@ -121,8 +121,20 @@
     <sys:String x:Key="Ui.Store.UninstallCommandHint">Uninstall command template</sys:String>
     <sys:String x:Key="Ui.Store.DetectionHint">Detection guidance</sys:String>
     <sys:String x:Key="Ui.Store.Download">Download</sys:String>
-    <sys:String x:Key="Ui.Store.UseInPackager">Use In Packager</sys:String>
+    <sys:String x:Key="Ui.Store.UseInPackager">Prepare In Packaging</sys:String>
     <sys:String x:Key="Ui.Store.OpenHomepage">Open Homepage</sys:String>
+    <sys:String x:Key="Ui.Store.ShowAdvanced">Show advanced details</sys:String>
+    <sys:String x:Key="Ui.Store.AdvancedHiddenHint">Advanced command/detection details are hidden to keep this view simple.</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.Verified">Verified profile</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.Likely">Likely ready</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.Manual">Manual review</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.Upgrade">Upgrade from</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.PreparedLocal">Prepared locally</sys:String>
+    <sys:String x:Key="Ui.Store.Trust.HashMatched">Hash matched</sys:String>
+    <sys:String x:Key="Ui.Store.Trust.Signed">Vendor signed</sys:String>
+    <sys:String x:Key="Ui.Store.Trust.SwitchProbe">Silent switches probed</sys:String>
+    <sys:String x:Key="Ui.Store.Trust.DetectionReady">Detection ready</sys:String>
+    <sys:String x:Key="Ui.Store.UpgradeHint">A newer catalog version is available compared to your prepared local version:</sys:String>
 
     <sys:String x:Key="Ui.Preferences.Title">Preferences</sys:String>
     <sys:String x:Key="Ui.Preferences.Description">Configure language, theme, and packaging behavior defaults.</sys:String>
@@ -211,6 +223,7 @@
     <sys:String x:Key="Vm.Store.DownloadFailed">Download failed for '{0}'.</sys:String>
     <sys:String x:Key="Vm.Store.DownloadError">Download error: {0}</sys:String>
     <sys:String x:Key="Vm.Store.DownloadFailedGeneric">Package download could not be completed.</sys:String>
+    <sys:String x:Key="Vm.Store.PreparedFromProfile">Loaded '{0}' from your local prepared profile cache.</sys:String>
     <sys:String x:Key="Vm.Store.CommandTemplatesNeedDownload">Catalog command placeholders were not copied. Click Download to auto-fill exact installer commands.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.CacheVerified">Silent switches verified from local history for this exact installer build.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.ManualVerified">Silent switches marked as verified by you. This will be saved locally after successful packaging.</sys:String>

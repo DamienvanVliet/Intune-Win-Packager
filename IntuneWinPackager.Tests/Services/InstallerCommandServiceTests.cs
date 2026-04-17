@@ -21,6 +21,7 @@ public class InstallerCommandServiceTests
 
         Assert.Equal("msiexec /i \"AcmeAgent.msi\" /quiet", suggestion.InstallCommand);
         Assert.Equal("msiexec /x {12345678-ABCD-4321-DCBA-876543210000} /quiet", suggestion.UninstallCommand);
+        Assert.False(suggestion.ParameterProbeDetected);
     }
 
     [Fact]
@@ -54,6 +55,7 @@ public class InstallerCommandServiceTests
         Assert.True(suggestion.SuggestedRules.RequireSilentSwitchReview);
         Assert.False(suggestion.SuggestedRules.SilentSwitchesVerified);
         Assert.Equal(SuggestionConfidenceLevel.Low, suggestion.ConfidenceLevel);
+        Assert.False(suggestion.ParameterProbeDetected);
     }
 
     [Fact]

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfColor = System.Windows.Media.Color;
 using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
@@ -33,6 +34,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IPreflightService _preflightService;
     private readonly IAppUpdateService _appUpdateService;
     private readonly IPackageCatalogService _packageCatalogService;
+    private readonly IPackageProfileStoreService _packageProfileStoreService;
     private readonly IDialogService _dialogService;
     private readonly ILocalizationService _localizationService;
     private readonly IThemeService _themeService;
@@ -60,6 +62,8 @@ public partial class MainViewModel : ObservableObject
     private DateTimeOffset? _lastPreflightCompletedAtUtc;
     private CancellationTokenSource? _catalogSearchCancellation;
     private CancellationTokenSource? _catalogDetailsCancellation;
+    private List<CatalogPackageProfile> _catalogProfiles = [];
+    private CatalogSelectionContext? _activeCatalogSelectionContext;
 
     [ObservableProperty]
     private string sourceFolder = string.Empty;
@@ -302,6 +306,9 @@ public partial class MainViewModel : ObservableObject
     private string packageCatalogStatus = string.Empty;
 
     [ObservableProperty]
+    private bool showStoreAdvancedDetails;
+
+    [ObservableProperty]
     private PackageCatalogEntry? selectedCatalogEntry;
 
     [ObservableProperty]
@@ -309,6 +316,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private int selectedMainTabIndex;
+
+    [ObservableProperty]
+    private bool installerParameterProbeDetected;
 
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
@@ -323,6 +333,7 @@ public partial class MainViewModel : ObservableObject
         IPreflightService preflightService,
         IAppUpdateService appUpdateService,
         IPackageCatalogService packageCatalogService,
+        IPackageProfileStoreService packageProfileStoreService,
         IDialogService dialogService,
         ILocalizationService localizationService,
         IThemeService themeService,
@@ -340,6 +351,7 @@ public partial class MainViewModel : ObservableObject
         _preflightService = preflightService;
         _appUpdateService = appUpdateService;
         _packageCatalogService = packageCatalogService;
+        _packageProfileStoreService = packageProfileStoreService;
         _dialogService = dialogService;
         _localizationService = localizationService;
         _themeService = themeService;
@@ -412,7 +424,7 @@ public partial class MainViewModel : ObservableObject
         InstallUpdateCommand = new AsyncRelayCommand(InstallUpdateAsync, CanInstallUpdate);
         SearchCatalogCommand = new AsyncRelayCommand(SearchCatalogAsync, CanSearchCatalog);
         DownloadCatalogEntryCommand = new AsyncRelayCommand(DownloadCatalogEntryAsync, CanDownloadCatalogEntrySelection);
-        UseCatalogEntryCommand = new RelayCommand(UseCatalogEntry, CanUseCatalogEntrySelection);
+        UseCatalogEntryCommand = new AsyncRelayCommand(UseCatalogEntryAsync, CanUseCatalogEntrySelection);
         OpenCatalogHomepageCommand = new RelayCommand(OpenCatalogHomepage, CanOpenCatalogHomepageLink);
 
         _localizationService.LanguageChanged += HandleLanguageChanged;
@@ -710,7 +722,7 @@ public partial class MainViewModel : ObservableObject
 
     public IAsyncRelayCommand DownloadCatalogEntryCommand { get; }
 
-    public IRelayCommand UseCatalogEntryCommand { get; }
+    public IAsyncRelayCommand UseCatalogEntryCommand { get; }
 
     public IRelayCommand OpenCatalogHomepageCommand { get; }
 
@@ -726,6 +738,7 @@ public partial class MainViewModel : ObservableObject
         await LoadSettingsAsync();
         await RefreshProfileListAsync();
         await RefreshHistoryAsync();
+        await ReloadCatalogProfilesAsync();
 
         UpdateValidation();
 
@@ -1040,6 +1053,12 @@ public partial class MainViewModel : ObservableObject
         InvalidatePreflightIfNeeded();
         NotifyReadinessChanged();
 
+        if (_activeCatalogSelectionContext is not null &&
+            !string.Equals(_activeCatalogSelectionContext.InstallerPath, value, StringComparison.OrdinalIgnoreCase))
+        {
+            _activeCatalogSelectionContext = null;
+        }
+
         if (_suppressSetupRefresh)
         {
             return;
@@ -1093,11 +1112,13 @@ public partial class MainViewModel : ObservableObject
     {
         SearchCatalogCommand.NotifyCanExecuteChanged();
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
+        UseCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnIsPackageCatalogDetailBusyChanged(bool value)
     {
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
+        UseCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnSelectedCatalogEntryChanged(PackageCatalogEntry? value)
@@ -1106,6 +1127,16 @@ public partial class MainViewModel : ObservableObject
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
         OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
+
+        if (value is null ||
+            _activeCatalogSelectionContext is null ||
+            value.Source != _activeCatalogSelectionContext.Source ||
+            !value.PackageId.Equals(_activeCatalogSelectionContext.PackageId, StringComparison.OrdinalIgnoreCase) ||
+            !IsCatalogVersionMatch(value.Version, _activeCatalogSelectionContext.Version))
+        {
+            _activeCatalogSelectionContext = null;
+        }
+
         _ = LoadCatalogDetailsAsync(value);
     }
 
@@ -1120,6 +1151,7 @@ public partial class MainViewModel : ObservableObject
     partial void OnIsCatalogDownloadBusyChanged(bool value)
     {
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
+        UseCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnOperationStateChanged(OperationState value)
@@ -1195,6 +1227,11 @@ public partial class MainViewModel : ObservableObject
     }
 
     partial void OnEnableSilentAppUpdatesChanged(bool value)
+    {
+        _ = PersistSettingsSafeAsync();
+    }
+
+    partial void OnShowStoreAdvancedDetailsChanged(bool value)
     {
         _ = PersistSettingsSafeAsync();
     }
@@ -1304,6 +1341,7 @@ public partial class MainViewModel : ObservableObject
         OutputFolder = settings.LastOutputFolder;
         UseLowImpactMode = settings.UseLowImpactMode;
         EnableSilentAppUpdates = settings.EnableSilentAppUpdates;
+        ShowStoreAdvancedDetails = settings.StoreShowAdvancedDetails;
         _lastUpdateCheckCompletedAtUtc = settings.LastUpdateCheckUtc;
 
         if (!string.IsNullOrWhiteSpace(settings.LastKnownLatestVersion) &&
@@ -1974,7 +2012,11 @@ public partial class MainViewModel : ObservableObject
 
     private bool CanUseCatalogEntrySelection()
     {
-        return !IsBusy && (CatalogEntryDetails is not null || SelectedCatalogEntry is not null);
+        return !IsBusy &&
+               !IsCatalogDownloadBusy &&
+               !IsPackageCatalogBusy &&
+               !IsPackageCatalogDetailBusy &&
+               (CatalogEntryDetails is not null || SelectedCatalogEntry is not null);
     }
 
     private bool CanDownloadCatalogEntrySelection()
@@ -2015,11 +2057,14 @@ public partial class MainViewModel : ObservableObject
         PackageCatalogStatus = T("Vm.Store.Searching");
         CatalogEntryDetails = null;
         SelectedCatalogEntry = null;
+        _activeCatalogSelectionContext = null;
         PackageCatalogResults.Clear();
         OnPropertyChanged(nameof(HasCatalogResults));
 
         try
         {
+            await ReloadCatalogProfilesAsync(cancellationToken);
+
             var results = await _packageCatalogService.SearchAsync(new PackageCatalogQuery
             {
                 SearchTerm = PackageCatalogSearchTerm.Trim(),
@@ -2030,7 +2075,7 @@ public partial class MainViewModel : ObservableObject
 
             foreach (var item in results)
             {
-                PackageCatalogResults.Add(item);
+                PackageCatalogResults.Add(DecorateCatalogEntry(item));
             }
 
             if (PackageCatalogResults.Count == 0)
@@ -2041,6 +2086,7 @@ public partial class MainViewModel : ObservableObject
 
             PackageCatalogStatus = TF("Vm.Store.Results", PackageCatalogResults.Count, PackageCatalogSearchTerm.Trim());
             SelectedCatalogEntry = PackageCatalogResults[0];
+            _ = PreloadCatalogIconsAsync(PackageCatalogResults.ToList(), cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -2080,7 +2126,7 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            CatalogEntryDetails = detailed ?? entry;
+            CatalogEntryDetails = DecorateCatalogEntry(detailed ?? entry);
             PackageCatalogStatus = TF("Vm.Store.DetailReady", CatalogEntryDetails.Name);
         }
         catch (OperationCanceledException)
@@ -2089,7 +2135,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            CatalogEntryDetails = entry;
+            CatalogEntryDetails = DecorateCatalogEntry(entry);
             PackageCatalogStatus = TF("Vm.Store.DetailsError", ex.Message);
         }
         finally
@@ -2155,6 +2201,22 @@ public partial class MainViewModel : ObservableObject
             }
 
             ApplyCatalogAutomaticDefaults(entry);
+            await SaveCatalogProfileFromCurrentStateAsync(
+                entry,
+                downloadResult,
+                CatalogProfileConfidence.Likely);
+            await ReloadCatalogProfilesAsync();
+            RefreshCatalogEntriesFromProfiles();
+
+            var refreshedEntry = DecorateCatalogEntry(entry);
+            SelectedCatalogEntry = refreshedEntry;
+            CatalogEntryDetails = refreshedEntry;
+            _activeCatalogSelectionContext = new CatalogSelectionContext(
+                refreshedEntry.Source,
+                refreshedEntry.PackageId,
+                refreshedEntry.Version,
+                downloadResult.InstallerSha256,
+                downloadResult.InstallerPath);
 
             SelectedMainTabIndex = 0;
             PackageCatalogStatus = TF("Vm.Store.DownloadReady", entry.Name);
@@ -2187,7 +2249,7 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private void UseCatalogEntry()
+    private async Task UseCatalogEntryAsync()
     {
         var entry = CatalogEntryDetails ?? SelectedCatalogEntry;
         if (entry is null)
@@ -2195,57 +2257,19 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(ProfileName))
+        if (await TryApplyPreparedCatalogProfileAsync(entry))
         {
-            ProfileName = $"{entry.PackageId}-profile";
+            SelectedMainTabIndex = 0;
+            PackageCatalogStatus = TF("Vm.Store.DownloadReady", entry.Name);
+            SetStatus(
+                OperationState.Success,
+                T("Vm.Status.CatalogDownloadReadyTitle"),
+                TF("Vm.Store.PreparedFromProfile", entry.Name));
+            AppendLog($"Store profile reused for {entry.Name} ({entry.PackageId}).");
+            return;
         }
 
-        if (InstallerType == InstallerType.Unknown && entry.InstallerType != InstallerType.Unknown)
-        {
-            InstallerType = entry.InstallerType;
-        }
-
-        var skippedTemplateCommands = false;
-        if (!string.IsNullOrWhiteSpace(entry.SuggestedInstallCommand) &&
-            !ContainsCatalogTemplatePlaceholder(entry.SuggestedInstallCommand))
-        {
-            InstallCommand = entry.SuggestedInstallCommand;
-        }
-        else if (!string.IsNullOrWhiteSpace(entry.SuggestedInstallCommand))
-        {
-            skippedTemplateCommands = true;
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.SuggestedUninstallCommand) &&
-            !ContainsCatalogTemplatePlaceholder(entry.SuggestedUninstallCommand))
-        {
-            UninstallCommand = entry.SuggestedUninstallCommand;
-        }
-        else if (!string.IsNullOrWhiteSpace(entry.SuggestedUninstallCommand))
-        {
-            skippedTemplateCommands = true;
-        }
-
-        if (entry.InstallerType == InstallerType.Exe)
-        {
-            RequireSilentSwitchReview = true;
-            SilentSwitchesVerified = false;
-        }
-
-        AppliedTemplateName = $"{entry.SourceDisplayName} Catalog - {entry.Name}";
-        TemplateGuidance = entry.DetectionGuidance;
-        UpdateValidation();
-        NotifyReadinessChanged();
-
-        SetStatus(
-            OperationState.Idle,
-            T("Vm.Status.CatalogAppliedTitle"),
-            TF("Vm.Status.CatalogAppliedMessage", entry.Name));
-        AppendLog($"Catalog template applied for {entry.Name} ({entry.PackageId}).");
-        if (skippedTemplateCommands)
-        {
-            AppendLog(T("Vm.Store.CommandTemplatesNeedDownload"));
-        }
+        await DownloadCatalogEntryAsync();
     }
 
     private static bool ContainsCatalogTemplatePlaceholder(string command)
@@ -2416,6 +2440,318 @@ public partial class MainViewModel : ObservableObject
         return value.Replace("'", "''", StringComparison.Ordinal);
     }
 
+    private async Task ReloadCatalogProfilesAsync(CancellationToken cancellationToken = default)
+    {
+        var profiles = await _packageProfileStoreService.GetProfilesAsync(cancellationToken);
+        _catalogProfiles = profiles.ToList();
+    }
+
+    private PackageCatalogEntry DecorateCatalogEntry(PackageCatalogEntry entry)
+    {
+        if (entry is null)
+        {
+            return new PackageCatalogEntry();
+        }
+
+        var packageProfiles = _catalogProfiles
+            .Where(profile =>
+                profile.Source == entry.Source &&
+                profile.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var exactProfile = packageProfiles
+            .Where(profile => IsCatalogVersionMatch(profile.Version, entry.Version))
+            .OrderByDescending(profile => profile.LastVerifiedAtUtc ?? DateTimeOffset.MinValue)
+            .ThenByDescending(profile => profile.LastPreparedAtUtc)
+            .FirstOrDefault();
+
+        var latestPreparedProfile = packageProfiles
+            .OrderByDescending(profile => profile.LastPreparedAtUtc)
+            .ThenByDescending(profile => profile.LastVerifiedAtUtc ?? DateTimeOffset.MinValue)
+            .FirstOrDefault();
+
+        var confidence = exactProfile?.Confidence ?? CatalogProfileConfidence.ManualReview;
+        var confidenceText = confidence switch
+        {
+            CatalogProfileConfidence.Verified => T("Ui.Store.Badge.Verified"),
+            CatalogProfileConfidence.Likely => T("Ui.Store.Badge.Likely"),
+            _ => T("Ui.Store.Badge.Manual")
+        };
+
+        var effectiveProfile = exactProfile ?? latestPreparedProfile;
+        var isUpgradeAvailable = latestPreparedProfile is not null &&
+                                 !IsCatalogVersionMatch(entry.Version, latestPreparedProfile.Version) &&
+                                 CompareVersionsForNotification(entry.Version, latestPreparedProfile.Version) > 0;
+
+        return entry with
+        {
+            ProfileConfidence = confidence,
+            ConfidenceBadgeText = confidenceText,
+            IsUpgradeAvailable = isUpgradeAvailable,
+            UpgradeFromVersion = isUpgradeAvailable ? latestPreparedProfile?.Version ?? string.Empty : string.Empty,
+            HashVerifiedBySource = exactProfile?.HashVerifiedBySource ?? entry.HashVerifiedBySource,
+            VendorSigned = exactProfile?.VendorSigned ?? entry.VendorSigned,
+            SilentSwitchProbeDetected = exactProfile?.SilentSwitchProbeDetected ?? entry.SilentSwitchProbeDetected,
+            DetectionReady = exactProfile?.DetectionReady ?? entry.DetectionReady,
+            LocalInstallerPath = exactProfile?.InstallerPath ?? entry.LocalInstallerPath,
+            InstallerSha256 = exactProfile?.InstallerSha256 ?? entry.InstallerSha256,
+            CachedIconPath = CoalescePath(exactProfile?.IconPath, entry.CachedIconPath),
+            LastPreparedAtUtc = effectiveProfile?.LastPreparedAtUtc ?? entry.LastPreparedAtUtc,
+            LastVerifiedAtUtc = effectiveProfile?.LastVerifiedAtUtc ?? entry.LastVerifiedAtUtc
+        };
+    }
+
+    private void RefreshCatalogEntriesFromProfiles()
+    {
+        for (var index = 0; index < PackageCatalogResults.Count; index++)
+        {
+            PackageCatalogResults[index] = DecorateCatalogEntry(PackageCatalogResults[index]);
+        }
+
+        if (SelectedCatalogEntry is not null)
+        {
+            SelectedCatalogEntry = DecorateCatalogEntry(SelectedCatalogEntry);
+        }
+
+        if (CatalogEntryDetails is not null)
+        {
+            CatalogEntryDetails = DecorateCatalogEntry(CatalogEntryDetails);
+        }
+    }
+
+    private async Task PreloadCatalogIconsAsync(IReadOnlyList<PackageCatalogEntry> entries, CancellationToken cancellationToken)
+    {
+        foreach (var entry in entries.Take(16))
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.CachedIconPath) && File.Exists(entry.CachedIconPath))
+            {
+                continue;
+            }
+
+            var iconPath = await _packageCatalogService.ResolveCachedIconPathAsync(entry, entry.LocalInstallerPath, cancellationToken);
+            if (string.IsNullOrWhiteSpace(iconPath))
+            {
+                continue;
+            }
+
+            UpdateCatalogEntryIcon(entry, iconPath);
+        }
+    }
+
+    private void UpdateCatalogEntryIcon(PackageCatalogEntry entry, string iconPath)
+    {
+        if (string.IsNullOrWhiteSpace(iconPath))
+        {
+            return;
+        }
+
+        for (var index = 0; index < PackageCatalogResults.Count; index++)
+        {
+            var current = PackageCatalogResults[index];
+            if (current.Source != entry.Source ||
+                !current.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase) ||
+                !IsCatalogVersionMatch(current.Version, entry.Version))
+            {
+                continue;
+            }
+
+            PackageCatalogResults[index] = current with { CachedIconPath = iconPath };
+        }
+
+        if (SelectedCatalogEntry is not null &&
+            SelectedCatalogEntry.Source == entry.Source &&
+            SelectedCatalogEntry.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase) &&
+            IsCatalogVersionMatch(SelectedCatalogEntry.Version, entry.Version))
+        {
+            SelectedCatalogEntry = SelectedCatalogEntry with { CachedIconPath = iconPath };
+        }
+
+        if (CatalogEntryDetails is not null &&
+            CatalogEntryDetails.Source == entry.Source &&
+            CatalogEntryDetails.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase) &&
+            IsCatalogVersionMatch(CatalogEntryDetails.Version, entry.Version))
+        {
+            CatalogEntryDetails = CatalogEntryDetails with { CachedIconPath = iconPath };
+        }
+    }
+
+    private async Task SaveCatalogProfileFromCurrentStateAsync(
+        PackageCatalogEntry entry,
+        PackageCatalogDownloadResult downloadResult,
+        CatalogProfileConfidence confidence)
+    {
+        if (string.IsNullOrWhiteSpace(entry.PackageId))
+        {
+            return;
+        }
+
+        var installerPath = !string.IsNullOrWhiteSpace(downloadResult.InstallerPath)
+            ? downloadResult.InstallerPath
+            : SetupFilePath;
+        if (string.IsNullOrWhiteSpace(installerPath) || !File.Exists(installerPath))
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var detectionReady = DetectionRuleType != IntuneDetectionRuleType.None;
+        var installHasPlaceholder = ContainsCatalogTemplatePlaceholder(InstallCommand);
+        var uninstallHasPlaceholder = ContainsCatalogTemplatePlaceholder(UninstallCommand);
+        if (installHasPlaceholder || uninstallHasPlaceholder || !detectionReady)
+        {
+            confidence = CatalogProfileConfidence.ManualReview;
+        }
+
+        var iconPath = await _packageCatalogService.ResolveCachedIconPathAsync(entry, installerPath);
+        if (!string.IsNullOrWhiteSpace(iconPath))
+        {
+            UpdateCatalogEntryIcon(entry, iconPath);
+        }
+
+        var resolvedSha = string.IsNullOrWhiteSpace(downloadResult.InstallerSha256)
+            ? ComputeFileSha256(installerPath)
+            : downloadResult.InstallerSha256;
+
+        var profile = new CatalogPackageProfile
+        {
+            Source = entry.Source,
+            PackageId = entry.PackageId,
+            Name = entry.Name,
+            Version = string.IsNullOrWhiteSpace(entry.Version) ? entry.BuildVersion : entry.Version,
+            BuildVersion = entry.BuildVersion,
+            InstallerPath = installerPath,
+            InstallerSha256 = resolvedSha,
+            InstallerType = InstallerType,
+            InstallCommand = InstallCommand,
+            UninstallCommand = UninstallCommand,
+            DetectionRuleType = DetectionRuleType,
+            IntuneRules = BuildIntuneRules(),
+            SilentSwitchesVerified = SilentSwitchesVerified,
+            HashVerifiedBySource = downloadResult.HashVerifiedBySource,
+            VendorSigned = downloadResult.VendorSigned,
+            SilentSwitchProbeDetected = InstallerParameterProbeDetected || SuggestionUsedKnowledgeCache,
+            DetectionReady = detectionReady,
+            Confidence = confidence,
+            IconPath = iconPath,
+            LastPreparedAtUtc = now,
+            LastVerifiedAtUtc = confidence == CatalogProfileConfidence.Verified ? now : null
+        };
+
+        await _packageProfileStoreService.SaveProfileAsync(profile);
+    }
+
+    private async Task<bool> TryApplyPreparedCatalogProfileAsync(PackageCatalogEntry entry)
+    {
+        await ReloadCatalogProfilesAsync();
+        var profile = _catalogProfiles
+            .Where(candidate =>
+                candidate.Source == entry.Source &&
+                candidate.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase) &&
+                IsCatalogVersionMatch(candidate.Version, entry.Version))
+            .OrderByDescending(candidate => candidate.LastVerifiedAtUtc ?? DateTimeOffset.MinValue)
+            .ThenByDescending(candidate => candidate.LastPreparedAtUtc)
+            .FirstOrDefault();
+
+        if (profile is null || string.IsNullOrWhiteSpace(profile.InstallerPath) || !File.Exists(profile.InstallerPath))
+        {
+            return false;
+        }
+
+        await SelectSetupFileAsync(profile.InstallerPath);
+
+        if (string.IsNullOrWhiteSpace(ProfileName))
+        {
+            ProfileName = $"{entry.PackageId}-profile";
+        }
+
+        if (!string.IsNullOrWhiteSpace(profile.InstallCommand))
+        {
+            InstallCommand = profile.InstallCommand;
+        }
+
+        if (!string.IsNullOrWhiteSpace(profile.UninstallCommand))
+        {
+            UninstallCommand = profile.UninstallCommand;
+        }
+
+        if (profile.InstallerType != InstallerType.Unknown)
+        {
+            InstallerType = profile.InstallerType;
+        }
+
+        if (profile.IntuneRules.DetectionRule.RuleType != IntuneDetectionRuleType.None)
+        {
+            ApplyIntuneRules(profile.IntuneRules);
+        }
+
+        SilentSwitchesVerified = profile.SilentSwitchesVerified;
+        InstallerParameterProbeDetected = profile.SilentSwitchProbeDetected;
+        SuggestionUsedKnowledgeCache = profile.Confidence == CatalogProfileConfidence.Verified;
+
+        _activeCatalogSelectionContext = new CatalogSelectionContext(
+            profile.Source,
+            profile.PackageId,
+            profile.Version,
+            profile.InstallerSha256,
+            profile.InstallerPath);
+
+        return true;
+    }
+
+    private async Task PromoteActiveCatalogProfileAsVerifiedAsync()
+    {
+        if (_activeCatalogSelectionContext is null ||
+            string.IsNullOrWhiteSpace(_activeCatalogSelectionContext.InstallerPath) ||
+            !string.Equals(_activeCatalogSelectionContext.InstallerPath, SetupFilePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        await _packageProfileStoreService.PromoteProfileAsync(
+            _activeCatalogSelectionContext.Source,
+            _activeCatalogSelectionContext.PackageId,
+            _activeCatalogSelectionContext.Version,
+            _activeCatalogSelectionContext.InstallerSha256);
+
+        await ReloadCatalogProfilesAsync();
+        RefreshCatalogEntriesFromProfiles();
+    }
+
+    private static bool IsCatalogVersionMatch(string left, string right)
+    {
+        return NormalizeVersionForNotification(left)
+            .Equals(NormalizeVersionForNotification(right), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string CoalescePath(string? left, string right)
+    {
+        if (!string.IsNullOrWhiteSpace(left) && File.Exists(left))
+        {
+            return left;
+        }
+
+        return right;
+    }
+
+    private static string ComputeFileSha256(string filePath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            using var sha = SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
     private void OpenCatalogHomepage()
     {
         var url = (CatalogEntryDetails ?? SelectedCatalogEntry)?.HomepageUrl;
@@ -2572,6 +2908,7 @@ public partial class MainViewModel : ObservableObject
             if (result.Success)
             {
                 TrySaveVerifiedInstallerKnowledge();
+                await PromoteActiveCatalogProfileAsVerifiedAsync();
                 SetStatus(
                     OperationState.Success,
                     T("Vm.Status.PackageCreatedTitle"),
@@ -2762,6 +3099,7 @@ public partial class MainViewModel : ObservableObject
             RequireSilentSwitchReview = false;
             SilentSwitchesVerified = false;
             SuggestionUsedKnowledgeCache = false;
+            InstallerParameterProbeDetected = false;
             DetectionRuleType = IntuneDetectionRuleType.None;
             DetectionMsiProductCode = string.Empty;
             DetectionMsiProductVersion = string.Empty;
@@ -2807,6 +3145,7 @@ public partial class MainViewModel : ObservableObject
             StatusTitle = T("Vm.Status.ReadyTitle");
             StatusMessage = T("Vm.Status.ConfigurationResetMessage");
             ClearLogs();
+            _activeCatalogSelectionContext = null;
         }
         finally
         {
@@ -2886,6 +3225,7 @@ public partial class MainViewModel : ObservableObject
         {
             InstallerType = InstallerType.Unknown;
             MsiMetadataSummary = string.Empty;
+            InstallerParameterProbeDetected = false;
             UpdateValidation();
             return;
         }
@@ -2912,6 +3252,7 @@ public partial class MainViewModel : ObservableObject
             MsiMetadataSummary = string.Empty;
             InstallCommand = string.Empty;
             UninstallCommand = string.Empty;
+            InstallerParameterProbeDetected = false;
         }
 
         UpdateValidation();
@@ -2973,6 +3314,7 @@ public partial class MainViewModel : ObservableObject
             LastSetupFilePath = SetupFilePath,
             UseLowImpactMode = UseLowImpactMode,
             EnableSilentAppUpdates = EnableSilentAppUpdates,
+            StoreShowAdvancedDetails = ShowStoreAdvancedDetails,
             LastKnownLatestVersion = LatestVersion,
             LastUpdateCheckUtc = _lastUpdateCheckCompletedAtUtc,
             UiLanguage = _localizationService.CurrentLanguageCode,
@@ -3094,6 +3436,7 @@ public partial class MainViewModel : ObservableObject
         bool overwriteRules = true)
     {
         SuggestionUsedKnowledgeCache = suggestion.UsedKnowledgeCache;
+        InstallerParameterProbeDetected = suggestion.ParameterProbeDetected;
 
         if (overwriteCommands)
         {
@@ -3307,6 +3650,10 @@ public partial class MainViewModel : ObservableObject
         {
             PackageCatalogStatus = T("Vm.Store.Ready");
         }
+        else if (PackageCatalogResults.Count > 0)
+        {
+            RefreshCatalogEntriesFromProfiles();
+        }
 
         RefreshSwitchVerificationStatus();
     }
@@ -3484,6 +3831,13 @@ public partial class MainViewModel : ObservableObject
 
         return normalized;
     }
+
+    private sealed record CatalogSelectionContext(
+        PackageCatalogSource Source,
+        string PackageId,
+        string Version,
+        string InstallerSha256,
+        string InstallerPath);
 
     private static string ResolveCurrentVersion()
     {

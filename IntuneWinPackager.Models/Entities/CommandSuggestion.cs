@@ -19,4 +19,6 @@ public sealed record CommandSuggestion
     public string FingerprintEngine { get; init; } = string.Empty;
 
     public bool UsedKnowledgeCache { get; init; }
+
+    public bool ParameterProbeDetected { get; init; }
 }

@@ -232,7 +232,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 ConfidenceScore = 98,
                 ConfidenceReason = "Matched verified knowledge cache entry.",
                 FingerprintEngine = cachedEntry.FingerprintEngine,
-                UsedKnowledgeCache = true
+                UsedKnowledgeCache = true,
+                ParameterProbeDetected = true
             };
         }
 
@@ -250,6 +251,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 ConfidenceScore = 20,
                 ConfidenceReason = "Installer type is unknown.",
                 FingerprintEngine = "Unknown",
+                ParameterProbeDetected = false,
                 SuggestedRules = new IntuneWin32AppRules
                 {
                     AppliedTemplateName = "Unknown Installer",
@@ -500,6 +502,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
             ConfidenceScore = adjustedScore,
             ConfidenceReason = confidenceReason,
             FingerprintEngine = template.Framework.ToString(),
+            ParameterProbeDetected = probe.HasEvidence,
             SuggestedRules = new IntuneWin32AppRules
             {
                 InstallContext = IntuneInstallContext.System,
@@ -555,6 +558,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 ? "APPX/MSIX detected but package identity could not be extracted."
                 : "APPX/MSIX detected with package identity metadata.",
             FingerprintEngine = "APPX/MSIX",
+            ParameterProbeDetected = false,
             SuggestedRules = new IntuneWin32AppRules
             {
                 InstallContext = IntuneInstallContext.User,
@@ -597,6 +601,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
             ConfidenceScore = 65,
             ConfidenceReason = "Script installer type detected from extension.",
             FingerprintEngine = "Script",
+            ParameterProbeDetected = false,
             SuggestedRules = new IntuneWin32AppRules
             {
                 InstallContext = IntuneInstallContext.System,

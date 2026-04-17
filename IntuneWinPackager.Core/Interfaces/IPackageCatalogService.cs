@@ -12,4 +12,9 @@ public interface IPackageCatalogService
         PackageCatalogEntry entry,
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default);
+
+    Task<string> ResolveCachedIconPathAsync(
+        PackageCatalogEntry entry,
+        string? installerPath = null,
+        CancellationToken cancellationToken = default);
 }

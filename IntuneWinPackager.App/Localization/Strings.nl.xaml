@@ -121,8 +121,20 @@
     <sys:String x:Key="Ui.Store.UninstallCommandHint">Uninstall command template</sys:String>
     <sys:String x:Key="Ui.Store.DetectionHint">Detectie-richtlijn</sys:String>
     <sys:String x:Key="Ui.Store.Download">Downloaden</sys:String>
-    <sys:String x:Key="Ui.Store.UseInPackager">Gebruik in Packager</sys:String>
+    <sys:String x:Key="Ui.Store.UseInPackager">Voorbereiden in Packaging</sys:String>
     <sys:String x:Key="Ui.Store.OpenHomepage">Open Homepage</sys:String>
+    <sys:String x:Key="Ui.Store.ShowAdvanced">Toon geavanceerde details</sys:String>
+    <sys:String x:Key="Ui.Store.AdvancedHiddenHint">Geavanceerde command/detectie-details zijn verborgen om dit scherm rustig te houden.</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.Verified">Geverifieerd profiel</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.Likely">Waarschijnlijk klaar</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.Manual">Handmatige controle</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.Upgrade">Upgrade vanaf</sys:String>
+    <sys:String x:Key="Ui.Store.Badge.PreparedLocal">Lokaal voorbereid</sys:String>
+    <sys:String x:Key="Ui.Store.Trust.HashMatched">Hash geverifieerd</sys:String>
+    <sys:String x:Key="Ui.Store.Trust.Signed">Vendor ondertekend</sys:String>
+    <sys:String x:Key="Ui.Store.Trust.SwitchProbe">Silent switches geprobed</sys:String>
+    <sys:String x:Key="Ui.Store.Trust.DetectionReady">Detectie klaar</sys:String>
+    <sys:String x:Key="Ui.Store.UpgradeHint">Er is een nieuwere catalogusversie beschikbaar dan je lokaal voorbereide versie:</sys:String>
 
     <sys:String x:Key="Ui.Preferences.Title">Voorkeuren</sys:String>
     <sys:String x:Key="Ui.Preferences.Description">Configureer taal, thema en standaardgedrag voor packaging.</sys:String>
@@ -211,6 +223,7 @@
     <sys:String x:Key="Vm.Store.DownloadFailed">Downloaden van '{0}' is mislukt.</sys:String>
     <sys:String x:Key="Vm.Store.DownloadError">Downloadfout: {0}</sys:String>
     <sys:String x:Key="Vm.Store.DownloadFailedGeneric">Package-download kon niet worden voltooid.</sys:String>
+    <sys:String x:Key="Vm.Store.PreparedFromProfile">'{0}' is geladen vanuit je lokale voorbereide profielcache.</sys:String>
     <sys:String x:Key="Vm.Store.CommandTemplatesNeedDownload">Catalogus-placeholders voor commands zijn niet gekopieerd. Klik op Downloaden om exacte installer-commands automatisch in te vullen.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.CacheVerified">Silent switches zijn geverifieerd vanuit lokale historie voor exact deze installer-build.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.ManualVerified">Silent switches zijn door jou als geverifieerd gemarkeerd. Dit wordt lokaal opgeslagen na succesvolle packaging.</sys:String>

@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.IO.Compression;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using IntuneWinPackager.Core.Interfaces;
@@ -143,6 +145,78 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 Message = $"Package download failed: {ex.Message}",
                 WorkingFolderPath = workingFolder
             };
+        }
+    }
+
+    public async Task<string> ResolveCachedIconPathAsync(
+        PackageCatalogEntry entry,
+        string? installerPath = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (entry is null)
+        {
+            return string.Empty;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.CachedIconPath) && File.Exists(entry.CachedIconPath))
+        {
+            return entry.CachedIconPath;
+        }
+
+        var iconUrl = entry.IconUrl?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(iconUrl) || !Uri.TryCreate(iconUrl, UriKind.Absolute, out var uri))
+        {
+            return string.Empty;
+        }
+
+        if (!uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+            !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        DataPathProvider.EnsureBaseDirectory();
+        Directory.CreateDirectory(DataPathProvider.CatalogIconsDirectory);
+
+        var fileExtension = Path.GetExtension(uri.AbsolutePath);
+        if (string.IsNullOrWhiteSpace(fileExtension) || fileExtension.Length > 5)
+        {
+            fileExtension = ".png";
+        }
+
+        var cacheName = $"{SanitizePathSegment(entry.PackageId)}-{ComputeStableHash(iconUrl)}{fileExtension}";
+        var cachePath = Path.Combine(DataPathProvider.CatalogIconsDirectory, cacheName);
+        if (File.Exists(cachePath))
+        {
+            return cachePath;
+        }
+
+        try
+        {
+            using var response = await _httpClient.GetAsync(iconUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return string.Empty;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using var output = new FileStream(cachePath, FileMode.Create, FileAccess.Write, FileShare.None);
+            await stream.CopyToAsync(output, cancellationToken);
+            await output.FlushAsync(cancellationToken);
+
+            var info = new FileInfo(cachePath);
+            if (!info.Exists || info.Length < 32)
+            {
+                TryDelete(cachePath);
+                return string.Empty;
+            }
+
+            return cachePath;
+        }
+        catch
+        {
+            TryDelete(cachePath);
+            return string.Empty;
         }
     }
 
@@ -377,18 +451,19 @@ public sealed class PackageCatalogService : IPackageCatalogService
             progress?.Report(line);
         }
 
+        var hashVerifiedByWinget = downloadLines.Any(line =>
+            line.Contains("verified installer hash", StringComparison.OrdinalIgnoreCase));
+
         if (downloadExitCode == 0)
         {
             var installerFromDownload = FindInstallerInFolder(workingFolder);
             if (!string.IsNullOrWhiteSpace(installerFromDownload))
             {
-                return new PackageCatalogDownloadResult
-                {
-                    Success = true,
-                    Message = "Downloaded installer using WinGet.",
-                    InstallerPath = installerFromDownload,
-                    WorkingFolderPath = Path.GetDirectoryName(installerFromDownload) ?? workingFolder
-                };
+                return BuildSuccessfulDownloadResult(
+                    installerFromDownload,
+                    Path.GetDirectoryName(installerFromDownload) ?? workingFolder,
+                    "Downloaded installer using WinGet.",
+                    hashVerifiedByWinget);
             }
         }
 
@@ -413,13 +488,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var resolvedInstaller = await ResolveDownloadedInstallerPathAsync(targetPath, workingFolder, progress, cancellationToken);
         if (!string.IsNullOrWhiteSpace(resolvedInstaller))
         {
-            return new PackageCatalogDownloadResult
-            {
-                Success = true,
-                Message = "Downloaded installer from WinGet metadata URL.",
-                InstallerPath = resolvedInstaller,
-                WorkingFolderPath = Path.GetDirectoryName(resolvedInstaller) ?? workingFolder
-            };
+            return BuildSuccessfulDownloadResult(
+                resolvedInstaller,
+                Path.GetDirectoryName(resolvedInstaller) ?? workingFolder,
+                "Downloaded installer from WinGet metadata URL.",
+                hashVerifiedByWinget);
         }
 
         return new PackageCatalogDownloadResult
@@ -469,25 +542,21 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var installerFromPackage = FindInstallerInFolder(extractedFolder);
         if (!string.IsNullOrWhiteSpace(installerFromPackage))
         {
-            return new PackageCatalogDownloadResult
-            {
-                Success = true,
-                Message = "Installer extracted from Chocolatey package.",
-                InstallerPath = installerFromPackage,
-                WorkingFolderPath = Path.GetDirectoryName(installerFromPackage) ?? workingFolder
-            };
+            return BuildSuccessfulDownloadResult(
+                installerFromPackage,
+                Path.GetDirectoryName(installerFromPackage) ?? workingFolder,
+                "Installer extracted from Chocolatey package.",
+                hashVerifiedBySource: false);
         }
 
         var installerFromScript = await TryDownloadInstallerFromChocolateyScriptAsync(extractedFolder, workingFolder, progress, cancellationToken);
         if (!string.IsNullOrWhiteSpace(installerFromScript))
         {
-            return new PackageCatalogDownloadResult
-            {
-                Success = true,
-                Message = "Installer downloaded from Chocolatey install script metadata.",
-                InstallerPath = installerFromScript,
-                WorkingFolderPath = Path.GetDirectoryName(installerFromScript) ?? workingFolder
-            };
+            return BuildSuccessfulDownloadResult(
+                installerFromScript,
+                Path.GetDirectoryName(installerFromScript) ?? workingFolder,
+                "Installer downloaded from Chocolatey install script metadata.",
+                hashVerifiedBySource: false);
         }
 
         return new PackageCatalogDownloadResult
@@ -914,4 +983,80 @@ public sealed class PackageCatalogService : IPackageCatalogService
     }
 
     private sealed record TemplateSuggestion(string InstallCommand, string UninstallCommand, string DetectionGuidance, int ConfidenceScore);
+
+    private static string ComputeStableHash(string value)
+    {
+        var bytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(bytes)[..16].ToLowerInvariant();
+    }
+
+    private static string ComputeFileSha256(string filePath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            using var sha = SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static (bool IsSigned, string Subject) TryGetSignature(string filePath)
+    {
+        try
+        {
+            var certificate = X509Certificate.CreateFromSignedFile(filePath);
+            if (certificate is null)
+            {
+                return (false, string.Empty);
+            }
+
+            using var cert = new X509Certificate2(certificate);
+            return (!string.IsNullOrWhiteSpace(cert.Subject), cert.Subject ?? string.Empty);
+        }
+        catch
+        {
+            return (false, string.Empty);
+        }
+    }
+
+    private static PackageCatalogDownloadResult BuildSuccessfulDownloadResult(
+        string installerPath,
+        string workingFolderPath,
+        string message,
+        bool hashVerifiedBySource)
+    {
+        var sha256 = ComputeFileSha256(installerPath);
+        var signature = TryGetSignature(installerPath);
+
+        return new PackageCatalogDownloadResult
+        {
+            Success = true,
+            Message = message,
+            InstallerPath = installerPath,
+            WorkingFolderPath = workingFolderPath,
+            InstallerSha256 = sha256,
+            HashVerifiedBySource = hashVerifiedBySource,
+            VendorSigned = signature.IsSigned,
+            SignerSubject = signature.Subject
+        };
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best effort cleanup.
+        }
+    }
 }
