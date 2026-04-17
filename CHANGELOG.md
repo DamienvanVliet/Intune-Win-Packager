@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.19] - 2026-04-17
+
+### Fixed
+- Disabled Inno Setup automatic application closing/restarting in the installer (`CloseApplications=no`, `RestartApplications=no`) to prevent unrelated services/apps like `vgc` from being targeted.
+- Silent in-app updater now explicitly passes `/NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS`.
+
 ## [1.1.18] - 2026-04-17
 
 ### Added
