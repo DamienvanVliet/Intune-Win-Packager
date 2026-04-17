@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO.Compression;
 using System.Net.Http.Headers;
@@ -453,6 +454,12 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
         var hashVerifiedByWinget = downloadLines.Any(line =>
             line.Contains("verified installer hash", StringComparison.OrdinalIgnoreCase));
+        var hashMismatchDetected = downloadLines.Any(line =>
+            line.Contains("hash mismatch", StringComparison.OrdinalIgnoreCase) ||
+            (line.Contains("hash", StringComparison.OrdinalIgnoreCase) &&
+             line.Contains("match", StringComparison.OrdinalIgnoreCase) &&
+             line.Contains("not", StringComparison.OrdinalIgnoreCase)));
+        var installerUrlFromDownloadOutput = TryExtractInstallerUrlFromWingetLines(downloadLines);
 
         if (downloadExitCode == 0)
         {
@@ -467,16 +474,54 @@ public sealed class PackageCatalogService : IPackageCatalogService
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(installerUrlFromDownloadOutput))
+        {
+            progress?.Report("WinGet output included an installer URL. Attempting direct fallback download...");
+            try
+            {
+                var directUrlFileName = BuildDownloadFileNameFromUrl(installerUrlFromDownloadOutput, entry.PackageId, entry.Version);
+                var fallbackTargetPath = Path.Combine(workingFolder, directUrlFileName);
+                await DownloadFileAsync(installerUrlFromDownloadOutput, fallbackTargetPath, progress, cancellationToken);
+
+                var installerFromUrlFallback = await ResolveDownloadedInstallerPathAsync(fallbackTargetPath, workingFolder, progress, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(installerFromUrlFallback))
+                {
+                    var fallbackMessage = hashMismatchDetected
+                        ? "WinGet reported a hash mismatch. Downloaded installer from WinGet output URL, but source hash was not verified for this build."
+                        : "Downloaded installer from WinGet output URL. Source hash was not verified by WinGet for this build.";
+                    return BuildSuccessfulDownloadResult(
+                        installerFromUrlFallback,
+                        Path.GetDirectoryName(installerFromUrlFallback) ?? workingFolder,
+                        fallbackMessage,
+                        hashVerifiedBySource: false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"Direct URL fallback failed: {ex.Message}");
+            }
+        }
+
         progress?.Report("WinGet download command did not produce a direct installer. Trying installer URL metadata...");
 
         var details = await GetWingetDetailsAsync(entry, cancellationToken);
         var installerUrl = details.InstallerDownloadUrl;
         if (string.IsNullOrWhiteSpace(installerUrl))
         {
+            var failureMessage = "WinGet download failed and no installer URL metadata was available for this package.";
+            if (hashMismatchDetected)
+            {
+                failureMessage += " WinGet also reported a hash mismatch for the installer.";
+            }
+
             return new PackageCatalogDownloadResult
             {
                 Success = false,
-                Message = "No installer URL was available for this WinGet package.",
+                Message = failureMessage,
                 WorkingFolderPath = workingFolder
             };
         }
@@ -501,6 +546,32 @@ public sealed class PackageCatalogService : IPackageCatalogService
             Message = "Downloaded artifact did not contain a supported installer file.",
             WorkingFolderPath = workingFolder
         };
+    }
+
+    private static string TryExtractInstallerUrlFromWingetLines(IReadOnlyList<string> lines)
+    {
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            var match = UrlRegex.Match(line);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var url = match.Value.Trim();
+            if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                return url;
+            }
+        }
+
+        return string.Empty;
     }
 
     private async Task<PackageCatalogDownloadResult> DownloadChocolateyInstallerAsync(
@@ -751,12 +822,12 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
     private async Task<(int ExitCode, IReadOnlyList<string> Lines)> RunProcessCaptureAsync(string executable, string arguments, CancellationToken cancellationToken)
     {
-        var lines = new List<string>();
-        var progress = new Progress<ProcessOutputLine>(line =>
+        var lines = new ConcurrentQueue<string>();
+        var progress = new SynchronousProgress<ProcessOutputLine>(line =>
         {
             if (!string.IsNullOrWhiteSpace(line.Text))
             {
-                lines.Add(line.Text.TrimEnd());
+                lines.Enqueue(line.Text.TrimEnd());
             }
         });
 
@@ -768,7 +839,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
             PreferLowImpact = true
         }, progress, cancellationToken);
 
-        return (result.ExitCode, lines);
+        return (result.ExitCode, lines.ToArray());
     }
 
     private static IReadOnlyList<(string Name, string Id, string Version, string Match)> ParseWingetRows(IReadOnlyList<string> lines)
@@ -1057,6 +1128,21 @@ public sealed class PackageCatalogService : IPackageCatalogService
         catch
         {
             // Best effort cleanup.
+        }
+    }
+
+    private sealed class SynchronousProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+
+        public SynchronousProgress(Action<T> handler)
+        {
+            _handler = handler;
+        }
+
+        public void Report(T value)
+        {
+            _handler(value);
         }
     }
 }
