@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.22] - 2026-04-17
+
+### Fixed
+- Added an installer-level update rescue path for locked `IntuneWinPackager.App.exe` scenarios: setup now enables controlled application closing and only targets `IntuneWinPackager.App.exe` for close detection.
+- Added installer mutex coordination (`AppMutex=IntuneWinPackager.AppMutex`) and app mutex registration to improve update reliability and avoid concurrent app/update conflicts.
+- Updated silent in-app updater arguments to allow controlled close behavior (`/CLOSEAPPLICATIONS`) while still preventing automatic app restart after setup.
+- Enabled setup logging to improve troubleshooting when update/replace issues are reported from production machines.
+
 ## [1.1.21] - 2026-04-17
 
 ### Fixed

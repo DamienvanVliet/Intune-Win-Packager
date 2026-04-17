@@ -5,16 +5,29 @@ using IntuneWinPackager.Core.Services;
 using IntuneWinPackager.Infrastructure.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System.Threading;
 
 namespace IntuneWinPackager.App;
 
 public partial class App : System.Windows.Application
 {
+    private const string AppMutexName = "IntuneWinPackager.AppMutex";
+
     private IHost? _host;
+    private Mutex? _appMutex;
 
     protected override async void OnStartup(System.Windows.StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        _appMutex = new Mutex(initiallyOwned: true, name: AppMutexName, createdNew: out var createdNew);
+        if (!createdNew)
+        {
+            _appMutex.Dispose();
+            _appMutex = null;
+            Shutdown();
+            return;
+        }
 
         _host = Host.CreateDefaultBuilder()
             .ConfigureServices(services =>
@@ -56,6 +69,13 @@ public partial class App : System.Windows.Application
         {
             await _host.StopAsync(TimeSpan.FromSeconds(5));
             _host.Dispose();
+        }
+
+        if (_appMutex is not null)
+        {
+            _appMutex.ReleaseMutex();
+            _appMutex.Dispose();
+            _appMutex = null;
         }
 
         base.OnExit(e);

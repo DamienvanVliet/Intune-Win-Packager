@@ -18,6 +18,7 @@
 AppId={{E8E631D4-7D83-4C53-A6C8-4DFA7557043D}
 AppName={#MyAppName}
 AppVersion={#AppVersion}
+AppMutex=IntuneWinPackager.AppMutex
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -32,8 +33,10 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\{#MyAppExeName}
-CloseApplications=no
+CloseApplications=yes
+CloseApplicationsFilter=IntuneWinPackager.App.exe
 RestartApplications=no
+SetupLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
