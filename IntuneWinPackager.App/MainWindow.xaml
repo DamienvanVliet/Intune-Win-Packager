@@ -109,7 +109,7 @@
             </DockPanel>
         </Border>
 
-        <TabControl Grid.Row="2">
+        <TabControl Grid.Row="2" SelectedIndex="{Binding SelectedMainTabIndex}">
             <TabItem>
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
@@ -1367,8 +1367,12 @@
                                                    TextWrapping="Wrap" />
 
                                         <WrapPanel>
+                                            <Button Content="{DynamicResource Ui.Store.Download}"
+                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                    Command="{Binding DownloadCatalogEntryCommand}" />
                                             <Button Content="{DynamicResource Ui.Store.UseInPackager}"
                                                     Style="{StaticResource PrimaryButtonStyle}"
+                                                    Margin="8,0,0,0"
                                                     Command="{Binding UseCatalogEntryCommand}" />
                                             <Button Content="{DynamicResource Ui.Store.OpenHomepage}"
                                                     Style="{StaticResource SecondaryButtonStyle}"

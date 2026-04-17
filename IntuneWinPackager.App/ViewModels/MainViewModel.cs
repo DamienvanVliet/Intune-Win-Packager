@@ -296,6 +296,9 @@ public partial class MainViewModel : ObservableObject
     private bool isPackageCatalogDetailBusy;
 
     [ObservableProperty]
+    private bool isCatalogDownloadBusy;
+
+    [ObservableProperty]
     private string packageCatalogStatus = string.Empty;
 
     [ObservableProperty]
@@ -303,6 +306,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private PackageCatalogEntry? catalogEntryDetails;
+
+    [ObservableProperty]
+    private int selectedMainTabIndex;
 
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
@@ -405,6 +411,7 @@ public partial class MainViewModel : ObservableObject
         CheckForUpdatesCommand = new AsyncRelayCommand(CheckForUpdatesAsync, () => !IsBusy);
         InstallUpdateCommand = new AsyncRelayCommand(InstallUpdateAsync, CanInstallUpdate);
         SearchCatalogCommand = new AsyncRelayCommand(SearchCatalogAsync, CanSearchCatalog);
+        DownloadCatalogEntryCommand = new AsyncRelayCommand(DownloadCatalogEntryAsync, CanDownloadCatalogEntrySelection);
         UseCatalogEntryCommand = new RelayCommand(UseCatalogEntry, CanUseCatalogEntrySelection);
         OpenCatalogHomepageCommand = new RelayCommand(OpenCatalogHomepage, CanOpenCatalogHomepageLink);
 
@@ -700,6 +707,8 @@ public partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand InstallUpdateCommand { get; }
 
     public IAsyncRelayCommand SearchCatalogCommand { get; }
+
+    public IAsyncRelayCommand DownloadCatalogEntryCommand { get; }
 
     public IRelayCommand UseCatalogEntryCommand { get; }
 
@@ -1083,11 +1092,18 @@ public partial class MainViewModel : ObservableObject
     partial void OnIsPackageCatalogBusyChanged(bool value)
     {
         SearchCatalogCommand.NotifyCanExecuteChanged();
+        DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsPackageCatalogDetailBusyChanged(bool value)
+    {
+        DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnSelectedCatalogEntryChanged(PackageCatalogEntry? value)
     {
         OnPropertyChanged(nameof(HasCatalogSelection));
+        DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
         OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
         _ = LoadCatalogDetailsAsync(value);
@@ -1096,8 +1112,14 @@ public partial class MainViewModel : ObservableObject
     partial void OnCatalogEntryDetailsChanged(PackageCatalogEntry? value)
     {
         OnPropertyChanged(nameof(HasCatalogDetails));
+        DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
         OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsCatalogDownloadBusyChanged(bool value)
+    {
+        DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnOperationStateChanged(OperationState value)
@@ -1119,6 +1141,7 @@ public partial class MainViewModel : ObservableObject
         CheckForUpdatesCommand.NotifyCanExecuteChanged();
         InstallUpdateCommand.NotifyCanExecuteChanged();
         SearchCatalogCommand.NotifyCanExecuteChanged();
+        DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
         OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
     }
@@ -1951,6 +1974,15 @@ public partial class MainViewModel : ObservableObject
         return !IsBusy && (CatalogEntryDetails is not null || SelectedCatalogEntry is not null);
     }
 
+    private bool CanDownloadCatalogEntrySelection()
+    {
+        return !IsBusy &&
+               !IsCatalogDownloadBusy &&
+               !IsPackageCatalogBusy &&
+               !IsPackageCatalogDetailBusy &&
+               (CatalogEntryDetails is not null || SelectedCatalogEntry is not null);
+    }
+
     private bool CanOpenCatalogHomepageLink()
     {
         return !IsBusy && !string.IsNullOrWhiteSpace((CatalogEntryDetails ?? SelectedCatalogEntry)?.HomepageUrl);
@@ -2063,6 +2095,93 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    private async Task DownloadCatalogEntryAsync()
+    {
+        if (!CanDownloadCatalogEntrySelection())
+        {
+            return;
+        }
+
+        var entry = CatalogEntryDetails ?? SelectedCatalogEntry;
+        if (entry is null)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        IsCatalogDownloadBusy = true;
+
+        SetStatus(
+            OperationState.Running,
+            T("Vm.Status.CatalogDownloadStartedTitle"),
+            TF("Vm.Status.CatalogDownloadStartedMessage", entry.Name));
+        PackageCatalogStatus = TF("Vm.Store.Downloading", entry.Name);
+        AppendLog($"Store download started for {entry.Name} ({entry.PackageId}).");
+
+        try
+        {
+            var downloadResult = await _packageCatalogService.DownloadInstallerAsync(
+                entry,
+                new InlineProgress<string>(AppendLog));
+
+            if (!downloadResult.Success || string.IsNullOrWhiteSpace(downloadResult.InstallerPath) || !File.Exists(downloadResult.InstallerPath))
+            {
+                var errorMessage = string.IsNullOrWhiteSpace(downloadResult.Message)
+                    ? T("Vm.Store.DownloadFailedGeneric")
+                    : downloadResult.Message;
+
+                PackageCatalogStatus = TF("Vm.Store.DownloadFailed", entry.Name);
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.CatalogDownloadFailedTitle"),
+                    errorMessage);
+                AppendLog($"Store download failed for {entry.Name}: {errorMessage}");
+                return;
+            }
+
+            await SelectSetupFileAsync(downloadResult.InstallerPath);
+            if (!string.IsNullOrWhiteSpace(downloadResult.WorkingFolderPath) &&
+                Directory.Exists(downloadResult.WorkingFolderPath))
+            {
+                SourceFolder = downloadResult.WorkingFolderPath;
+            }
+
+            if (string.IsNullOrWhiteSpace(ProfileName))
+            {
+                ProfileName = $"{entry.PackageId}-profile";
+            }
+
+            SelectedMainTabIndex = 0;
+            PackageCatalogStatus = TF("Vm.Store.DownloadReady", entry.Name);
+
+            var readyMessage = TF("Vm.Status.CatalogDownloadReadyMessage", Path.GetFileName(downloadResult.InstallerPath));
+            SetStatus(
+                OperationState.Success,
+                T("Vm.Status.CatalogDownloadReadyTitle"),
+                readyMessage);
+            AppendLog($"Store download complete: {downloadResult.InstallerPath}");
+            AppendLog("Packaging fields were auto-filled from the downloaded installer.");
+        }
+        catch (OperationCanceledException)
+        {
+            PackageCatalogStatus = T("Vm.Store.Canceled");
+        }
+        catch (Exception ex)
+        {
+            PackageCatalogStatus = TF("Vm.Store.DownloadError", ex.Message);
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.CatalogDownloadFailedTitle"),
+                ex.Message);
+            AppendLog($"Store download error for {entry.Name}: {ex.Message}");
+        }
+        finally
+        {
+            IsCatalogDownloadBusy = false;
+            IsBusy = false;
+        }
+    }
+
     private void UseCatalogEntry()
     {
         var entry = CatalogEntryDetails ?? SelectedCatalogEntry;
@@ -2081,14 +2200,25 @@ public partial class MainViewModel : ObservableObject
             InstallerType = entry.InstallerType;
         }
 
-        if (!string.IsNullOrWhiteSpace(entry.SuggestedInstallCommand))
+        var skippedTemplateCommands = false;
+        if (!string.IsNullOrWhiteSpace(entry.SuggestedInstallCommand) &&
+            !ContainsCatalogTemplatePlaceholder(entry.SuggestedInstallCommand))
         {
             InstallCommand = entry.SuggestedInstallCommand;
         }
+        else if (!string.IsNullOrWhiteSpace(entry.SuggestedInstallCommand))
+        {
+            skippedTemplateCommands = true;
+        }
 
-        if (!string.IsNullOrWhiteSpace(entry.SuggestedUninstallCommand))
+        if (!string.IsNullOrWhiteSpace(entry.SuggestedUninstallCommand) &&
+            !ContainsCatalogTemplatePlaceholder(entry.SuggestedUninstallCommand))
         {
             UninstallCommand = entry.SuggestedUninstallCommand;
+        }
+        else if (!string.IsNullOrWhiteSpace(entry.SuggestedUninstallCommand))
+        {
+            skippedTemplateCommands = true;
         }
 
         if (entry.InstallerType == InstallerType.Exe)
@@ -2107,6 +2237,15 @@ public partial class MainViewModel : ObservableObject
             T("Vm.Status.CatalogAppliedTitle"),
             TF("Vm.Status.CatalogAppliedMessage", entry.Name));
         AppendLog($"Catalog template applied for {entry.Name} ({entry.PackageId}).");
+        if (skippedTemplateCommands)
+        {
+            AppendLog(T("Vm.Store.CommandTemplatesNeedDownload"));
+        }
+    }
+
+    private static bool ContainsCatalogTemplatePlaceholder(string command)
+    {
+        return command.Contains('<') && command.Contains('>');
     }
 
     private void OpenCatalogHomepage()

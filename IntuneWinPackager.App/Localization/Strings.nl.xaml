@@ -120,6 +120,7 @@
     <sys:String x:Key="Ui.Store.InstallCommandHint">Install command template</sys:String>
     <sys:String x:Key="Ui.Store.UninstallCommandHint">Uninstall command template</sys:String>
     <sys:String x:Key="Ui.Store.DetectionHint">Detectie-richtlijn</sys:String>
+    <sys:String x:Key="Ui.Store.Download">Downloaden</sys:String>
     <sys:String x:Key="Ui.Store.UseInPackager">Gebruik in Packager</sys:String>
     <sys:String x:Key="Ui.Store.OpenHomepage">Open Homepage</sys:String>
 
@@ -205,6 +206,12 @@
     <sys:String x:Key="Vm.Store.LoadingDetails">Details laden voor {0}...</sys:String>
     <sys:String x:Key="Vm.Store.DetailReady">Details geladen voor {0}.</sys:String>
     <sys:String x:Key="Vm.Store.DetailsError">Kon package-details niet laden: {0}</sys:String>
+    <sys:String x:Key="Vm.Store.Downloading">Package '{0}' wordt gedownload...</sys:String>
+    <sys:String x:Key="Vm.Store.DownloadReady">'{0}' is gedownload en geladen in Packaging.</sys:String>
+    <sys:String x:Key="Vm.Store.DownloadFailed">Downloaden van '{0}' is mislukt.</sys:String>
+    <sys:String x:Key="Vm.Store.DownloadError">Downloadfout: {0}</sys:String>
+    <sys:String x:Key="Vm.Store.DownloadFailedGeneric">Package-download kon niet worden voltooid.</sys:String>
+    <sys:String x:Key="Vm.Store.CommandTemplatesNeedDownload">Catalogus-placeholders voor commands zijn niet gekopieerd. Klik op Downloaden om exacte installer-commands automatisch in te vullen.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.CacheVerified">Silent switches zijn geverifieerd vanuit lokale historie voor exact deze installer-build.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.ManualVerified">Silent switches zijn door jou als geverifieerd gemarkeerd. Dit wordt lokaal opgeslagen na succesvolle packaging.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.NotVerified">Silent switches zijn nog niet geverifieerd. Test een keer en vink daarna de verificatie aan.</sys:String>
@@ -275,6 +282,11 @@
     <sys:String x:Key="Vm.Status.CatalogAppliedTitle">Catalogus-template toegepast</sys:String>
     <sys:String x:Key="Vm.Status.CatalogAppliedMessage">Catalogus-hints toegepast voor '{0}'. Controleer commands en detectie voor packaging.</sys:String>
     <sys:String x:Key="Vm.Status.CatalogLinkOpenFailedTitle">Kon link niet openen</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadStartedTitle">Package downloaden</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadStartedMessage">'{0}' wordt gedownload en Packaging-velden worden voorbereid.</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadReadyTitle">Package klaar</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadReadyMessage">'{0}' is gedownload. Packaging-velden zijn automatisch ingevuld.</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadFailedTitle">Package-download mislukt</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressTitle">Packaging bezig</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressMessage">IntuneWinAppUtil.exe wordt uitgevoerd...</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Los preflight-fouten op voordat package-creatie start.</sys:String>

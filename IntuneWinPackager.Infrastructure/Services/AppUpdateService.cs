@@ -287,7 +287,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
             if (silentInstall)
             {
-                startInfo.Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS";
+                startInfo.Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-";
             }
 
             Process.Start(startInfo);

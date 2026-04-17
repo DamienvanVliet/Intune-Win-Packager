@@ -18,6 +18,8 @@ internal static class DataPathProvider
 
     public static string UpdatesDirectory => Path.Combine(BaseDirectory, "updates");
 
+    public static string CatalogDownloadsDirectory => Path.Combine(BaseDirectory, "catalog-downloads");
+
     public static void EnsureBaseDirectory()
     {
         Directory.CreateDirectory(BaseDirectory);

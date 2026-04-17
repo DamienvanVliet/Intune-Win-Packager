@@ -24,6 +24,8 @@ public sealed record PackageCatalogEntry
 
     public string IconUrl { get; init; } = string.Empty;
 
+    public string InstallerDownloadUrl { get; init; } = string.Empty;
+
     public InstallerType InstallerType { get; init; } = InstallerType.Unknown;
 
     public string InstallerTypeRaw { get; init; } = string.Empty;

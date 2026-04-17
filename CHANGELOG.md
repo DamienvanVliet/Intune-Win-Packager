@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.18] - 2026-04-17
+
+### Added
+- Added a dedicated `Download` action in Package Store details. It downloads the selected package artifact and automatically loads it into the Packaging workflow.
+- Added Package Store download support for WinGet and Chocolatey sources (including archive extraction and installer discovery where possible).
+
+### Changed
+- Package Store now auto-prepares Packaging fields from the real downloaded installer, so install/uninstall commands are generated from actual installer metadata instead of template placeholders.
+- Improved Package Store icon fallback behavior for more packages using homepage/id-derived favicon resolution.
+
+### Fixed
+- Silent app update no longer uses forced close flags (`/CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS`), avoiding unnecessary forced process/service shutdown side effects.
+
 ## [1.1.17] - 2026-04-17
 
 ### Added

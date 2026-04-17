@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -6,12 +7,28 @@ using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
+using IntuneWinPackager.Infrastructure.Support;
 
 namespace IntuneWinPackager.Infrastructure.Services;
 
 public sealed class PackageCatalogService : IPackageCatalogService
 {
     private static readonly Regex MultiSpaceRegex = new(@"\s{2,}", RegexOptions.Compiled);
+    private static readonly Regex UrlRegex = new(@"https?://[^\s'""`]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly string[] SupportedInstallerExtensions =
+    [
+        ".msi",
+        ".exe",
+        ".appx",
+        ".appxbundle",
+        ".msix",
+        ".msixbundle",
+        ".ps1",
+        ".cmd",
+        ".bat",
+        ".vbs",
+        ".wsf"
+    ];
 
     private readonly IProcessRunner _processRunner;
     private readonly HttpClient _httpClient;
@@ -79,6 +96,56 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
     }
 
+    public async Task<PackageCatalogDownloadResult> DownloadInstallerAsync(
+        PackageCatalogEntry entry,
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (entry is null || string.IsNullOrWhiteSpace(entry.PackageId))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = "Package entry is missing.",
+            };
+        }
+
+        var packageSegment = SanitizePathSegment(entry.PackageId);
+        var versionSegment = SanitizePathSegment(string.IsNullOrWhiteSpace(entry.Version) ? "latest" : entry.Version);
+        var workingFolder = Path.Combine(DataPathProvider.CatalogDownloadsDirectory, packageSegment, versionSegment);
+        Directory.CreateDirectory(workingFolder);
+
+        progress?.Report($"Downloading package '{entry.Name}' from {entry.SourceDisplayName}...");
+
+        try
+        {
+            return entry.Source switch
+            {
+                PackageCatalogSource.Winget => await DownloadWingetInstallerAsync(entry, workingFolder, progress, cancellationToken),
+                PackageCatalogSource.Chocolatey => await DownloadChocolateyInstallerAsync(entry, workingFolder, progress, cancellationToken),
+                _ => new PackageCatalogDownloadResult
+                {
+                    Success = false,
+                    Message = $"Source {entry.SourceDisplayName} is not supported for download.",
+                    WorkingFolderPath = workingFolder
+                }
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = $"Package download failed: {ex.Message}",
+                WorkingFolderPath = workingFolder
+            };
+        }
+    }
+
     private async Task<IReadOnlyList<PackageCatalogEntry>> SearchWingetAsync(string term, int limit, CancellationToken cancellationToken)
     {
         var (exitCode, lines) = await RunProcessCaptureAsync(
@@ -100,6 +167,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
             Version = row.Version,
             BuildVersion = row.Version,
             Description = row.Match,
+            IconUrl = ResolveIconUrl(null, null, row.Id),
             MetadataNotes = "Basic result from WinGet search.",
             ConfidenceScore = 25
         }).ToList();
@@ -159,6 +227,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var installerType = InferInstallerType(installerRaw, map.GetValueOrDefault("Description"));
         var template = BuildTemplate(entry.PackageId, installerType, installerRaw);
         var homepage = Coalesce(map.GetValueOrDefault("Homepage"), map.GetValueOrDefault("Publisher Url"), entry.HomepageUrl);
+        var installerUrl = Coalesce(map.GetValueOrDefault("Installer Url"), entry.InstallerDownloadUrl);
 
         DateTimeOffset? releaseDate = null;
         if (DateTimeOffset.TryParse(map.GetValueOrDefault("Release Date"), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
@@ -174,7 +243,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             Publisher = Coalesce(map.GetValueOrDefault("Publisher"), entry.Publisher),
             Description = Coalesce(map.GetValueOrDefault("Description"), entry.Description),
             HomepageUrl = homepage,
-            IconUrl = ResolveIconUrl(map.GetValueOrDefault("Icon"), homepage),
+            IconUrl = ResolveIconUrl(map.GetValueOrDefault("Icon"), homepage, entry.PackageId),
+            InstallerDownloadUrl = installerUrl,
             InstallerType = installerType,
             InstallerTypeRaw = installerRaw,
             SuggestedInstallCommand = template.InstallCommand,
@@ -260,6 +330,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             var tags = properties?.Element(d + "Tags")?.Value?.Trim() ?? string.Empty;
             var homepage = properties?.Element(d + "ProjectUrl")?.Value?.Trim() ?? string.Empty;
             var icon = properties?.Element(d + "IconUrl")?.Value?.Trim() ?? string.Empty;
+            var contentNode = atomEntry.Element(atom + "content");
+            var packageDownloadUrl = contentNode?.Attribute("src")?.Value?.Trim() ?? string.Empty;
             var author = atomEntry.Element(atom + "author")?.Element(atom + "name")?.Value?.Trim() ?? string.Empty;
             var installerType = InferInstallerType(tags, summary);
             var template = BuildTemplate(id, installerType, tags);
@@ -275,7 +347,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 Publisher = author,
                 Description = Truncate(summary, 260),
                 HomepageUrl = homepage,
-                IconUrl = ResolveIconUrl(icon, homepage),
+                IconUrl = ResolveIconUrl(icon, homepage, id),
+                InstallerDownloadUrl = packageDownloadUrl,
                 InstallerType = installerType,
                 InstallerTypeRaw = tags,
                 SuggestedInstallCommand = template.InstallCommand,
@@ -288,6 +361,323 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
 
         return parsed;
+    }
+
+    private async Task<PackageCatalogDownloadResult> DownloadWingetInstallerAsync(
+        PackageCatalogEntry entry,
+        string workingFolder,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var downloadArguments =
+            $"download --id {QuoteArgument(entry.PackageId)} --exact --source winget --accept-source-agreements --download-directory {QuoteArgument(workingFolder)} --disable-interactivity";
+        var (downloadExitCode, downloadLines) = await RunProcessCaptureAsync("winget", downloadArguments, cancellationToken);
+        foreach (var line in downloadLines.TakeLast(8))
+        {
+            progress?.Report(line);
+        }
+
+        if (downloadExitCode == 0)
+        {
+            var installerFromDownload = FindInstallerInFolder(workingFolder);
+            if (!string.IsNullOrWhiteSpace(installerFromDownload))
+            {
+                return new PackageCatalogDownloadResult
+                {
+                    Success = true,
+                    Message = "Downloaded installer using WinGet.",
+                    InstallerPath = installerFromDownload,
+                    WorkingFolderPath = Path.GetDirectoryName(installerFromDownload) ?? workingFolder
+                };
+            }
+        }
+
+        progress?.Report("WinGet download command did not produce a direct installer. Trying installer URL metadata...");
+
+        var details = await GetWingetDetailsAsync(entry, cancellationToken);
+        var installerUrl = details.InstallerDownloadUrl;
+        if (string.IsNullOrWhiteSpace(installerUrl))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = "No installer URL was available for this WinGet package.",
+                WorkingFolderPath = workingFolder
+            };
+        }
+
+        var fallbackFileName = BuildDownloadFileNameFromUrl(installerUrl, entry.PackageId, entry.Version);
+        var targetPath = Path.Combine(workingFolder, fallbackFileName);
+        await DownloadFileAsync(installerUrl, targetPath, progress, cancellationToken);
+
+        var resolvedInstaller = await ResolveDownloadedInstallerPathAsync(targetPath, workingFolder, progress, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(resolvedInstaller))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = true,
+                Message = "Downloaded installer from WinGet metadata URL.",
+                InstallerPath = resolvedInstaller,
+                WorkingFolderPath = Path.GetDirectoryName(resolvedInstaller) ?? workingFolder
+            };
+        }
+
+        return new PackageCatalogDownloadResult
+        {
+            Success = false,
+            Message = "Downloaded artifact did not contain a supported installer file.",
+            WorkingFolderPath = workingFolder
+        };
+    }
+
+    private async Task<PackageCatalogDownloadResult> DownloadChocolateyInstallerAsync(
+        PackageCatalogEntry entry,
+        string workingFolder,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var nupkgUrl = !string.IsNullOrWhiteSpace(entry.InstallerDownloadUrl)
+            ? entry.InstallerDownloadUrl
+            : BuildChocolateyPackageUrl(entry.PackageId, entry.Version);
+
+        if (string.IsNullOrWhiteSpace(nupkgUrl))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = "Chocolatey package URL could not be resolved.",
+                WorkingFolderPath = workingFolder
+            };
+        }
+
+        var nupkgFileName = BuildDownloadFileNameFromUrl(nupkgUrl, entry.PackageId, entry.Version);
+        if (!nupkgFileName.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
+        {
+            nupkgFileName = $"{Path.GetFileNameWithoutExtension(nupkgFileName)}.nupkg";
+        }
+
+        var nupkgPath = Path.Combine(workingFolder, nupkgFileName);
+        await DownloadFileAsync(nupkgUrl, nupkgPath, progress, cancellationToken);
+
+        var extractedFolder = Path.Combine(workingFolder, "expanded");
+        if (Directory.Exists(extractedFolder))
+        {
+            Directory.Delete(extractedFolder, recursive: true);
+        }
+
+        ZipFile.ExtractToDirectory(nupkgPath, extractedFolder);
+        var installerFromPackage = FindInstallerInFolder(extractedFolder);
+        if (!string.IsNullOrWhiteSpace(installerFromPackage))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = true,
+                Message = "Installer extracted from Chocolatey package.",
+                InstallerPath = installerFromPackage,
+                WorkingFolderPath = Path.GetDirectoryName(installerFromPackage) ?? workingFolder
+            };
+        }
+
+        var installerFromScript = await TryDownloadInstallerFromChocolateyScriptAsync(extractedFolder, workingFolder, progress, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(installerFromScript))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = true,
+                Message = "Installer downloaded from Chocolatey install script metadata.",
+                InstallerPath = installerFromScript,
+                WorkingFolderPath = Path.GetDirectoryName(installerFromScript) ?? workingFolder
+            };
+        }
+
+        return new PackageCatalogDownloadResult
+        {
+            Success = false,
+            Message = "Chocolatey package does not contain a downloadable installer payload. Open homepage or vendor download page.",
+            WorkingFolderPath = workingFolder
+        };
+    }
+
+    private async Task<string> TryDownloadInstallerFromChocolateyScriptAsync(
+        string extractedFolder,
+        string workingFolder,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var scriptPath = Directory
+            .EnumerateFiles(extractedFolder, "*.ps1", SearchOption.AllDirectories)
+            .FirstOrDefault(path =>
+                Path.GetFileName(path).Equals("chocolateyInstall.ps1", StringComparison.OrdinalIgnoreCase) ||
+                Path.GetFileName(path).Equals("chocolateyinstall.ps1", StringComparison.OrdinalIgnoreCase));
+
+        if (string.IsNullOrWhiteSpace(scriptPath) || !File.Exists(scriptPath))
+        {
+            return string.Empty;
+        }
+
+        var script = await File.ReadAllTextAsync(scriptPath, cancellationToken);
+        var urls = UrlRegex.Matches(script)
+            .Select(match => match.Value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(value => value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        foreach (var url in urls)
+        {
+            var fileName = BuildDownloadFileNameFromUrl(url, "installer", null);
+            var targetPath = Path.Combine(workingFolder, fileName);
+
+            try
+            {
+                await DownloadFileAsync(url, targetPath, progress, cancellationToken);
+                var resolvedInstaller = await ResolveDownloadedInstallerPathAsync(targetPath, workingFolder, progress, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(resolvedInstaller))
+                {
+                    return resolvedInstaller;
+                }
+            }
+            catch
+            {
+                // Continue with the next URL candidate.
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private async Task DownloadFileAsync(
+        string url,
+        string targetPath,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        progress?.Report($"Downloading {Path.GetFileName(targetPath)}...");
+
+        using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var targetDirectory = Path.GetDirectoryName(targetPath);
+        if (!string.IsNullOrWhiteSpace(targetDirectory))
+        {
+            Directory.CreateDirectory(targetDirectory);
+        }
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var destination = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        await source.CopyToAsync(destination, cancellationToken);
+    }
+
+    private Task<string> ResolveDownloadedInstallerPathAsync(
+        string targetPath,
+        string workingFolder,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (IsSupportedInstallerFile(targetPath))
+        {
+            return Task.FromResult(targetPath);
+        }
+
+        if (targetPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+            targetPath.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
+        {
+            var archiveFolder = Path.Combine(
+                workingFolder,
+                $"{Path.GetFileNameWithoutExtension(targetPath)}-expanded");
+
+            if (Directory.Exists(archiveFolder))
+            {
+                Directory.Delete(archiveFolder, recursive: true);
+            }
+
+            ZipFile.ExtractToDirectory(targetPath, archiveFolder);
+            var installerFromArchive = FindInstallerInFolder(archiveFolder);
+            if (!string.IsNullOrWhiteSpace(installerFromArchive))
+            {
+                progress?.Report($"Installer extracted from archive: {Path.GetFileName(installerFromArchive)}");
+                return Task.FromResult(installerFromArchive);
+            }
+        }
+
+        var installerFromFolder = FindInstallerInFolder(workingFolder);
+        if (!string.IsNullOrWhiteSpace(installerFromFolder))
+        {
+            return Task.FromResult(installerFromFolder);
+        }
+
+        return Task.FromResult(string.Empty);
+    }
+
+    private static string FindInstallerInFolder(string folderPath)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        {
+            return string.Empty;
+        }
+
+        var candidates = Directory
+            .EnumerateFiles(folderPath, "*.*", SearchOption.AllDirectories)
+            .Where(IsSupportedInstallerFile)
+            .OrderBy(path => InstallerPriority(path))
+            .ThenByDescending(path => new FileInfo(path).Length)
+            .ToList();
+
+        return candidates.FirstOrDefault() ?? string.Empty;
+    }
+
+    private static int InstallerPriority(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.ToLowerInvariant() switch
+        {
+            ".msi" => 0,
+            ".msix" or ".msixbundle" or ".appx" or ".appxbundle" => 1,
+            ".exe" => 2,
+            _ => 3
+        };
+    }
+
+    private static bool IsSupportedInstallerFile(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        var extension = Path.GetExtension(path);
+        return SupportedInstallerExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string BuildChocolateyPackageUrl(string packageId, string version)
+    {
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            return string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return $"https://community.chocolatey.org/api/v2/package/{Uri.EscapeDataString(packageId)}";
+        }
+
+        return $"https://community.chocolatey.org/api/v2/package/{Uri.EscapeDataString(packageId)}/{Uri.EscapeDataString(version)}";
+    }
+
+    private static string BuildDownloadFileNameFromUrl(string url, string packageId, string? version)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            var candidate = Path.GetFileName(uri.LocalPath);
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        var safePackageId = SanitizePathSegment(packageId);
+        var safeVersion = SanitizePathSegment(string.IsNullOrWhiteSpace(version) ? "latest" : version);
+        return $"{safePackageId}-{safeVersion}.bin";
     }
 
     private async Task<(int ExitCode, IReadOnlyList<string> Lines)> RunProcessCaptureAsync(string executable, string arguments, CancellationToken cancellationToken)
@@ -406,19 +796,95 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return score;
     }
 
-    private static string ResolveIconUrl(string? iconUrl, string? homepage)
+    private static string ResolveIconUrl(string? iconUrl, string? homepage, string? packageId = null)
     {
-        if (!string.IsNullOrWhiteSpace(iconUrl) && Uri.TryCreate(iconUrl, UriKind.Absolute, out var iconUri) && !iconUri.AbsolutePath.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(iconUrl) &&
+            Uri.TryCreate(iconUrl, UriKind.Absolute, out var iconUri) &&
+            !iconUri.AbsolutePath.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
         {
             return iconUrl!;
         }
 
-        if (!string.IsNullOrWhiteSpace(homepage) && Uri.TryCreate(homepage, UriKind.Absolute, out var uri) && !string.IsNullOrWhiteSpace(uri.Host))
+        if (!string.IsNullOrWhiteSpace(homepage) &&
+            Uri.TryCreate(homepage, UriKind.Absolute, out var homepageUri) &&
+            !string.IsNullOrWhiteSpace(homepageUri.Host))
         {
-            return $"https://icons.duckduckgo.com/ip3/{uri.Host}.ico";
+            return BuildFaviconUrl(homepageUri.Host);
+        }
+
+        if (!string.IsNullOrWhiteSpace(iconUrl) &&
+            Uri.TryCreate(iconUrl, UriKind.Absolute, out var svgUri) &&
+            !string.IsNullOrWhiteSpace(svgUri.Host))
+        {
+            return BuildFaviconUrl(svgUri.Host);
+        }
+
+        var inferredHost = BuildLikelyHostFromPackageId(packageId);
+        if (!string.IsNullOrWhiteSpace(inferredHost))
+        {
+            return BuildFaviconUrl(inferredHost);
         }
 
         return string.Empty;
+    }
+
+    private static string BuildFaviconUrl(string host)
+    {
+        return $"https://www.google.com/s2/favicons?sz=128&domain={Uri.EscapeDataString(host)}";
+    }
+
+    private static string BuildLikelyHostFromPackageId(string? packageId)
+    {
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            return string.Empty;
+        }
+
+        var parts = packageId
+            .Split(['.', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var vendor = parts[0].ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(vendor) || vendor.Length < 2)
+        {
+            return string.Empty;
+        }
+
+        if (vendor.Contains("microsoft", StringComparison.Ordinal))
+        {
+            return "microsoft.com";
+        }
+
+        if (vendor.Contains("google", StringComparison.Ordinal))
+        {
+            return "google.com";
+        }
+
+        if (vendor.Contains("github", StringComparison.Ordinal))
+        {
+            return "github.com";
+        }
+
+        if (vendor.EndsWith("corp", StringComparison.Ordinal))
+        {
+            vendor = vendor[..^4];
+        }
+
+        return $"{vendor}.com";
+    }
+
+    private static string SanitizePathSegment(string value)
+    {
+        var cleaned = value;
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+        {
+            cleaned = cleaned.Replace(invalid, '_');
+        }
+
+        return string.IsNullOrWhiteSpace(cleaned) ? "package" : cleaned;
     }
 
     private static string QuoteArgument(string value)

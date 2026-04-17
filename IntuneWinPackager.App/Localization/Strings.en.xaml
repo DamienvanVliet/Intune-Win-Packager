@@ -120,6 +120,7 @@
     <sys:String x:Key="Ui.Store.InstallCommandHint">Install command template</sys:String>
     <sys:String x:Key="Ui.Store.UninstallCommandHint">Uninstall command template</sys:String>
     <sys:String x:Key="Ui.Store.DetectionHint">Detection guidance</sys:String>
+    <sys:String x:Key="Ui.Store.Download">Download</sys:String>
     <sys:String x:Key="Ui.Store.UseInPackager">Use In Packager</sys:String>
     <sys:String x:Key="Ui.Store.OpenHomepage">Open Homepage</sys:String>
 
@@ -205,6 +206,12 @@
     <sys:String x:Key="Vm.Store.LoadingDetails">Loading details for {0}...</sys:String>
     <sys:String x:Key="Vm.Store.DetailReady">Details loaded for {0}.</sys:String>
     <sys:String x:Key="Vm.Store.DetailsError">Could not load package details: {0}</sys:String>
+    <sys:String x:Key="Vm.Store.Downloading">Downloading package '{0}'...</sys:String>
+    <sys:String x:Key="Vm.Store.DownloadReady">Downloaded '{0}' and loaded it into Packaging.</sys:String>
+    <sys:String x:Key="Vm.Store.DownloadFailed">Download failed for '{0}'.</sys:String>
+    <sys:String x:Key="Vm.Store.DownloadError">Download error: {0}</sys:String>
+    <sys:String x:Key="Vm.Store.DownloadFailedGeneric">Package download could not be completed.</sys:String>
+    <sys:String x:Key="Vm.Store.CommandTemplatesNeedDownload">Catalog command placeholders were not copied. Click Download to auto-fill exact installer commands.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.CacheVerified">Silent switches verified from local history for this exact installer build.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.ManualVerified">Silent switches marked as verified by you. This will be saved locally after successful packaging.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.NotVerified">Silent switches are not verified yet. Test once, then tick the verification checkbox.</sys:String>
@@ -275,6 +282,11 @@
     <sys:String x:Key="Vm.Status.CatalogAppliedTitle">Catalog Template Applied</sys:String>
     <sys:String x:Key="Vm.Status.CatalogAppliedMessage">Applied catalog hints for '{0}'. Review commands and detection before packaging.</sys:String>
     <sys:String x:Key="Vm.Status.CatalogLinkOpenFailedTitle">Could Not Open Link</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadStartedTitle">Downloading Package</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadStartedMessage">Downloading '{0}' and preparing Packaging fields.</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadReadyTitle">Package Ready</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadReadyMessage">Downloaded '{0}'. Packaging fields were auto-filled.</sys:String>
+    <sys:String x:Key="Vm.Status.CatalogDownloadFailedTitle">Package Download Failed</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressTitle">Packaging In Progress</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressMessage">Running IntuneWinAppUtil.exe...</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Resolve preflight errors before starting package creation.</sys:String>
