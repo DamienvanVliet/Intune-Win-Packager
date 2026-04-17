@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.28] - 2026-04-17
+
+### Added
+- Hardened catalog script detection with weighted matching (name/key/token/publisher/version).
+- Reduced false positives from display-name-only matching.
+- Added regression tests for catalog detection script generation.
+
 ## [1.1.27] - 2026-04-17
 
 ### Added
