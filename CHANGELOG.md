@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.23] - 2026-04-17
+
+### Fixed
+- Removed installer-driven close-apps prompting again to prevent unrelated process prompts (like `vgc`) during update preparation.
+- Added targeted locked-file fallback for `IntuneWinPackager.App.exe` using `restartreplace`, so update can proceed without hard `code 32` failure when that executable is temporarily locked.
+- Silent in-app updater now again enforces `/NOCLOSEAPPLICATIONS` to match no-forced-close update policy.
+
 ## [1.1.22] - 2026-04-17
 
 ### Fixed
