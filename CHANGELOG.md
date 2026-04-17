@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.29] - 2026-04-17
+
+### Added
+- Fixed WinGet package download failures (e.g., Spotify) when WinGet download exits with hash mismatch/no installer metadata.
+- Added direct URL fallback from WinGet output with clear unverified-hash messaging.
+- Improved process output capture reliability to prevent intermittent 'Collection was modified' failures.
+- Added automated tests for WinGet hash-mismatch and no-installer-url scenarios.
+
 ## [1.1.28] - 2026-04-17
 
 ### Added
