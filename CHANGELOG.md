@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.24] - 2026-04-17
+
+### Fixed
+- Prevented update-time shortcut write conflicts (`IPersistFile::Save failed`, `0x80070020`) by skipping Start Menu/Desktop shortcut creation when the `.lnk` already exists.
+- Keeps first-install shortcut creation behavior unchanged while avoiding unnecessary shortcut rewrites during in-place updates.
+- Removed forced reboot path for normal interactive updates by limiting `restartreplace` fallback to silent policy-driven updates only.
+
 ## [1.1.23] - 2026-04-17
 
 ### Fixed

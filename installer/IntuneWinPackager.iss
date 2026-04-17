@@ -45,12 +45,24 @@ Name: "dutch"; MessagesFile: "compiler:Languages\Dutch.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "{#SourceDir}\IntuneWinPackager.App.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+Source: "{#SourceDir}\IntuneWinPackager.App.exe"; DestDir: "{app}"; Flags: ignoreversion; Check: not WizardSilent
+Source: "{#SourceDir}\IntuneWinPackager.App.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace; Check: WizardSilent
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "IntuneWinPackager.App.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldCreateProgramShortcut
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; Check: ShouldCreateDesktopShortcut
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function ShouldCreateProgramShortcut: Boolean;
+begin
+  Result := not FileExists(ExpandConstant('{autoprograms}\{#MyAppName}.lnk'));
+end;
+
+function ShouldCreateDesktopShortcut: Boolean;
+begin
+  Result := not FileExists(ExpandConstant('{autodesktop}\{#MyAppName}.lnk'));
+end;
