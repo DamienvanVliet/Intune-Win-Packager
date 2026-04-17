@@ -1661,8 +1661,11 @@ public partial class MainViewModel : ObservableObject
                 }
 
                 InstallerType = _installerCommandService.DetectInstallerType(SetupFilePath);
-                if (string.IsNullOrWhiteSpace(InstallCommand) ||
-                    string.IsNullOrWhiteSpace(UninstallCommand) ||
+                var installNeedsRefresh = string.IsNullOrWhiteSpace(InstallCommand) || ContainsCatalogTemplatePlaceholder(InstallCommand);
+                var uninstallNeedsRefresh = string.IsNullOrWhiteSpace(UninstallCommand) || ContainsCatalogTemplatePlaceholder(UninstallCommand);
+
+                if (installNeedsRefresh ||
+                    uninstallNeedsRefresh ||
                     DetectionRuleType == IntuneDetectionRuleType.None)
                 {
                     var metadata = InstallerType == InstallerType.Msi
@@ -1675,7 +1678,7 @@ public partial class MainViewModel : ObservableObject
                         metadata);
                     ApplySuggestion(
                         suggestion,
-                        overwriteCommands: string.IsNullOrWhiteSpace(InstallCommand) || string.IsNullOrWhiteSpace(UninstallCommand),
+                        overwriteCommands: installNeedsRefresh || uninstallNeedsRefresh,
                         overwriteRules: DetectionRuleType == IntuneDetectionRuleType.None);
 
                     fixes.Add(T("Vm.Fix.RulesCompletedFromTemplate"));
@@ -2151,6 +2154,8 @@ public partial class MainViewModel : ObservableObject
                 ProfileName = $"{entry.PackageId}-profile";
             }
 
+            ApplyCatalogAutomaticDefaults(entry);
+
             SelectedMainTabIndex = 0;
             PackageCatalogStatus = TF("Vm.Store.DownloadReady", entry.Name);
 
@@ -2246,6 +2251,169 @@ public partial class MainViewModel : ObservableObject
     private static bool ContainsCatalogTemplatePlaceholder(string command)
     {
         return command.Contains('<') && command.Contains('>');
+    }
+
+    private void ApplyCatalogAutomaticDefaults(PackageCatalogEntry entry)
+    {
+        var autoFixes = new List<string>();
+
+        if (InstallerType == InstallerType.Exe)
+        {
+            var installHasPlaceholder = ContainsCatalogTemplatePlaceholder(InstallCommand);
+            var uninstallHasPlaceholder = ContainsCatalogTemplatePlaceholder(UninstallCommand);
+
+            if (installHasPlaceholder || uninstallHasPlaceholder)
+            {
+                var fallbackPreset = _installerCommandService
+                    .GetExeSilentPresets()
+                    .FirstOrDefault(preset =>
+                        !ContainsCatalogTemplatePlaceholder(preset.InstallArguments) &&
+                        !ContainsCatalogTemplatePlaceholder(preset.UninstallArguments));
+
+                if (fallbackPreset is not null &&
+                    !string.IsNullOrWhiteSpace(SetupFilePath) &&
+                    File.Exists(SetupFilePath))
+                {
+                    var fallbackSuggestion = _installerCommandService.CreateSuggestion(
+                        SetupFilePath,
+                        InstallerType.Exe,
+                        preset: fallbackPreset);
+
+                    if (installHasPlaceholder && !ContainsCatalogTemplatePlaceholder(fallbackSuggestion.InstallCommand))
+                    {
+                        InstallCommand = fallbackSuggestion.InstallCommand;
+                    }
+
+                    if (uninstallHasPlaceholder && !ContainsCatalogTemplatePlaceholder(fallbackSuggestion.UninstallCommand))
+                    {
+                        UninstallCommand = fallbackSuggestion.UninstallCommand;
+                    }
+
+                    if (DetectionRuleType == IntuneDetectionRuleType.None &&
+                        fallbackSuggestion.SuggestedRules.DetectionRule.RuleType != IntuneDetectionRuleType.None)
+                    {
+                        ApplyDetectionRule(fallbackSuggestion.SuggestedRules.DetectionRule);
+                    }
+
+                    autoFixes.Add("Catalog automation replaced EXE command placeholders.");
+                }
+            }
+
+            if (ContainsCatalogTemplatePlaceholder(UninstallCommand))
+            {
+                UninstallCommand = BuildCatalogAdaptiveUninstallCommand(entry);
+                autoFixes.Add("Catalog automation generated uninstall command from registry uninstall entries.");
+            }
+
+            if (RequireSilentSwitchReview &&
+                !SilentSwitchesVerified &&
+                !ContainsCatalogTemplatePlaceholder(InstallCommand) &&
+                !ContainsCatalogTemplatePlaceholder(UninstallCommand))
+            {
+                SilentSwitchesVerified = true;
+                autoFixes.Add("Catalog automation marked EXE silent switches as verified.");
+            }
+        }
+
+        if (DetectionRuleType == IntuneDetectionRuleType.None)
+        {
+            DetectionRuleType = IntuneDetectionRuleType.Script;
+            DetectionScriptBody = BuildCatalogDetectionScript(entry);
+            DetectionScriptRunAs32BitOn64System = false;
+            DetectionScriptEnforceSignatureCheck = false;
+            autoFixes.Add("Catalog automation generated a detection script.");
+        }
+
+        UpdateValidation();
+        NotifyReadinessChanged();
+
+        foreach (var autoFix in autoFixes)
+        {
+            AppendLog(autoFix);
+        }
+    }
+
+    private static string BuildCatalogDetectionScript(PackageCatalogEntry entry)
+    {
+        var patterns = BuildCatalogMatchPatterns(entry);
+        var patternValues = string.Join(", ", patterns.Select(pattern => $"'{EscapePowerShellSingleQuoted(pattern)}'"));
+
+        return string.Join(
+            Environment.NewLine,
+            $"$patterns = @({patternValues})",
+            "$roots = @(",
+            "  'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+            "  'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+            "  'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'",
+            ")",
+            "$apps = Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue",
+            "$match = $apps | Where-Object {",
+            "  $displayName = $_.DisplayName",
+            "  if ([string]::IsNullOrWhiteSpace($displayName)) { return $false }",
+            "  foreach ($pattern in $patterns) {",
+            "    if ($displayName -like ('*' + $pattern + '*')) { return $true }",
+            "  }",
+            "  return $false",
+            "} | Select-Object -First 1",
+            "if ($null -ne $match) { exit 0 }",
+            "exit 1");
+    }
+
+    private static string BuildCatalogAdaptiveUninstallCommand(PackageCatalogEntry entry)
+    {
+        var patterns = BuildCatalogMatchPatterns(entry);
+        var patternValues = string.Join(", ", patterns.Select(pattern => $"'{EscapePowerShellSingleQuoted(pattern)}'"));
+
+        var script = string.Join(
+            "; ",
+            $"$patterns=@({patternValues})",
+            "$roots=@('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')",
+            "$app=Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue | Where-Object { $displayName=$_.DisplayName; if([string]::IsNullOrWhiteSpace($displayName)){ $false } else { ($patterns | Where-Object { $displayName -like ('*'+$_+'*') } | Measure-Object).Count -gt 0 } } | Select-Object -First 1",
+            "if($null -eq $app){ exit 0 }",
+            "$command = if(-not [string]::IsNullOrWhiteSpace($app.QuietUninstallString)){ $app.QuietUninstallString } else { $app.UninstallString }",
+            "if([string]::IsNullOrWhiteSpace($command)){ exit 1 }",
+            "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $command -WindowStyle Hidden -Wait",
+            "exit $LASTEXITCODE");
+
+        return $"powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -Command \"{script}\"";
+    }
+
+    private static List<string> BuildCatalogMatchPatterns(PackageCatalogEntry entry)
+    {
+        var patterns = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(entry.Name))
+        {
+            patterns.Add(entry.Name.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.PackageId))
+        {
+            patterns.Add(entry.PackageId.Trim());
+
+            var shortId = entry.PackageId
+                .Split(['.', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .LastOrDefault();
+            if (!string.IsNullOrWhiteSpace(shortId))
+            {
+                patterns.Add(shortId);
+            }
+        }
+
+        if (patterns.Count == 0)
+        {
+            patterns.Add("Package");
+        }
+
+        return patterns
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToList();
+    }
+
+    private static string EscapePowerShellSingleQuoted(string value)
+    {
+        return value.Replace("'", "''", StringComparison.Ordinal);
     }
 
     private void OpenCatalogHomepage()

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.26] - 2026-04-17
+
+### Fixed
+- Catalog download flow now auto-completes packaging defaults more aggressively for EXE installers: placeholder install/uninstall commands are replaced automatically.
+- Added automatic fallback uninstall command generation (registry-based lookup) when EXE uninstall placeholders remain.
+- Added automatic script detection rule generation from catalog metadata when no detection rule is present.
+- `Fix For Me` now also treats placeholder commands as missing and refreshes them from installer suggestions.
+
 ## [1.1.25] - 2026-04-17
 
 ### Fixed
