@@ -1154,7 +1154,13 @@
                                                   IsChecked="{Binding IncludeChocolateyCatalogSource}"
                                                   Margin="0,0,12,0" />
                                         <CheckBox Content="{DynamicResource Ui.Store.SourceGitHubReleases}"
-                                                  IsChecked="{Binding IncludeGitHubCatalogSource}" />
+                                                  IsChecked="{Binding IncludeGitHubCatalogSource}"
+                                                  Margin="0,0,12,0" />
+                                        <CheckBox Content="{DynamicResource Ui.Store.SourceScoop}"
+                                                  IsChecked="{Binding IncludeScoopCatalogSource}"
+                                                  Margin="0,0,12,0" />
+                                        <CheckBox Content="{DynamicResource Ui.Store.SourceNuGet}"
+                                                  IsChecked="{Binding IncludeNuGetCatalogSource}" />
                                     </WrapPanel>
 
                                     <TextBlock Text="{Binding PackageCatalogStatus}"

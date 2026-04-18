@@ -11,4 +11,8 @@ public sealed record PackageCatalogQuery
     public bool IncludeChocolatey { get; init; } = true;
 
     public bool IncludeGitHubReleases { get; init; }
+
+    public bool IncludeScoop { get; init; }
+
+    public bool IncludeNuGet { get; init; }
 }

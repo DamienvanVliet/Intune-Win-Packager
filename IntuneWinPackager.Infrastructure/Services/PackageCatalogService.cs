@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO.Compression;
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -12,6 +13,7 @@ using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
 using IntuneWinPackager.Infrastructure.Support;
+using Microsoft.Data.Sqlite;
 
 namespace IntuneWinPackager.Infrastructure.Services;
 
@@ -20,6 +22,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private static readonly Regex MultiSpaceRegex = new(@"\s{2,}", RegexOptions.Compiled);
     private static readonly Regex UrlRegex = new(@"https?://[^\s'""`]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex GitHubRepoIdRegex = new(@"^(?<owner>[A-Za-z0-9_.-]+)/(?<repo>[A-Za-z0-9_.-]+)$", RegexOptions.Compiled);
+    private static readonly Regex ScoopSearchRegex = new(@"^(?<name>[A-Za-z0-9_.+\-]+)\s+(?<version>[0-9A-Za-z.\-+]+)\s+(?<bucket>[A-Za-z0-9_.+\-]+)?", RegexOptions.Compiled);
     private static readonly Regex GuidInTextRegex = new(@"\{[0-9A-Fa-f\-]{36}\}", RegexOptions.Compiled);
     private static readonly Regex GuidCodeRegex = new(@"^\{[0-9A-Fa-f\-]{36}\}$", RegexOptions.Compiled);
     private static readonly Regex Sha256Regex = new(@"^[0-9A-Fa-f]{64}$", RegexOptions.Compiled);
@@ -41,6 +44,19 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
     private readonly IProcessRunner _processRunner;
     private readonly HttpClient _httpClient;
+    private readonly SemaphoreSlim _databaseGate = new(1, 1);
+    private readonly JsonSerializerOptions _serializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+    private readonly ConcurrentDictionary<string, byte> _backgroundRefreshState = new(StringComparer.OrdinalIgnoreCase);
+    private bool _databaseInitialized;
+
+    private const int MaxSearchRetries = 3;
+    private static readonly TimeSpan RetryBaseDelay = TimeSpan.FromMilliseconds(280);
+    private static readonly TimeSpan CacheFreshWindow = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan CacheExpirationWindow = TimeSpan.FromHours(6);
 
     public PackageCatalogService(IProcessRunner processRunner, HttpClient? httpClient = null)
     {
@@ -57,7 +73,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
     {
         query ??= new PackageCatalogQuery();
         var term = query.SearchTerm?.Trim() ?? string.Empty;
-        if (term.Length < 2 || (!query.IncludeWinget && !query.IncludeChocolatey && !query.IncludeGitHubReleases))
+        if (term.Length < 2 || !HasAnySourceEnabled(query))
         {
             return [];
         }
@@ -66,9 +82,51 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var enabledSourceCount =
             (query.IncludeWinget ? 1 : 0) +
             (query.IncludeChocolatey ? 1 : 0) +
-            (query.IncludeGitHubReleases ? 1 : 0);
+            (query.IncludeGitHubReleases ? 1 : 0) +
+            (query.IncludeScoop ? 1 : 0) +
+            (query.IncludeNuGet ? 1 : 0);
         var perSource = enabledSourceCount > 1 ? Math.Max(6, max) : max;
 
+        var normalizedQuery = query with
+        {
+            SearchTerm = term,
+            MaxResults = max,
+            IncludeNuGet = query.IncludeNuGet,
+            IncludeScoop = query.IncludeScoop
+        };
+        var cacheKey = BuildSearchCacheKey(normalizedQuery);
+        var cached = await TryReadCachedSearchAsync(cacheKey, cancellationToken);
+        if (cached is not null)
+        {
+            if (!cached.IsFresh)
+            {
+                TriggerBackgroundRefresh(cacheKey, normalizedQuery, perSource);
+            }
+
+            return cached.Results
+                .OrderByDescending(entry => Relevance(entry, term))
+                .ThenByDescending(entry => entry.InstallerVariantCount)
+                .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(max)
+                .ToList();
+        }
+
+        var liveResults = await SearchLiveAsync(normalizedQuery, perSource, cancellationToken);
+        await WriteCachedSearchAsync(cacheKey, liveResults, cancellationToken);
+        return liveResults
+            .OrderByDescending(entry => Relevance(entry, term))
+            .ThenByDescending(entry => entry.InstallerVariantCount)
+            .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(max)
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<PackageCatalogEntry>> SearchLiveAsync(
+        PackageCatalogQuery query,
+        int perSource,
+        CancellationToken cancellationToken)
+    {
+        var term = query.SearchTerm?.Trim() ?? string.Empty;
         var wingetTask = query.IncludeWinget
             ? SearchWingetAsync(term, perSource, cancellationToken)
             : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
@@ -78,24 +136,53 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var githubTask = query.IncludeGitHubReleases
             ? SearchGitHubReleasesAsync(term, perSource, cancellationToken)
             : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
+        var scoopTask = query.IncludeScoop
+            ? SearchScoopAsync(term, perSource, cancellationToken)
+            : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
+        var nugetTask = query.IncludeNuGet
+            ? SearchNuGetAsync(term, perSource, cancellationToken)
+            : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
 
-        await Task.WhenAll(wingetTask, chocolateyTask, githubTask);
+        await Task.WhenAll(wingetTask, chocolateyTask, githubTask, scoopTask, nugetTask);
         var sourceEntries = wingetTask.Result
             .Concat(chocolateyTask.Result)
             .Concat(githubTask.Result)
+            .Concat(scoopTask.Result)
+            .Concat(nugetTask.Result)
             .Select(NormalizeCatalogEntry)
             .ToList();
+
         if (sourceEntries.Count == 0)
         {
             return [];
         }
 
-        return MergeCanonicalEntries(sourceEntries)
-            .OrderByDescending(entry => Relevance(entry, term))
-            .ThenByDescending(entry => entry.InstallerVariantCount)
-            .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
-            .Take(max)
-            .ToList();
+        return MergeCanonicalEntries(sourceEntries);
+    }
+
+    private void TriggerBackgroundRefresh(string cacheKey, PackageCatalogQuery query, int perSource)
+    {
+        if (!_backgroundRefreshState.TryAdd(cacheKey, 1))
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var refreshed = await SearchLiveAsync(query, perSource, CancellationToken.None);
+                await WriteCachedSearchAsync(cacheKey, refreshed, CancellationToken.None);
+            }
+            catch
+            {
+                // Non-blocking background refresh.
+            }
+            finally
+            {
+                _backgroundRefreshState.TryRemove(cacheKey, out _);
+            }
+        });
     }
 
     public async Task<PackageCatalogEntry?> GetDetailsAsync(PackageCatalogEntry entry, CancellationToken cancellationToken = default)
@@ -112,6 +199,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 PackageCatalogSource.Winget => await GetWingetDetailsAsync(entry, cancellationToken),
                 PackageCatalogSource.Chocolatey => await GetChocolateyDetailsAsync(entry, cancellationToken),
                 PackageCatalogSource.GitHubReleases => await GetGitHubReleaseDetailsAsync(entry, cancellationToken),
+                PackageCatalogSource.Scoop => await GetScoopDetailsAsync(entry, cancellationToken),
+                PackageCatalogSource.NuGet => await GetNuGetDetailsAsync(entry, cancellationToken),
                 _ => entry
             };
 
@@ -222,6 +311,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             PackageCatalogSource.Winget => await DownloadWingetInstallerAsync(entry, workingFolder, progress, cancellationToken),
             PackageCatalogSource.Chocolatey => await DownloadChocolateyInstallerAsync(entry, workingFolder, progress, cancellationToken),
             PackageCatalogSource.GitHubReleases => await DownloadGitHubReleaseInstallerAsync(entry, workingFolder, progress, cancellationToken),
+            PackageCatalogSource.Scoop => await DownloadScoopInstallerAsync(entry, workingFolder, progress, cancellationToken),
+            PackageCatalogSource.NuGet => await DownloadNuGetInstallerAsync(entry, workingFolder, progress, cancellationToken),
             _ => new PackageCatalogDownloadResult
             {
                 Success = false,
@@ -325,6 +416,555 @@ public sealed class PackageCatalogService : IPackageCatalogService
         {
             TryDelete(cachePath);
             return string.Empty;
+        }
+    }
+
+    public async Task<IReadOnlyList<CatalogProviderDiagnostic>> GetProviderDiagnosticsAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureCatalogDatabaseReadyAsync(cancellationToken);
+        await _databaseGate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await OpenCatalogDatabaseConnectionAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                SELECT provider_id,
+                       source_channel,
+                       total_requests,
+                       total_failures,
+                       consecutive_failures,
+                       timeout_count,
+                       last_duration_ms,
+                       last_error,
+                       last_success_utc,
+                       last_failure_utc
+                FROM catalog_provider_health
+                ORDER BY provider_id COLLATE NOCASE, source_channel COLLATE NOCASE;
+                """;
+
+            var diagnostics = new List<CatalogProviderDiagnostic>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                diagnostics.Add(new CatalogProviderDiagnostic
+                {
+                    ProviderId = reader.GetString(0),
+                    SourceChannel = reader.GetString(1),
+                    TotalRequests = reader.GetInt32(2),
+                    TotalFailures = reader.GetInt32(3),
+                    ConsecutiveFailures = reader.GetInt32(4),
+                    TimeoutCount = reader.GetInt32(5),
+                    LastDurationMs = reader.GetInt64(6),
+                    LastError = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
+                    LastSuccessAtUtc = ParseUtc(reader.IsDBNull(8) ? string.Empty : reader.GetString(8)),
+                    LastFailureAtUtc = ParseUtc(reader.IsDBNull(9) ? string.Empty : reader.GetString(9)),
+                    IsHealthy = reader.GetInt32(4) == 0
+                });
+            }
+
+            return diagnostics;
+        }
+        finally
+        {
+            _databaseGate.Release();
+        }
+    }
+
+    private static bool HasAnySourceEnabled(PackageCatalogQuery query)
+    {
+        return query.IncludeWinget ||
+               query.IncludeChocolatey ||
+               query.IncludeGitHubReleases ||
+               query.IncludeScoop ||
+               query.IncludeNuGet;
+    }
+
+    private static string BuildSearchCacheKey(PackageCatalogQuery query)
+    {
+        var normalizedTerm = (query.SearchTerm ?? string.Empty).Trim().ToLowerInvariant();
+        var keyPayload = string.Join("|",
+            "v3",
+            normalizedTerm,
+            query.MaxResults,
+            query.IncludeWinget ? "w1" : "w0",
+            query.IncludeChocolatey ? "c1" : "c0",
+            query.IncludeGitHubReleases ? "g1" : "g0",
+            query.IncludeScoop ? "s1" : "s0",
+            query.IncludeNuGet ? "n1" : "n0");
+        return ComputeStableHash(keyPayload);
+    }
+
+    private async Task<CachedSearchResult?> TryReadCachedSearchAsync(string cacheKey, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(cacheKey))
+        {
+            return null;
+        }
+
+        await EnsureCatalogDatabaseReadyAsync(cancellationToken);
+        await _databaseGate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await OpenCatalogDatabaseConnectionAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                SELECT payload_json,
+                       updated_utc
+                FROM catalog_search_cache
+                WHERE cache_key = @cache_key
+                LIMIT 1;
+                """;
+            command.Parameters.AddWithValue("@cache_key", cacheKey);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                return null;
+            }
+
+            var payloadJson = reader.IsDBNull(0) ? string.Empty : reader.GetString(0);
+            var updatedRaw = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+            var updatedUtc = ParseUtc(updatedRaw) ?? DateTimeOffset.MinValue;
+            var age = DateTimeOffset.UtcNow - updatedUtc;
+
+            if (string.IsNullOrWhiteSpace(payloadJson) || age > CacheExpirationWindow)
+            {
+                await reader.DisposeAsync();
+                await using var deleteCommand = connection.CreateCommand();
+                deleteCommand.CommandText = "DELETE FROM catalog_search_cache WHERE cache_key = @cache_key;";
+                deleteCommand.Parameters.AddWithValue("@cache_key", cacheKey);
+                await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
+                return null;
+            }
+
+            List<PackageCatalogEntry>? parsed;
+            try
+            {
+                parsed = JsonSerializer.Deserialize<List<PackageCatalogEntry>>(payloadJson, _serializerOptions);
+            }
+            catch
+            {
+                await reader.DisposeAsync();
+                await using var deleteCommand = connection.CreateCommand();
+                deleteCommand.CommandText = "DELETE FROM catalog_search_cache WHERE cache_key = @cache_key;";
+                deleteCommand.Parameters.AddWithValue("@cache_key", cacheKey);
+                await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
+                return null;
+            }
+
+            var results = (parsed ?? [])
+                .Select(NormalizeCatalogEntry)
+                .ToList();
+            return new CachedSearchResult(results, age <= CacheFreshWindow);
+        }
+        finally
+        {
+            _databaseGate.Release();
+        }
+    }
+
+    private async Task WriteCachedSearchAsync(
+        string cacheKey,
+        IReadOnlyList<PackageCatalogEntry> results,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(cacheKey))
+        {
+            return;
+        }
+
+        await EnsureCatalogDatabaseReadyAsync(cancellationToken);
+        var normalizedResults = (results ?? [])
+            .Select(NormalizeCatalogEntry)
+            .ToList();
+        var payloadJson = JsonSerializer.Serialize(normalizedResults, _serializerOptions);
+        var nowIso = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+        var expirationIso = DateTimeOffset.UtcNow
+            .Subtract(CacheExpirationWindow)
+            .ToString("O", CultureInfo.InvariantCulture);
+
+        await _databaseGate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await OpenCatalogDatabaseConnectionAsync(cancellationToken);
+
+            await using (var upsertCommand = connection.CreateCommand())
+            {
+                upsertCommand.CommandText =
+                    """
+                    INSERT INTO catalog_search_cache (
+                        cache_key,
+                        payload_json,
+                        created_utc,
+                        updated_utc
+                    )
+                    VALUES (
+                        @cache_key,
+                        @payload_json,
+                        @now_utc,
+                        @now_utc
+                    )
+                    ON CONFLICT(cache_key) DO UPDATE SET
+                        payload_json = excluded.payload_json,
+                        updated_utc = excluded.updated_utc;
+                    """;
+                upsertCommand.Parameters.AddWithValue("@cache_key", cacheKey);
+                upsertCommand.Parameters.AddWithValue("@payload_json", payloadJson);
+                upsertCommand.Parameters.AddWithValue("@now_utc", nowIso);
+                await upsertCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var expireCommand = connection.CreateCommand())
+            {
+                expireCommand.CommandText =
+                    """
+                    DELETE FROM catalog_search_cache
+                    WHERE updated_utc < @expiration_utc;
+                    """;
+                expireCommand.Parameters.AddWithValue("@expiration_utc", expirationIso);
+                await expireCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var trimCommand = connection.CreateCommand())
+            {
+                trimCommand.CommandText =
+                    """
+                    DELETE FROM catalog_search_cache
+                    WHERE cache_key IN (
+                        SELECT cache_key
+                        FROM catalog_search_cache
+                        ORDER BY updated_utc DESC
+                        LIMIT -1 OFFSET 320
+                    );
+                    """;
+                await trimCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+        finally
+        {
+            _databaseGate.Release();
+        }
+    }
+
+    private async Task EnsureCatalogDatabaseReadyAsync(CancellationToken cancellationToken)
+    {
+        if (_databaseInitialized)
+        {
+            return;
+        }
+
+        await _databaseGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (_databaseInitialized)
+            {
+                return;
+            }
+
+            DataPathProvider.EnsureBaseDirectory();
+            await using var connection = await OpenCatalogDatabaseConnectionAsync(cancellationToken);
+            await using (var pragmaCommand = connection.CreateCommand())
+            {
+                pragmaCommand.CommandText = "PRAGMA journal_mode=WAL;";
+                await pragmaCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var pragmaCommand = connection.CreateCommand())
+            {
+                pragmaCommand.CommandText = "PRAGMA synchronous=NORMAL;";
+                await pragmaCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText =
+                    """
+                    CREATE TABLE IF NOT EXISTS catalog_search_cache (
+                        cache_key TEXT PRIMARY KEY,
+                        payload_json TEXT NOT NULL,
+                        created_utc TEXT NOT NULL,
+                        updated_utc TEXT NOT NULL
+                    );
+                    """;
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "CREATE INDEX IF NOT EXISTS idx_catalog_search_cache_updated ON catalog_search_cache(updated_utc DESC);";
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText =
+                    """
+                    CREATE TABLE IF NOT EXISTS catalog_provider_health (
+                        provider_id TEXT NOT NULL,
+                        source_channel TEXT NOT NULL,
+                        total_requests INTEGER NOT NULL DEFAULT 0,
+                        total_failures INTEGER NOT NULL DEFAULT 0,
+                        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                        timeout_count INTEGER NOT NULL DEFAULT 0,
+                        last_duration_ms INTEGER NOT NULL DEFAULT 0,
+                        last_error TEXT,
+                        last_success_utc TEXT,
+                        last_failure_utc TEXT,
+                        PRIMARY KEY(provider_id, source_channel)
+                    );
+                    """;
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "CREATE INDEX IF NOT EXISTS idx_catalog_provider_health_failures ON catalog_provider_health(total_failures DESC, consecutive_failures DESC);";
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            _databaseInitialized = true;
+        }
+        finally
+        {
+            _databaseGate.Release();
+        }
+    }
+
+    private static async Task<SqliteConnection> OpenCatalogDatabaseConnectionAsync(CancellationToken cancellationToken)
+    {
+        var connection = new SqliteConnection($"Data Source={DataPathProvider.CatalogDatabaseFilePath};Cache=Shared");
+        await connection.OpenAsync(cancellationToken);
+        return connection;
+    }
+
+    private static DateTimeOffset? ParseUtc(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? parsed.ToUniversalTime()
+            : null;
+    }
+
+    private async Task<HttpResponseMessage> SendHttpWithRetryAsync(
+        Func<HttpRequestMessage> requestFactory,
+        string providerId,
+        string sourceChannel,
+        CancellationToken cancellationToken)
+    {
+        _ = providerId;
+        _ = sourceChannel;
+
+        if (requestFactory is null)
+        {
+            throw new ArgumentNullException(nameof(requestFactory));
+        }
+
+        Exception? lastException = null;
+        HttpResponseMessage? fallbackResponse = null;
+
+        for (var attempt = 1; attempt <= MaxSearchRetries; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                using var request = requestFactory();
+                var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                if (attempt < MaxSearchRetries && IsTransientStatusCode(response.StatusCode))
+                {
+                    response.Dispose();
+                    await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
+                    continue;
+                }
+
+                return response;
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                lastException = ex;
+                if (attempt < MaxSearchRetries)
+                {
+                    await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
+                    continue;
+                }
+
+                fallbackResponse?.Dispose();
+                fallbackResponse = new HttpResponseMessage(System.Net.HttpStatusCode.RequestTimeout)
+                {
+                    ReasonPhrase = "HTTP request timed out."
+                };
+            }
+            catch (HttpRequestException ex)
+            {
+                lastException = ex;
+                if (attempt < MaxSearchRetries)
+                {
+                    await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
+                    continue;
+                }
+
+                fallbackResponse?.Dispose();
+                fallbackResponse = new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable)
+                {
+                    ReasonPhrase = Truncate(ex.Message, 120)
+                };
+            }
+        }
+
+        return fallbackResponse ?? new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable)
+        {
+            ReasonPhrase = Truncate(lastException?.Message ?? "Request failed.", 120)
+        };
+    }
+
+    private static bool IsTransientStatusCode(System.Net.HttpStatusCode statusCode)
+    {
+        var code = (int)statusCode;
+        return code >= 500 ||
+               statusCode == System.Net.HttpStatusCode.RequestTimeout ||
+               (int)statusCode == 429;
+    }
+
+    private static TimeSpan ComputeRetryDelay(int attempt)
+    {
+        var factor = Math.Max(1, attempt);
+        var delayMs = RetryBaseDelay.TotalMilliseconds * factor;
+        return TimeSpan.FromMilliseconds(Math.Min(1600, delayMs));
+    }
+
+    private async Task RecordProviderSuccessAsync(
+        string providerId,
+        string sourceChannel,
+        long durationMs,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+        {
+            return;
+        }
+
+        await EnsureCatalogDatabaseReadyAsync(cancellationToken);
+        await _databaseGate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await OpenCatalogDatabaseConnectionAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                INSERT INTO catalog_provider_health (
+                    provider_id,
+                    source_channel,
+                    total_requests,
+                    total_failures,
+                    consecutive_failures,
+                    timeout_count,
+                    last_duration_ms,
+                    last_error,
+                    last_success_utc,
+                    last_failure_utc
+                )
+                VALUES (
+                    @provider_id,
+                    @source_channel,
+                    1,
+                    0,
+                    0,
+                    0,
+                    @last_duration_ms,
+                    '',
+                    @last_success_utc,
+                    NULL
+                )
+                ON CONFLICT(provider_id, source_channel) DO UPDATE SET
+                    total_requests = catalog_provider_health.total_requests + 1,
+                    consecutive_failures = 0,
+                    last_duration_ms = @last_duration_ms,
+                    last_error = '',
+                    last_success_utc = @last_success_utc;
+                """;
+            command.Parameters.AddWithValue("@provider_id", providerId.Trim().ToLowerInvariant());
+            command.Parameters.AddWithValue("@source_channel", string.IsNullOrWhiteSpace(sourceChannel) ? "default" : sourceChannel.Trim().ToLowerInvariant());
+            command.Parameters.AddWithValue("@last_duration_ms", Math.Max(0, durationMs));
+            command.Parameters.AddWithValue("@last_success_utc", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _databaseGate.Release();
+        }
+    }
+
+    private async Task RecordProviderFailureAsync(
+        string providerId,
+        string sourceChannel,
+        string errorMessage,
+        bool isTimeout,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+        {
+            return;
+        }
+
+        await EnsureCatalogDatabaseReadyAsync(cancellationToken);
+        await _databaseGate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = await OpenCatalogDatabaseConnectionAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                INSERT INTO catalog_provider_health (
+                    provider_id,
+                    source_channel,
+                    total_requests,
+                    total_failures,
+                    consecutive_failures,
+                    timeout_count,
+                    last_duration_ms,
+                    last_error,
+                    last_success_utc,
+                    last_failure_utc
+                )
+                VALUES (
+                    @provider_id,
+                    @source_channel,
+                    1,
+                    1,
+                    1,
+                    @timeout_increment,
+                    0,
+                    @last_error,
+                    NULL,
+                    @last_failure_utc
+                )
+                ON CONFLICT(provider_id, source_channel) DO UPDATE SET
+                    total_requests = catalog_provider_health.total_requests + 1,
+                    total_failures = catalog_provider_health.total_failures + 1,
+                    consecutive_failures = catalog_provider_health.consecutive_failures + 1,
+                    timeout_count = catalog_provider_health.timeout_count + @timeout_increment,
+                    last_error = @last_error,
+                    last_failure_utc = @last_failure_utc;
+                """;
+            command.Parameters.AddWithValue("@provider_id", providerId.Trim().ToLowerInvariant());
+            command.Parameters.AddWithValue("@source_channel", string.IsNullOrWhiteSpace(sourceChannel) ? "default" : sourceChannel.Trim().ToLowerInvariant());
+            command.Parameters.AddWithValue("@timeout_increment", isTimeout ? 1 : 0);
+            command.Parameters.AddWithValue("@last_error", Truncate(errorMessage ?? string.Empty, 420));
+            command.Parameters.AddWithValue("@last_failure_utc", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _databaseGate.Release();
         }
     }
 
@@ -533,17 +1173,24 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
     private async Task<IReadOnlyList<PackageCatalogEntry>> SearchChocolateyAsync(string term, int limit, CancellationToken cancellationToken)
     {
-        var encodedTerm = Uri.EscapeDataString($"'{term}'");
-        var url =
-            $"https://community.chocolatey.org/api/v2/Search()?%24filter=IsLatestVersion&%24top={Math.Clamp(limit, 1, 50)}&searchTerm={encodedTerm}&targetFramework=%27%27&includePrerelease=false";
-
-        using var response = await _httpClient.GetAsync(url, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        var sources = await GetChocolateySourcesAsync(cancellationToken);
+        if (sources.Count == 0)
         {
             return [];
         }
 
-        return ParseChocolateyEntries(await response.Content.ReadAsStringAsync(cancellationToken));
+        var perSource = Math.Clamp(limit + 4, 1, 50);
+        var tasks = sources
+            .Select(source => SearchChocolateySourceAsync(source, term, perSource, cancellationToken))
+            .ToArray();
+        await Task.WhenAll(tasks);
+
+        return tasks
+            .SelectMany(task => task.Result)
+            .OrderByDescending(entry => Relevance(entry, term))
+            .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Clamp(limit * 2, limit, 90))
+            .ToList();
     }
 
     private async Task<PackageCatalogEntry> GetChocolateyDetailsAsync(PackageCatalogEntry entry, CancellationToken cancellationToken)
@@ -555,19 +1202,35 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
         var safeId = entry.PackageId.Replace("'", "''", StringComparison.Ordinal);
         var safeVersion = entry.Version.Replace("'", "''", StringComparison.Ordinal);
-        var url =
-            $"https://community.chocolatey.org/api/v2/Packages(Id='{safeId}',Version='{safeVersion}')";
-        using var response = await _httpClient.GetAsync(url, cancellationToken);
+        var source = await ResolveChocolateySourceAsync(entry.SourceChannel, cancellationToken);
+        var apiBase = NormalizeChocolateyApiBaseUrl(source.ApiUrl);
+        if (string.IsNullOrWhiteSpace(apiBase))
+        {
+            return entry;
+        }
+
+        var url = $"{apiBase.TrimEnd('/')}/Packages(Id='{safeId}',Version='{safeVersion}')";
+        using var response = await SendHttpWithRetryAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, url),
+            providerId: "chocolatey",
+            sourceChannel: source.Name,
+            cancellationToken: cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             return entry;
         }
 
-        var detailed = ParseChocolateyEntries(await response.Content.ReadAsStringAsync(cancellationToken)).FirstOrDefault();
+        var detailed = ParseChocolateyEntries(
+            await response.Content.ReadAsStringAsync(cancellationToken),
+            source.Name,
+            source.ApiUrl).FirstOrDefault();
         return detailed ?? entry;
     }
 
-    private IReadOnlyList<PackageCatalogEntry> ParseChocolateyEntries(string xml)
+    private IReadOnlyList<PackageCatalogEntry> ParseChocolateyEntries(
+        string xml,
+        string sourceName,
+        string sourceApiUrl)
     {
         if (string.IsNullOrWhiteSpace(xml))
         {
@@ -608,7 +1271,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
             var installerType = InferInstallerType(tags, summary);
             var template = BuildTemplate(id, installerType, tags);
             var architecture = InferArchitecture(name, id, version, tags);
-            var scope = InferScope("community", name, id);
+            var scope = InferScope(sourceName, name, id);
             var appxIdentity = installerType == InstallerType.AppxMsix ? id : string.Empty;
             var uninstallCommand = ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode: string.Empty, appxIdentity);
             var detection = BuildDeterministicDetectionRule(
@@ -621,8 +1284,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 appxIdentity);
             var variant = BuildInstallerVariant(
                 PackageCatalogSource.Chocolatey,
-                "Chocolatey",
-                "community",
+                BuildChocolateyDisplayName(sourceName),
+                sourceName,
                 id,
                 version,
                 version,
@@ -646,8 +1309,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             parsed.Add(new PackageCatalogEntry
             {
                 Source = PackageCatalogSource.Chocolatey,
-                SourceDisplayName = "Chocolatey",
-                SourceChannel = "community",
+                SourceDisplayName = BuildChocolateyDisplayName(sourceName),
+                SourceChannel = sourceName,
                 PackageId = id,
                 Name = name,
                 Version = version,
@@ -662,7 +1325,9 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 SuggestedInstallCommand = template.InstallCommand,
                 SuggestedUninstallCommand = uninstallCommand,
                 DetectionGuidance = detection.Guidance,
-                MetadataNotes = string.IsNullOrWhiteSpace(tags) ? "Metadata from Chocolatey package feed." : $"Tags: {tags}",
+                MetadataNotes = string.IsNullOrWhiteSpace(tags)
+                    ? $"Metadata from Chocolatey source '{sourceName}'."
+                    : $"Source: {sourceName}. Tags: {tags}",
                 ConfidenceScore = Math.Max(30, template.ConfidenceScore - 20),
                 HasDetailedMetadata = true,
                 InstallerVariants = [variant]
@@ -670,6 +1335,1115 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
 
         return parsed;
+    }
+
+    private async Task<IReadOnlyList<PackageCatalogEntry>> SearchChocolateySourceAsync(
+        ChocolateySourceInfo source,
+        string term,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        if (string.IsNullOrWhiteSpace(source.ApiUrl))
+        {
+            return [];
+        }
+
+        var encodedTerm = Uri.EscapeDataString($"'{term}'");
+        var sourceBase = NormalizeChocolateyApiBaseUrl(source.ApiUrl);
+        if (string.IsNullOrWhiteSpace(sourceBase))
+        {
+            return [];
+        }
+
+        var url =
+            $"{sourceBase.TrimEnd('/')}/Search()?%24filter=IsLatestVersion&%24top={Math.Clamp(limit, 1, 50)}&searchTerm={encodedTerm}&targetFramework=%27%27&includePrerelease=false";
+
+        using var response = await SendHttpWithRetryAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, url),
+            providerId: "chocolatey",
+            sourceChannel: source.Name,
+            cancellationToken: cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            await RecordProviderFailureAsync(
+                "chocolatey",
+                source.Name,
+                $"Search failed with HTTP {(int)response.StatusCode}.",
+                isTimeout: false,
+                cancellationToken);
+            return [];
+        }
+
+        var xml = await response.Content.ReadAsStringAsync(cancellationToken);
+        var entries = ParseChocolateyEntries(xml, source.Name, source.ApiUrl);
+        await RecordProviderSuccessAsync(
+            "chocolatey",
+            source.Name,
+            durationMs: stopwatch.ElapsedMilliseconds,
+            cancellationToken);
+        return entries;
+    }
+
+    private async Task<IReadOnlyList<ChocolateySourceInfo>> GetChocolateySourcesAsync(CancellationToken cancellationToken)
+    {
+        var configured = await TryGetConfiguredChocolateySourcesAsync(cancellationToken);
+        if (configured.Count > 0)
+        {
+            return configured;
+        }
+
+        return
+        [
+            new ChocolateySourceInfo(
+                "community",
+                "https://community.chocolatey.org/api/v2/",
+                IsEnabled: true)
+        ];
+    }
+
+    private async Task<ChocolateySourceInfo> ResolveChocolateySourceAsync(string sourceChannel, CancellationToken cancellationToken)
+    {
+        var sources = await GetChocolateySourcesAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(sourceChannel))
+        {
+            var match = sources.FirstOrDefault(source =>
+                source.Name.Equals(sourceChannel, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+            {
+                return match;
+            }
+        }
+
+        return sources.First();
+    }
+
+    private async Task<IReadOnlyList<ChocolateySourceInfo>> TryGetConfiguredChocolateySourcesAsync(CancellationToken cancellationToken)
+    {
+        (int ExitCode, IReadOnlyList<string> Lines) result;
+        try
+        {
+            result = await RunProcessCaptureAsync(
+                "choco",
+                "source list --allow-unofficial --limit-output",
+                cancellationToken);
+        }
+        catch
+        {
+            return [];
+        }
+
+        if (result.ExitCode != 0 || result.Lines.Count == 0)
+        {
+            return [];
+        }
+
+        var parsed = new List<ChocolateySourceInfo>();
+        foreach (var line in result.Lines)
+        {
+            if (string.IsNullOrWhiteSpace(line) || !line.Contains('|', StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var tokens = line.Split('|', StringSplitOptions.TrimEntries);
+            if (tokens.Length < 2)
+            {
+                continue;
+            }
+
+            var name = tokens[0];
+            var url = tokens[1];
+            var disabledToken = tokens.Length >= 3 ? tokens[2] : "false";
+            var isEnabled = !disabledToken.Equals("true", StringComparison.OrdinalIgnoreCase) &&
+                            !disabledToken.Equals("disabled", StringComparison.OrdinalIgnoreCase);
+            if (!isEnabled || string.IsNullOrWhiteSpace(url))
+            {
+                continue;
+            }
+
+            parsed.Add(new ChocolateySourceInfo(name, url, IsEnabled: true));
+        }
+
+        if (parsed.Count > 0)
+        {
+            return parsed
+                .GroupBy(source => source.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList();
+        }
+
+        return [];
+    }
+
+    private static string NormalizeChocolateyApiBaseUrl(string apiUrl)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = apiUrl.Trim();
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            return string.Empty;
+        }
+
+        var path = uri.AbsolutePath.TrimEnd('/');
+        if (!path.EndsWith("/api/v2", StringComparison.OrdinalIgnoreCase))
+        {
+            path = $"{path}/api/v2";
+        }
+
+        return $"{uri.Scheme}://{uri.Host}{(uri.IsDefaultPort ? string.Empty : $":{uri.Port}")}{path}";
+    }
+
+    private static string BuildChocolateyDisplayName(string sourceName)
+    {
+        return sourceName.Equals("community", StringComparison.OrdinalIgnoreCase)
+            ? "Chocolatey"
+            : $"Chocolatey ({sourceName})";
+    }
+
+    private async Task<IReadOnlyList<PackageCatalogEntry>> SearchScoopAsync(string term, int limit, CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var (exitCode, lines) = await RunProcessCaptureAsync(
+            "scoop",
+            $"search {QuoteArgument(term)}",
+            cancellationToken);
+        if (exitCode != 0 || lines.Count == 0)
+        {
+            await RecordProviderFailureAsync(
+                "scoop",
+                "configured",
+                $"scoop search failed (exit {exitCode}).",
+                isTimeout: false,
+                cancellationToken);
+            return [];
+        }
+
+        var rows = ParseScoopSearchRows(lines);
+        if (rows.Count == 0)
+        {
+            await RecordProviderSuccessAsync("scoop", "configured", stopwatch.ElapsedMilliseconds, cancellationToken);
+            return [];
+        }
+
+        var entries = new List<PackageCatalogEntry>();
+        foreach (var row in rows.Take(Math.Clamp(limit, 1, 50)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var manifest = await TryGetScoopManifestAsync(row.Name, cancellationToken);
+            var version = Coalesce(manifest?.Version, row.Version);
+            var publisher = Coalesce(manifest?.Publisher, row.Bucket, "Scoop");
+            var sourceChannel = Coalesce(manifest?.Bucket, row.Bucket, "main");
+            var installerUrl = Coalesce(manifest?.InstallerUrl);
+            var installerType = InferInstallerType(Path.GetExtension(installerUrl), manifest?.Notes);
+            var template = BuildTemplate(row.Name, installerType, manifest?.InstallerTypeRaw);
+            var appxIdentity = installerType == InstallerType.AppxMsix
+                ? InferAppxIdentity(row.Name, manifest?.Name ?? row.Name, row.Name)
+                : string.Empty;
+            var detection = BuildDeterministicDetectionRule(
+                installerType,
+                row.Name,
+                manifest?.Name ?? row.Name,
+                publisher,
+                version,
+                msiProductCode: string.Empty,
+                appxIdentity);
+            var uninstall = ResolveUninstallTemplate(
+                template.UninstallCommand,
+                installerType,
+                msiProductCode: string.Empty,
+                appxIdentity);
+            var variant = BuildInstallerVariant(
+                PackageCatalogSource.Scoop,
+                "Scoop",
+                sourceChannel,
+                row.Name,
+                version,
+                version,
+                installerType,
+                Coalesce(manifest?.InstallerTypeRaw, Path.GetExtension(installerUrl)),
+                InferArchitecture(row.Name, version, sourceChannel, manifest?.Notes ?? string.Empty),
+                InferScope(sourceChannel, row.Name, manifest?.Notes ?? string.Empty),
+                installerUrl,
+                manifest?.InstallerSha256 ?? string.Empty,
+                hashVerifiedBySource: !string.IsNullOrWhiteSpace(manifest?.InstallerSha256),
+                vendorSigned: false,
+                signerSubject: string.Empty,
+                suggestedInstallCommand: template.InstallCommand,
+                suggestedUninstallCommand: uninstall,
+                detectionRule: detection.Rule,
+                detectionGuidance: detection.Guidance,
+                isDeterministicDetection: detection.IsDeterministic,
+                confidenceScore: Math.Max(46, template.ConfidenceScore - 18),
+                publishedAtUtc: null);
+
+            entries.Add(new PackageCatalogEntry
+            {
+                Source = PackageCatalogSource.Scoop,
+                SourceDisplayName = "Scoop",
+                SourceChannel = sourceChannel,
+                PackageId = row.Name,
+                Name = Coalesce(manifest?.Name, row.Name),
+                Version = version,
+                BuildVersion = version,
+                Publisher = publisher,
+                Description = Truncate(Coalesce(manifest?.Description, manifest?.Notes), 260),
+                HomepageUrl = Coalesce(manifest?.HomepageUrl),
+                IconUrl = ResolveIconUrl(manifest?.IconUrl, manifest?.HomepageUrl, row.Name),
+                InstallerDownloadUrl = installerUrl,
+                InstallerType = installerType,
+                InstallerTypeRaw = Coalesce(manifest?.InstallerTypeRaw, Path.GetExtension(installerUrl)),
+                SuggestedInstallCommand = template.InstallCommand,
+                SuggestedUninstallCommand = uninstall,
+                DetectionGuidance = detection.Guidance,
+                MetadataNotes = $"Scoop bucket: {sourceChannel}",
+                ConfidenceScore = Math.Max(46, template.ConfidenceScore - 18),
+                HasDetailedMetadata = manifest is not null,
+                InstallerVariants = [variant]
+            });
+        }
+
+        await RecordProviderSuccessAsync("scoop", "configured", stopwatch.ElapsedMilliseconds, cancellationToken);
+        return entries;
+    }
+
+    private async Task<PackageCatalogEntry> GetScoopDetailsAsync(PackageCatalogEntry entry, CancellationToken cancellationToken)
+    {
+        var manifest = await TryGetScoopManifestAsync(entry.PackageId, cancellationToken);
+        if (manifest is null)
+        {
+            return entry;
+        }
+
+        var version = Coalesce(manifest.Version, entry.Version, entry.BuildVersion);
+        var installerUrl = Coalesce(manifest.InstallerUrl, entry.InstallerDownloadUrl);
+        var installerType = InferInstallerType(Path.GetExtension(installerUrl), manifest.InstallerTypeRaw);
+        var template = BuildTemplate(entry.PackageId, installerType, manifest.InstallerTypeRaw);
+        var appxIdentity = installerType == InstallerType.AppxMsix
+            ? InferAppxIdentity(entry.PackageId, manifest.Name, manifest.Name)
+            : string.Empty;
+        var detection = BuildDeterministicDetectionRule(
+            installerType,
+            entry.PackageId,
+            Coalesce(manifest.Name, entry.Name),
+            Coalesce(entry.Publisher, manifest.Publisher, "Scoop"),
+            version,
+            msiProductCode: string.Empty,
+            appxIdentity);
+        var uninstall = ResolveUninstallTemplate(
+            template.UninstallCommand,
+            installerType,
+            msiProductCode: string.Empty,
+            appxIdentity);
+        var variant = BuildInstallerVariant(
+            PackageCatalogSource.Scoop,
+            "Scoop",
+            Coalesce(manifest.Bucket, entry.SourceChannel),
+            entry.PackageId,
+            version,
+            version,
+            installerType,
+            Coalesce(manifest.InstallerTypeRaw, entry.InstallerTypeRaw),
+            InferArchitecture(manifest.Name, version, manifest.Bucket, manifest.Notes),
+            InferScope(manifest.Bucket, manifest.Name, manifest.Notes),
+            installerUrl,
+            manifest.InstallerSha256,
+            hashVerifiedBySource: !string.IsNullOrWhiteSpace(manifest.InstallerSha256),
+            vendorSigned: false,
+            signerSubject: string.Empty,
+            suggestedInstallCommand: template.InstallCommand,
+            suggestedUninstallCommand: uninstall,
+            detectionRule: detection.Rule,
+            detectionGuidance: detection.Guidance,
+            isDeterministicDetection: detection.IsDeterministic,
+            confidenceScore: Math.Max(entry.ConfidenceScore, template.ConfidenceScore),
+            publishedAtUtc: null);
+
+        return entry with
+        {
+            SourceDisplayName = "Scoop",
+            SourceChannel = Coalesce(manifest.Bucket, entry.SourceChannel),
+            Name = Coalesce(manifest.Name, entry.Name),
+            Version = version,
+            BuildVersion = version,
+            Publisher = Coalesce(entry.Publisher, manifest.Publisher, "Scoop"),
+            Description = Truncate(Coalesce(manifest.Description, manifest.Notes, entry.Description), 260),
+            HomepageUrl = Coalesce(manifest.HomepageUrl, entry.HomepageUrl),
+            IconUrl = ResolveIconUrl(manifest.IconUrl, manifest.HomepageUrl, entry.PackageId),
+            InstallerDownloadUrl = installerUrl,
+            InstallerType = installerType,
+            InstallerTypeRaw = Coalesce(manifest.InstallerTypeRaw, entry.InstallerTypeRaw),
+            SuggestedInstallCommand = template.InstallCommand,
+            SuggestedUninstallCommand = uninstall,
+            DetectionGuidance = detection.Guidance,
+            MetadataNotes = $"Scoop bucket: {Coalesce(manifest.Bucket, entry.SourceChannel, "main")}",
+            HasDetailedMetadata = true,
+            ConfidenceScore = Math.Max(entry.ConfidenceScore, template.ConfidenceScore),
+            InstallerVariants = [variant]
+        };
+    }
+
+    private async Task<PackageCatalogDownloadResult> DownloadScoopInstallerAsync(
+        PackageCatalogEntry entry,
+        string workingFolder,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var details = entry;
+        if (string.IsNullOrWhiteSpace(details.InstallerDownloadUrl))
+        {
+            details = await GetScoopDetailsAsync(entry, cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(details.InstallerDownloadUrl))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = "No installer URL was available for this Scoop package.",
+                WorkingFolderPath = workingFolder
+            };
+        }
+
+        var fileName = BuildDownloadFileNameFromUrl(details.InstallerDownloadUrl, details.PackageId, details.Version);
+        var targetPath = Path.Combine(workingFolder, fileName);
+        await DownloadFileAsync(details.InstallerDownloadUrl, targetPath, progress, cancellationToken);
+        var resolvedInstaller = await ResolveDownloadedInstallerPathAsync(targetPath, workingFolder, progress, cancellationToken);
+        if (string.IsNullOrWhiteSpace(resolvedInstaller))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = "Downloaded Scoop artifact did not contain a supported installer file.",
+                WorkingFolderPath = workingFolder
+            };
+        }
+
+        var hashVerified = !string.IsNullOrWhiteSpace(details.InstallerSha256) &&
+                           details.InstallerSha256.Equals(ComputeFileSha256(resolvedInstaller), StringComparison.OrdinalIgnoreCase);
+        return BuildSuccessfulDownloadResult(
+            resolvedInstaller,
+            Path.GetDirectoryName(resolvedInstaller) ?? workingFolder,
+            hashVerified
+                ? "Downloaded installer from Scoop and verified source hash."
+                : "Downloaded installer from Scoop.",
+            hashVerifiedBySource: hashVerified);
+    }
+
+    private static string ExtractScoopPublisher(string homepageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(homepageUrl) || !Uri.TryCreate(homepageUrl, UriKind.Absolute, out var uri))
+        {
+            return "Scoop";
+        }
+
+        var host = uri.Host.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return "Scoop";
+        }
+
+        if (host.StartsWith("www.", StringComparison.Ordinal))
+        {
+            host = host[4..];
+        }
+
+        var segments = host.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length == 0)
+        {
+            return "Scoop";
+        }
+
+        if (segments.Length >= 2)
+        {
+            return segments[^2];
+        }
+
+        return segments[0];
+    }
+
+    private static string ExtractScoopBucketFromPackageId(string packageId)
+    {
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            return "main";
+        }
+
+        var normalized = packageId.Trim().Replace('\\', '/');
+        var separatorIndex = normalized.IndexOf('/');
+        if (separatorIndex > 0)
+        {
+            return normalized[..separatorIndex].Trim();
+        }
+
+        return "main";
+    }
+
+    private async Task<ScoopManifestInfo?> TryGetScoopManifestAsync(string packageId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            return null;
+        }
+
+        var (exitCode, lines) = await RunProcessCaptureAsync(
+            "scoop",
+            $"cat {QuoteArgument(packageId)}",
+            cancellationToken);
+        if (exitCode != 0 || lines.Count == 0)
+        {
+            return null;
+        }
+
+        var jsonPayload = string.Join(Environment.NewLine, lines);
+        var start = jsonPayload.IndexOf('{');
+        if (start < 0)
+        {
+            return null;
+        }
+
+        jsonPayload = jsonPayload[start..];
+        try
+        {
+            using var json = JsonDocument.Parse(jsonPayload);
+            var root = json.RootElement;
+            var name = Coalesce(GetJsonStringOrDefault(root, "name"), packageId);
+            var version = GetJsonStringOrDefault(root, "version");
+            var description = Coalesce(GetJsonStringOrDefault(root, "description"), GetJsonStringOrDefault(root, "notes"));
+            var homepage = GetJsonStringOrDefault(root, "homepage");
+            var notes = GetJsonStringOrDefault(root, "notes");
+            var publisher = ExtractScoopPublisher(homepage);
+            var bucket = ExtractScoopBucketFromPackageId(packageId);
+            var installerTypeRaw = string.Empty;
+            var installerUrl = string.Empty;
+            var installerSha = string.Empty;
+
+            if (root.TryGetProperty("architecture", out var architecture) &&
+                architecture.ValueKind == JsonValueKind.Object)
+            {
+                if (architecture.TryGetProperty("64bit", out var bit64) && bit64.ValueKind == JsonValueKind.Object)
+                {
+                    installerUrl = Coalesce(GetJsonStringOrDefault(bit64, "url"), installerUrl);
+                    installerSha = Coalesce(GetJsonStringOrDefault(bit64, "hash"), installerSha);
+                }
+
+                if (string.IsNullOrWhiteSpace(installerUrl) &&
+                    architecture.TryGetProperty("32bit", out var bit32) &&
+                    bit32.ValueKind == JsonValueKind.Object)
+                {
+                    installerUrl = Coalesce(GetJsonStringOrDefault(bit32, "url"), installerUrl);
+                    installerSha = Coalesce(GetJsonStringOrDefault(bit32, "hash"), installerSha);
+                }
+            }
+
+            installerUrl = Coalesce(installerUrl, GetJsonStringOrDefault(root, "url"));
+            installerSha = Coalesce(installerSha, GetJsonStringOrDefault(root, "hash"));
+            installerTypeRaw = Path.GetExtension(installerUrl);
+
+            return new ScoopManifestInfo(
+                name,
+                version,
+                description,
+                homepage,
+                notes,
+                bucket,
+                publisher,
+                installerUrl,
+                NormalizeSha256(installerSha),
+                installerTypeRaw,
+                IconUrl: string.Empty);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static List<ScoopSearchRow> ParseScoopSearchRows(IReadOnlyList<string> lines)
+    {
+        var rows = new List<ScoopSearchRow>();
+        foreach (var raw in lines)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var line = raw.Trim();
+            if (line.StartsWith("Results", StringComparison.OrdinalIgnoreCase) ||
+                line.StartsWith("---", StringComparison.OrdinalIgnoreCase) ||
+                line.StartsWith("Name", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var columns = MultiSpaceRegex.Split(line)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToArray();
+            if (columns.Length >= 2)
+            {
+                var name = columns[0].Trim();
+                var version = columns[1].Trim();
+                var bucket = columns.Length >= 3 ? columns[2].Trim() : "main";
+                rows.Add(new ScoopSearchRow(name, version, bucket));
+                continue;
+            }
+
+            var regexMatch = ScoopSearchRegex.Match(line);
+            if (regexMatch.Success)
+            {
+                rows.Add(new ScoopSearchRow(
+                    regexMatch.Groups["name"].Value.Trim(),
+                    regexMatch.Groups["version"].Value.Trim(),
+                    Coalesce(regexMatch.Groups["bucket"].Value.Trim(), "main")));
+            }
+        }
+
+        return rows
+            .GroupBy(row => row.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<NuGetSourceInfo>> GetNuGetSourcesAsync(CancellationToken cancellationToken)
+    {
+        var configured = await TryGetConfiguredNuGetSourcesAsync(cancellationToken);
+        if (configured.Count > 0)
+        {
+            return configured;
+        }
+
+        return
+        [
+            new NuGetSourceInfo(
+                "nuget.org",
+                "https://api.nuget.org/v3/index.json",
+                IsEnabled: true)
+        ];
+    }
+
+    private async Task<IReadOnlyList<NuGetSourceInfo>> TryGetConfiguredNuGetSourcesAsync(CancellationToken cancellationToken)
+    {
+        (int ExitCode, IReadOnlyList<string> Lines) result;
+        try
+        {
+            result = await RunProcessCaptureAsync(
+                "dotnet",
+                "nuget list source",
+                cancellationToken);
+        }
+        catch
+        {
+            return [];
+        }
+
+        if (result.ExitCode != 0 || result.Lines.Count == 0)
+        {
+            return [];
+        }
+
+        var parsed = new List<NuGetSourceInfo>();
+        var headerSeen = false;
+        var pendingName = string.Empty;
+        var pendingEnabled = false;
+        foreach (var raw in result.Lines)
+        {
+            var line = raw.Trim();
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            if (!headerSeen && line.StartsWith("Registered Sources", StringComparison.OrdinalIgnoreCase))
+            {
+                headerSeen = true;
+                continue;
+            }
+
+            if (!headerSeen)
+            {
+                continue;
+            }
+
+            var inlineMatch = Regex.Match(
+                line,
+                @"^(?:\d+\.\s*)?(?<name>[^\[]+?)\s*\[(?<state>Enabled|Disabled)\]\s*(?<url>\S+)?$",
+                RegexOptions.IgnoreCase);
+            if (inlineMatch.Success)
+            {
+                pendingName = inlineMatch.Groups["name"].Value.Trim().TrimEnd('.');
+                pendingEnabled = inlineMatch.Groups["state"].Value.Equals("Enabled", StringComparison.OrdinalIgnoreCase);
+                var inlineUrl = inlineMatch.Groups["url"].Success
+                    ? inlineMatch.Groups["url"].Value.Trim()
+                    : string.Empty;
+                if (pendingEnabled && !string.IsNullOrWhiteSpace(inlineUrl))
+                {
+                    parsed.Add(new NuGetSourceInfo(pendingName, inlineUrl, IsEnabled: true));
+                    pendingName = string.Empty;
+                }
+
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(pendingName) &&
+                pendingEnabled &&
+                (line.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                 line.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+            {
+                parsed.Add(new NuGetSourceInfo(pendingName, line, IsEnabled: true));
+                pendingName = string.Empty;
+                continue;
+            }
+        }
+
+        return parsed
+            .Where(source => source.IsEnabled)
+            .GroupBy(source => source.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private async Task<ResolvedNuGetSourceInfo> ResolveNuGetSourceInfoAsync(NuGetSourceInfo source, CancellationToken cancellationToken)
+    {
+        var normalizedIndex = NormalizeNuGetIndexUrl(source.IndexUrl);
+        if (string.IsNullOrWhiteSpace(normalizedIndex))
+        {
+            return new ResolvedNuGetSourceInfo(source.Name, source.IndexUrl, string.Empty, string.Empty);
+        }
+
+        try
+        {
+            using var response = await SendHttpWithRetryAsync(
+                () => new HttpRequestMessage(HttpMethod.Get, normalizedIndex),
+                providerId: "nuget",
+                sourceChannel: source.Name,
+                cancellationToken: cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new ResolvedNuGetSourceInfo(source.Name, normalizedIndex, string.Empty, string.Empty);
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            if (!json.RootElement.TryGetProperty("resources", out var resources) ||
+                resources.ValueKind != JsonValueKind.Array)
+            {
+                return new ResolvedNuGetSourceInfo(source.Name, normalizedIndex, string.Empty, string.Empty);
+            }
+
+            var searchUrl = string.Empty;
+            var packageBaseAddressUrl = string.Empty;
+            foreach (var resource in resources.EnumerateArray())
+            {
+                var resourceType = GetJsonStringOrDefault(resource, "@type");
+                var resourceUrl = GetJsonStringOrDefault(resource, "@id");
+                if (string.IsNullOrWhiteSpace(resourceType) || string.IsNullOrWhiteSpace(resourceUrl))
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(searchUrl) &&
+                    resourceType.Contains("SearchQueryService", StringComparison.OrdinalIgnoreCase))
+                {
+                    searchUrl = resourceUrl;
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(packageBaseAddressUrl) &&
+                    resourceType.Contains("PackageBaseAddress", StringComparison.OrdinalIgnoreCase))
+                {
+                    packageBaseAddressUrl = resourceUrl;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(searchUrl) &&
+                normalizedIndex.Contains("api.nuget.org", StringComparison.OrdinalIgnoreCase))
+            {
+                searchUrl = "https://azuresearch-usnc.nuget.org/query";
+            }
+
+            if (string.IsNullOrWhiteSpace(packageBaseAddressUrl) &&
+                normalizedIndex.Contains("api.nuget.org", StringComparison.OrdinalIgnoreCase))
+            {
+                packageBaseAddressUrl = "https://api.nuget.org/v3-flatcontainer/";
+            }
+
+            return new ResolvedNuGetSourceInfo(
+                source.Name,
+                normalizedIndex,
+                NormalizeNuGetEndpointUrl(searchUrl, ensureTrailingSlash: false),
+                NormalizeNuGetEndpointUrl(packageBaseAddressUrl, ensureTrailingSlash: true));
+        }
+        catch
+        {
+            return new ResolvedNuGetSourceInfo(source.Name, normalizedIndex, string.Empty, string.Empty);
+        }
+    }
+
+    private static string NormalizeNuGetIndexUrl(string sourceUrl)
+    {
+        if (string.IsNullOrWhiteSpace(sourceUrl))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = sourceUrl.Trim();
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            return string.Empty;
+        }
+
+        var asString = uri.ToString();
+        if (asString.EndsWith("/index.json", StringComparison.OrdinalIgnoreCase))
+        {
+            return asString;
+        }
+
+        if (asString.EndsWith("/v3", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{asString.TrimEnd('/')}/index.json";
+        }
+
+        if (uri.Host.Equals("api.nuget.org", StringComparison.OrdinalIgnoreCase))
+        {
+            return "https://api.nuget.org/v3/index.json";
+        }
+
+        return asString;
+    }
+
+    private static string NormalizeNuGetEndpointUrl(string endpointUrl, bool ensureTrailingSlash)
+    {
+        if (string.IsNullOrWhiteSpace(endpointUrl))
+        {
+            return string.Empty;
+        }
+
+        if (!Uri.TryCreate(endpointUrl.Trim(), UriKind.Absolute, out var uri))
+        {
+            return string.Empty;
+        }
+
+        var normalized = uri.ToString();
+        if (ensureTrailingSlash && !normalized.EndsWith("/", StringComparison.Ordinal))
+        {
+            normalized += "/";
+        }
+
+        return normalized;
+    }
+
+    private static string BuildNuGetPackageDownloadUrl(string packageBaseAddressUrl, string packageId, string version)
+    {
+        if (string.IsNullOrWhiteSpace(packageBaseAddressUrl) ||
+            string.IsNullOrWhiteSpace(packageId) ||
+            string.IsNullOrWhiteSpace(version))
+        {
+            return string.Empty;
+        }
+
+        var normalizedBase = NormalizeNuGetEndpointUrl(packageBaseAddressUrl, ensureTrailingSlash: true);
+        if (string.IsNullOrWhiteSpace(normalizedBase))
+        {
+            return string.Empty;
+        }
+
+        var id = packageId.Trim().ToLowerInvariant();
+        var normalizedVersion = version.Trim().ToLowerInvariant();
+        return
+            $"{normalizedBase}{Uri.EscapeDataString(id)}/{Uri.EscapeDataString(normalizedVersion)}/{Uri.EscapeDataString(id)}.{Uri.EscapeDataString(normalizedVersion)}.nupkg";
+    }
+
+    private static string BuildNuGetDisplayName(string sourceName)
+    {
+        return sourceName.Equals("nuget.org", StringComparison.OrdinalIgnoreCase)
+            ? "NuGet"
+            : $"NuGet ({sourceName})";
+    }
+
+    private async Task<IReadOnlyList<PackageCatalogEntry>> SearchNuGetAsync(string term, int limit, CancellationToken cancellationToken)
+    {
+        var sources = await GetNuGetSourcesAsync(cancellationToken);
+        if (sources.Count == 0)
+        {
+            return [];
+        }
+
+        var perSource = Math.Clamp(limit + 4, 1, 50);
+        var tasks = sources
+            .Select(source => SearchNuGetSourceAsync(source, term, perSource, cancellationToken))
+            .ToArray();
+        await Task.WhenAll(tasks);
+
+        return tasks
+            .SelectMany(task => task.Result)
+            .OrderByDescending(entry => Relevance(entry, term))
+            .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Clamp(limit * 2, limit, 90))
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<PackageCatalogEntry>> SearchNuGetSourceAsync(
+        NuGetSourceInfo source,
+        string term,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var resolved = await ResolveNuGetSourceInfoAsync(source, cancellationToken);
+        if (string.IsNullOrWhiteSpace(resolved.SearchQueryServiceUrl))
+        {
+            await RecordProviderFailureAsync(
+                "nuget",
+                source.Name,
+                "NuGet source has no SearchQueryService endpoint.",
+                isTimeout: false,
+                cancellationToken);
+            return [];
+        }
+
+        var url = $"{resolved.SearchQueryServiceUrl}?q={Uri.EscapeDataString(term)}&skip=0&take={Math.Clamp(limit, 1, 50)}&prerelease=false&semVerLevel=2.0.0";
+        using var response = await SendHttpWithRetryAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, url),
+            providerId: "nuget",
+            sourceChannel: source.Name,
+            cancellationToken: cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            await RecordProviderFailureAsync(
+                "nuget",
+                source.Name,
+                $"NuGet search failed with HTTP {(int)response.StatusCode}.",
+                isTimeout: false,
+                cancellationToken);
+            return [];
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        if (!json.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        {
+            await RecordProviderSuccessAsync("nuget", source.Name, stopwatch.ElapsedMilliseconds, cancellationToken);
+            return [];
+        }
+
+        var entries = new List<PackageCatalogEntry>();
+        foreach (var package in data.EnumerateArray())
+        {
+            var id = GetJsonStringOrDefault(package, "id");
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                continue;
+            }
+
+            var version = GetJsonStringOrDefault(package, "version");
+            var description = Truncate(GetJsonStringOrDefault(package, "description"), 260);
+            var publisher = GetJsonStringOrDefault(package, "authors");
+            var homepage = Coalesce(
+                GetJsonStringOrDefault(package, "projectUrl"),
+                GetJsonStringOrDefault(package, "licenseUrl"));
+            var icon = Coalesce(GetJsonStringOrDefault(package, "iconUrl"), GetJsonStringOrDefault(package, "icon"));
+            var packageUrl = BuildNuGetPackageDownloadUrl(resolved.PackageBaseAddressUrl, id, version);
+            var installerType = InferInstallerType(Path.GetExtension(packageUrl), description);
+            var template = BuildTemplate(id, installerType, Path.GetExtension(packageUrl));
+            var appxIdentity = installerType == InstallerType.AppxMsix
+                ? InferAppxIdentity(id, id, id)
+                : string.Empty;
+            var detection = BuildDeterministicDetectionRule(
+                installerType,
+                id,
+                id,
+                publisher,
+                version,
+                msiProductCode: string.Empty,
+                appxIdentity);
+            var uninstall = ResolveUninstallTemplate(
+                template.UninstallCommand,
+                installerType,
+                msiProductCode: string.Empty,
+                appxIdentity);
+            var confidence = installerType == InstallerType.Unknown
+                ? 30
+                : Math.Max(42, template.ConfidenceScore - 24);
+            var variant = BuildInstallerVariant(
+                PackageCatalogSource.NuGet,
+                BuildNuGetDisplayName(source.Name),
+                source.Name,
+                id,
+                version,
+                version,
+                installerType,
+                Path.GetExtension(packageUrl),
+                InferArchitecture(id, version, source.Name, description),
+                InferScope(source.Name, id, description),
+                packageUrl,
+                installerSha256: string.Empty,
+                hashVerifiedBySource: false,
+                vendorSigned: false,
+                signerSubject: string.Empty,
+                suggestedInstallCommand: template.InstallCommand,
+                suggestedUninstallCommand: uninstall,
+                detectionRule: detection.Rule,
+                detectionGuidance: detection.Guidance,
+                isDeterministicDetection: detection.IsDeterministic,
+                confidenceScore: confidence,
+                publishedAtUtc: null);
+
+            entries.Add(new PackageCatalogEntry
+            {
+                Source = PackageCatalogSource.NuGet,
+                SourceDisplayName = BuildNuGetDisplayName(source.Name),
+                SourceChannel = source.Name,
+                PackageId = id,
+                Name = id,
+                Version = version,
+                BuildVersion = version,
+                Publisher = publisher,
+                Description = description,
+                HomepageUrl = homepage,
+                IconUrl = ResolveIconUrl(icon, homepage, id),
+                InstallerDownloadUrl = packageUrl,
+                InstallerType = installerType,
+                InstallerTypeRaw = Path.GetExtension(packageUrl),
+                SuggestedInstallCommand = template.InstallCommand,
+                SuggestedUninstallCommand = uninstall,
+                DetectionGuidance = detection.Guidance,
+                MetadataNotes = $"NuGet source: {source.Name}",
+                ConfidenceScore = confidence,
+                HasDetailedMetadata = true,
+                InstallerVariants = [variant]
+            });
+        }
+
+        await RecordProviderSuccessAsync("nuget", source.Name, stopwatch.ElapsedMilliseconds, cancellationToken);
+        return entries;
+    }
+
+    private async Task<PackageCatalogEntry> GetNuGetDetailsAsync(PackageCatalogEntry entry, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(entry.PackageId))
+        {
+            return entry;
+        }
+
+        var sources = await GetNuGetSourcesAsync(cancellationToken);
+        var source = sources.FirstOrDefault(candidate =>
+                         candidate.Name.Equals(entry.SourceChannel, StringComparison.OrdinalIgnoreCase))
+                     ?? sources.FirstOrDefault();
+        if (source is null)
+        {
+            return entry;
+        }
+
+        var resolved = await ResolveNuGetSourceInfoAsync(source, cancellationToken);
+        var packageUrl = BuildNuGetPackageDownloadUrl(resolved.PackageBaseAddressUrl, entry.PackageId, entry.Version);
+        var installerType = InferInstallerType(Path.GetExtension(packageUrl), entry.Description);
+        var template = BuildTemplate(entry.PackageId, installerType, Path.GetExtension(packageUrl));
+        var appxIdentity = installerType == InstallerType.AppxMsix
+            ? InferAppxIdentity(entry.PackageId, entry.Name, entry.PackageId)
+            : string.Empty;
+        var detection = BuildDeterministicDetectionRule(
+            installerType,
+            entry.PackageId,
+            entry.Name,
+            entry.Publisher,
+            entry.Version,
+            msiProductCode: string.Empty,
+            appxIdentity);
+        var uninstall = ResolveUninstallTemplate(
+            template.UninstallCommand,
+            installerType,
+            msiProductCode: string.Empty,
+            appxIdentity);
+        var variant = BuildInstallerVariant(
+            PackageCatalogSource.NuGet,
+            BuildNuGetDisplayName(source.Name),
+            source.Name,
+            entry.PackageId,
+            entry.Version,
+            entry.BuildVersion,
+            installerType,
+            Path.GetExtension(packageUrl),
+            InferArchitecture(entry.PackageId, entry.Version, source.Name, entry.Description),
+            InferScope(source.Name, entry.PackageId, entry.Description),
+            packageUrl,
+            installerSha256: string.Empty,
+            hashVerifiedBySource: false,
+            vendorSigned: false,
+            signerSubject: string.Empty,
+            suggestedInstallCommand: template.InstallCommand,
+            suggestedUninstallCommand: uninstall,
+            detectionRule: detection.Rule,
+            detectionGuidance: detection.Guidance,
+            isDeterministicDetection: detection.IsDeterministic,
+            confidenceScore: entry.ConfidenceScore,
+            publishedAtUtc: entry.PublishedAtUtc);
+
+        return entry with
+        {
+            SourceDisplayName = BuildNuGetDisplayName(source.Name),
+            SourceChannel = source.Name,
+            InstallerDownloadUrl = packageUrl,
+            InstallerType = installerType,
+            InstallerTypeRaw = Path.GetExtension(packageUrl),
+            SuggestedInstallCommand = template.InstallCommand,
+            SuggestedUninstallCommand = uninstall,
+            DetectionGuidance = detection.Guidance,
+            MetadataNotes = $"NuGet source: {source.Name}",
+            InstallerVariants = [variant]
+        };
+    }
+
+    private async Task<PackageCatalogDownloadResult> DownloadNuGetInstallerAsync(
+        PackageCatalogEntry entry,
+        string workingFolder,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var details = entry;
+        if (string.IsNullOrWhiteSpace(details.InstallerDownloadUrl))
+        {
+            details = await GetNuGetDetailsAsync(entry, cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(details.InstallerDownloadUrl))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = "No package URL was available for this NuGet package.",
+                WorkingFolderPath = workingFolder
+            };
+        }
+
+        var fileName = BuildDownloadFileNameFromUrl(details.InstallerDownloadUrl, details.PackageId, details.Version);
+        if (!fileName.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
+        {
+            fileName = $"{Path.GetFileNameWithoutExtension(fileName)}.nupkg";
+        }
+
+        var targetPath = Path.Combine(workingFolder, fileName);
+        await DownloadFileAsync(details.InstallerDownloadUrl, targetPath, progress, cancellationToken);
+        var resolvedInstaller = await ResolveDownloadedInstallerPathAsync(targetPath, workingFolder, progress, cancellationToken);
+        if (string.IsNullOrWhiteSpace(resolvedInstaller))
+        {
+            return new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = "NuGet package downloaded, but no supported installer artifact was found inside.",
+                WorkingFolderPath = workingFolder
+            };
+        }
+
+        return BuildSuccessfulDownloadResult(
+            resolvedInstaller,
+            Path.GetDirectoryName(resolvedInstaller) ?? workingFolder,
+            "Installer extracted from NuGet package.",
+            hashVerifiedBySource: false);
     }
 
     private async Task<IReadOnlyList<PackageCatalogEntry>> SearchGitHubReleasesAsync(string term, int limit, CancellationToken cancellationToken)
@@ -1028,9 +2802,12 @@ public sealed class PackageCatalogService : IPackageCatalogService
         IProgress<string>? progress,
         CancellationToken cancellationToken)
     {
-        var nupkgUrl = !string.IsNullOrWhiteSpace(entry.InstallerDownloadUrl)
-            ? entry.InstallerDownloadUrl
-            : BuildChocolateyPackageUrl(entry.PackageId, entry.Version);
+        var nupkgUrl = entry.InstallerDownloadUrl;
+        if (string.IsNullOrWhiteSpace(nupkgUrl))
+        {
+            var source = await ResolveChocolateySourceAsync(entry.SourceChannel, cancellationToken);
+            nupkgUrl = BuildChocolateyPackageUrl(entry.PackageId, entry.Version, source.ApiUrl);
+        }
 
         if (string.IsNullOrWhiteSpace(nupkgUrl))
         {
@@ -1237,19 +3014,25 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return SupportedInstallerExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
     }
 
-    private static string BuildChocolateyPackageUrl(string packageId, string version)
+    private static string BuildChocolateyPackageUrl(string packageId, string version, string sourceApiUrl = "")
     {
         if (string.IsNullOrWhiteSpace(packageId))
         {
             return string.Empty;
         }
 
-        if (string.IsNullOrWhiteSpace(version))
+        var apiBase = NormalizeChocolateyApiBaseUrl(sourceApiUrl);
+        if (string.IsNullOrWhiteSpace(apiBase))
         {
-            return $"https://community.chocolatey.org/api/v2/package/{Uri.EscapeDataString(packageId)}";
+            apiBase = "https://community.chocolatey.org/api/v2";
         }
 
-        return $"https://community.chocolatey.org/api/v2/package/{Uri.EscapeDataString(packageId)}/{Uri.EscapeDataString(version)}";
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return $"{apiBase.TrimEnd('/')}/package/{Uri.EscapeDataString(packageId)}";
+        }
+
+        return $"{apiBase.TrimEnd('/')}/package/{Uri.EscapeDataString(packageId)}/{Uri.EscapeDataString(version)}";
     }
 
     private static string BuildDownloadFileNameFromUrl(string url, string packageId, string? version)
@@ -2747,7 +4530,28 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
     private sealed record DetectionStrategyPlan(IntuneDetectionRule Rule, string Guidance, bool IsDeterministic);
     private sealed record TemplateSuggestion(string InstallCommand, string UninstallCommand, string DetectionGuidance, int ConfidenceScore);
+    private sealed record CachedSearchResult(IReadOnlyList<PackageCatalogEntry> Results, bool IsFresh);
     private sealed record WingetSourceInfo(string Name, bool IsExplicit);
+    private sealed record ChocolateySourceInfo(string Name, string ApiUrl, bool IsEnabled);
+    private sealed record ScoopSearchRow(string Name, string Version, string Bucket);
+    private sealed record ScoopManifestInfo(
+        string Name,
+        string Version,
+        string Description,
+        string HomepageUrl,
+        string Notes,
+        string Bucket,
+        string Publisher,
+        string InstallerUrl,
+        string InstallerSha256,
+        string InstallerTypeRaw,
+        string IconUrl);
+    private sealed record NuGetSourceInfo(string Name, string IndexUrl, bool IsEnabled);
+    private sealed record ResolvedNuGetSourceInfo(
+        string Name,
+        string IndexUrl,
+        string SearchQueryServiceUrl,
+        string PackageBaseAddressUrl);
     private sealed record GitHubReleaseInfo(string TagName, string ReleaseName, DateTimeOffset? PublishedAtUtc, IReadOnlyList<GitHubAssetInfo> Assets);
     private sealed record GitHubAssetInfo(string FileName, string DownloadUrl, string ContentType, int FileSize);
 

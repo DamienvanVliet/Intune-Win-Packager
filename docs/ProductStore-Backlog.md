@@ -4,12 +4,20 @@
 Expand the package store beyond the current baseline while keeping Intune preparation deterministic, maintainable, and production-safe.
 
 ## Current Status
-- Phase 1 started.
+- Phase 1 completed.
+- Phase 2 completed.
+- Phase 3 implemented baseline delivery.
 - Implemented:
   - Dynamic WinGet source discovery (`winget source list`) with search across configured non-explicit sources.
   - New optional source: GitHub Releases.
   - Store readiness badge model (`Ready`, `Needs review`, `Blocked`).
   - Removed automatic EXE silent-switch auto-verification (now evidence-first).
+  - Canonical package identity and cross-source merge with structured installer variants.
+  - Deterministic detection mapping across MSI/EXE/APPX-MSIX variants.
+  - Additional catalog providers: Scoop + NuGet v3 + configured Chocolatey sources.
+  - Catalog/profile persistence moved to SQLite (`catalog-store.v1.db`).
+  - Search stale-cache policy with background refresh.
+  - Provider health telemetry and diagnostics API.
 
 ## Phase 1 - Source and Reliability Foundation
 

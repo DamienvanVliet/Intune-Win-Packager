@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.33] - 2026-04-18
+
+### Added
+- Product Store Phase 3 baseline: added Scoop and NuGet v3 sources in the catalog pipeline.
+- Added configured source discovery for Chocolatey (`choco source list`) and NuGet (`dotnet nuget list source`) with safe fallback behavior.
+- Added SQLite-backed store search cache with stale policy and background refresh support.
+- Added provider diagnostics telemetry (requests, failures, consecutive failures, timeout count, last error, last success/failure).
+- Added new store source toggles in UI and localization for Scoop/NuGet.
+- Added tests for NuGet search normalization, cache hit behavior, and provider diagnostics recording.
+
+### Changed
+- Catalog download now resolves Chocolatey package URLs from the selected configured Chocolatey source when explicit installer URL is missing.
+- Store source selection validation now includes Scoop and NuGet.
+
 ## [1.1.32] - 2026-04-18
 
 ### Added

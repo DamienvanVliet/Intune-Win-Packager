@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Threading;
 using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Infrastructure.Services;
 using IntuneWinPackager.Models.Entities;
@@ -475,6 +476,249 @@ public sealed class PackageCatalogServiceTests
         Assert.Contains(entry.InstallerVariants, variant => variant.InstallerType == InstallerType.Msi);
         Assert.Contains(entry.InstallerVariants, variant => variant.InstallerType == InstallerType.Exe);
         Assert.Contains(entry.InstallerVariants, variant => variant.Architecture.Equals("x64", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task SearchAsync_NuGetSource_ReturnsNormalizedEntry()
+    {
+        var processRunner = new RoutingProcessRunner(request =>
+        {
+            if (request.FileName.Equals("dotnet", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("nuget list source", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Registered Sources:",
+                    "  1.  nuget.org [Enabled]",
+                    "      https://api.nuget.org/v3/index.json"
+                ]);
+            }
+
+            return new StubProcessResult(1, []);
+        });
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.Equals("https://api.nuget.org/v3/index.json", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "resources": [
+                        {
+                          "@id": "https://azuresearch-usnc.nuget.org/query",
+                          "@type": "SearchQueryService"
+                        },
+                        {
+                          "@id": "https://api.nuget.org/v3-flatcontainer/",
+                          "@type": "PackageBaseAddress/3.0.0"
+                        }
+                      ]
+                    }
+                    """)
+                };
+            }
+
+            if (url.Contains("azuresearch-usnc.nuget.org/query", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "data": [
+                        {
+                          "id": "Contoso.Tool",
+                          "version": "2.1.0",
+                          "description": "Contoso deployment utility",
+                          "authors": "Contoso",
+                          "projectUrl": "https://contoso.example/tool"
+                        }
+                      ]
+                    }
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = $"contoso-{Guid.NewGuid():N}",
+            IncludeWinget = false,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = false,
+            IncludeScoop = false,
+            IncludeNuGet = true
+        });
+
+        var entry = Assert.Single(results);
+        Assert.Equal(PackageCatalogSource.NuGet, entry.Source);
+        Assert.Equal("nuget.org", entry.SourceChannel, ignoreCase: true);
+        Assert.Equal("Contoso.Tool", entry.PackageId);
+        Assert.EndsWith(".nupkg", entry.InstallerDownloadUrl, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SearchAsync_NuGetResults_AreServedFromCacheWithinFreshWindow()
+    {
+        var nugetSearchCalls = 0;
+        var processRunner = new RoutingProcessRunner(request =>
+        {
+            if (request.FileName.Equals("dotnet", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("nuget list source", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Registered Sources:",
+                    "  1.  nuget.org [Enabled]",
+                    "      https://api.nuget.org/v3/index.json"
+                ]);
+            }
+
+            return new StubProcessResult(1, []);
+        });
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.Equals("https://api.nuget.org/v3/index.json", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "resources": [
+                        {
+                          "@id": "https://azuresearch-usnc.nuget.org/query",
+                          "@type": "SearchQueryService"
+                        },
+                        {
+                          "@id": "https://api.nuget.org/v3-flatcontainer/",
+                          "@type": "PackageBaseAddress/3.0.0"
+                        }
+                      ]
+                    }
+                    """)
+                };
+            }
+
+            if (url.Contains("azuresearch-usnc.nuget.org/query", StringComparison.OrdinalIgnoreCase))
+            {
+                Interlocked.Increment(ref nugetSearchCalls);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "data": [
+                        {
+                          "id": "Fabrikam.CacheProbe",
+                          "version": "1.0.0",
+                          "description": "Cache probe package"
+                        }
+                      ]
+                    }
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var searchTerm = $"cache-{Guid.NewGuid():N}";
+        var query = new PackageCatalogQuery
+        {
+            SearchTerm = searchTerm,
+            IncludeWinget = false,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = false,
+            IncludeScoop = false,
+            IncludeNuGet = true
+        };
+
+        var first = await sut.SearchAsync(query);
+        var second = await sut.SearchAsync(query);
+
+        Assert.NotEmpty(first);
+        Assert.NotEmpty(second);
+        Assert.Equal(1, nugetSearchCalls);
+    }
+
+    [Fact]
+    public async Task SearchAsync_NuGetFailure_IsCapturedInProviderDiagnostics()
+    {
+        var sourceChannel = "nuget.org";
+        var processRunner = new RoutingProcessRunner(request =>
+        {
+            if (request.FileName.Equals("dotnet", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("nuget list source", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Registered Sources:",
+                    "  1.  nuget.org [Enabled]",
+                    "      https://api.nuget.org/v3/index.json"
+                ]);
+            }
+
+            return new StubProcessResult(1, []);
+        });
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.Equals("https://api.nuget.org/v3/index.json", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "resources": [
+                        {
+                          "@id": "https://azuresearch-usnc.nuget.org/query",
+                          "@type": "SearchQueryService"
+                        },
+                        {
+                          "@id": "https://api.nuget.org/v3-flatcontainer/",
+                          "@type": "PackageBaseAddress/3.0.0"
+                        }
+                      ]
+                    }
+                    """)
+                };
+            }
+
+            if (url.Contains("azuresearch-usnc.nuget.org/query", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = $"diag-{Guid.NewGuid():N}",
+            IncludeWinget = false,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = false,
+            IncludeScoop = false,
+            IncludeNuGet = true
+        });
+
+        Assert.Empty(results);
+        var diagnostics = await sut.GetProviderDiagnosticsAsync();
+        var nuget = diagnostics.FirstOrDefault(item =>
+            item.ProviderId.Equals("nuget", StringComparison.OrdinalIgnoreCase) &&
+            item.SourceChannel.Equals(sourceChannel, StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(nuget);
+        Assert.True(nuget!.TotalFailures >= 1);
+        Assert.True(nuget.TotalRequests >= nuget.TotalFailures);
     }
 
     private static void TryDeleteDirectory(string path)

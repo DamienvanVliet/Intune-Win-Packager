@@ -297,6 +297,12 @@ public partial class MainViewModel : ObservableObject
     private bool includeGitHubCatalogSource;
 
     [ObservableProperty]
+    private bool includeScoopCatalogSource;
+
+    [ObservableProperty]
+    private bool includeNuGetCatalogSource;
+
+    [ObservableProperty]
     private bool isPackageCatalogBusy;
 
     [ObservableProperty]
@@ -1112,6 +1118,16 @@ public partial class MainViewModel : ObservableObject
     }
 
     partial void OnIncludeGitHubCatalogSourceChanged(bool value)
+    {
+        SearchCatalogCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIncludeScoopCatalogSourceChanged(bool value)
+    {
+        SearchCatalogCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIncludeNuGetCatalogSourceChanged(bool value)
     {
         SearchCatalogCommand.NotifyCanExecuteChanged();
     }
@@ -2013,7 +2029,11 @@ public partial class MainViewModel : ObservableObject
     private bool CanSearchCatalog()
     {
         var hasQuery = !string.IsNullOrWhiteSpace(PackageCatalogSearchTerm) && PackageCatalogSearchTerm.Trim().Length >= 2;
-        var hasSource = IncludeWingetCatalogSource || IncludeChocolateyCatalogSource || IncludeGitHubCatalogSource;
+        var hasSource = IncludeWingetCatalogSource ||
+                        IncludeChocolateyCatalogSource ||
+                        IncludeGitHubCatalogSource ||
+                        IncludeScoopCatalogSource ||
+                        IncludeNuGetCatalogSource;
         return !IsBusy && !IsPackageCatalogBusy && hasQuery && hasSource;
     }
 
@@ -2044,7 +2064,11 @@ public partial class MainViewModel : ObservableObject
     {
         if (!CanSearchCatalog())
         {
-            if (!IncludeWingetCatalogSource && !IncludeChocolateyCatalogSource && !IncludeGitHubCatalogSource)
+            if (!IncludeWingetCatalogSource &&
+                !IncludeChocolateyCatalogSource &&
+                !IncludeGitHubCatalogSource &&
+                !IncludeScoopCatalogSource &&
+                !IncludeNuGetCatalogSource)
             {
                 PackageCatalogStatus = T("Vm.Store.SelectSource");
             }
@@ -2078,7 +2102,9 @@ public partial class MainViewModel : ObservableObject
                 MaxResults = 24,
                 IncludeWinget = IncludeWingetCatalogSource,
                 IncludeChocolatey = IncludeChocolateyCatalogSource,
-                IncludeGitHubReleases = IncludeGitHubCatalogSource
+                IncludeGitHubReleases = IncludeGitHubCatalogSource,
+                IncludeScoop = IncludeScoopCatalogSource,
+                IncludeNuGet = IncludeNuGetCatalogSource
             }, cancellationToken);
 
             foreach (var item in results)

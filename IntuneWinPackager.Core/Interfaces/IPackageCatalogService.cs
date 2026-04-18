@@ -17,4 +17,6 @@ public interface IPackageCatalogService
         PackageCatalogEntry entry,
         string? installerPath = null,
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<CatalogProviderDiagnostic>> GetProviderDiagnosticsAsync(CancellationToken cancellationToken = default);
 }

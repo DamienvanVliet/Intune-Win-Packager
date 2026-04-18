@@ -22,6 +22,8 @@ internal static class DataPathProvider
 
     public static string CatalogProfilesFilePath => Path.Combine(BaseDirectory, "catalog-profiles.v1.json");
 
+    public static string CatalogDatabaseFilePath => Path.Combine(BaseDirectory, "catalog-store.v1.db");
+
     public static string CatalogIconsDirectory => Path.Combine(BaseDirectory, "catalog-icons");
 
     public static void EnsureBaseDirectory()
