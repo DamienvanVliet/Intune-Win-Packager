@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.40] - 2026-04-18
+
+### Added
+- Hotfix updater launch reliability.
+- Added launch handshake so app only closes when deferred updater startup is confirmed.
+- Added PowerShell fallback scheduler when batch launcher does not initialize.
+- Kept lock-safe behavior to avoid installer code 32 race conditions while preserving no-forced-app-close policy.
+
 ## [1.1.39] - 2026-04-18
 
 ### Added
