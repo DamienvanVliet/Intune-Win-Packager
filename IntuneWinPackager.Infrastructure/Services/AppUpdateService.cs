@@ -377,11 +377,6 @@ public sealed class AppUpdateService : IAppUpdateService
         string installerPath,
         string installerArguments)
     {
-        var targetImage = processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-            ? processName
-            : $"{processName}.exe";
-
-        var escapedImage = EscapeBatchVariableValue(targetImage);
         var escapedProcessPath = EscapeBatchVariableValue(processPath ?? string.Empty);
         var escapedInstallerPath = EscapeBatchVariableValue(installerPath);
         var escapedInstallerArgs = EscapeBatchVariableValue(installerArguments);
@@ -391,32 +386,34 @@ public sealed class AppUpdateService : IAppUpdateService
             "@echo off",
             "setlocal",
             $"set \"TARGET_PID={processId}\"",
-            $"set \"TARGET_IMAGE={escapedImage}\"",
             $"set \"TARGET_EXE_PATH={escapedProcessPath}\"",
             $"set \"INSTALLER_PATH={escapedInstallerPath}\"",
             $"set \"INSTALLER_ARGS={escapedInstallerArgs}\"",
+            "set \"WAIT_PID_RETRIES=0\"",
+            "set \"WAIT_PID_RETRIES_MAX=180\"",
+            "set \"WAIT_UNLOCK_RETRIES=0\"",
+            "set \"WAIT_UNLOCK_RETRIES_MAX=180\"",
             ":wait_pid",
             "tasklist /FI \"PID eq %TARGET_PID%\" /NH | findstr /R /C:\" %TARGET_PID% \" >NUL",
-            "if not errorlevel 1 (",
-            "  timeout /t 1 /nobreak >NUL",
-            "  goto wait_pid",
-            ")",
-            ":wait_image",
-            "tasklist /FI \"IMAGENAME eq %TARGET_IMAGE%\" /NH | findstr /I /C:\"%TARGET_IMAGE%\" >NUL",
-            "if not errorlevel 1 (",
-            "  timeout /t 1 /nobreak >NUL",
-            "  goto wait_image",
-            ")",
+            "if errorlevel 1 goto after_pid_wait",
+            "if %WAIT_PID_RETRIES% GEQ %WAIT_PID_RETRIES_MAX% goto launch_installer",
+            "set /a WAIT_PID_RETRIES+=1",
+            "timeout /t 1 /nobreak >NUL",
+            "goto wait_pid",
+            ":after_pid_wait",
             "if \"%TARGET_EXE_PATH%\"==\"\" goto launch_installer",
             "if not exist \"%TARGET_EXE_PATH%\" goto launch_installer",
             "where powershell >NUL 2>&1",
             "if errorlevel 1 goto launch_installer",
             ":wait_unlock",
             "powershell -NoProfile -ExecutionPolicy Bypass -Command \"try { $path = $env:TARGET_EXE_PATH; if (-not (Test-Path -LiteralPath $path)) { exit 0 }; $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None); $stream.Close(); exit 0 } catch { exit 1 }\" >NUL 2>&1",
-            "if errorlevel 1 (",
-            "  timeout /t 1 /nobreak >NUL",
-            "  goto wait_unlock",
-            ")",
+            "if errorlevel 1 goto wait_unlock_retry",
+            "goto launch_installer",
+            ":wait_unlock_retry",
+            "if %WAIT_UNLOCK_RETRIES% GEQ %WAIT_UNLOCK_RETRIES_MAX% goto launch_installer",
+            "set /a WAIT_UNLOCK_RETRIES+=1",
+            "timeout /t 1 /nobreak >NUL",
+            "goto wait_unlock",
             ":launch_installer",
             "timeout /t 1 /nobreak >NUL",
             "if \"%INSTALLER_ARGS%\"==\"\" (",

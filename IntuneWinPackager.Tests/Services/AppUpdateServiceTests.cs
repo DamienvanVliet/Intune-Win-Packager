@@ -225,9 +225,13 @@ public class AppUpdateServiceTests
 
         Assert.False(string.IsNullOrWhiteSpace(script));
         Assert.Contains("TARGET_EXE_PATH=", script, StringComparison.Ordinal);
+        Assert.Contains("WAIT_PID_RETRIES_MAX=180", script, StringComparison.Ordinal);
+        Assert.Contains("WAIT_UNLOCK_RETRIES_MAX=180", script, StringComparison.Ordinal);
+        Assert.Contains("goto wait_unlock_retry", script, StringComparison.Ordinal);
         Assert.Contains(":wait_unlock", script, StringComparison.Ordinal);
         Assert.Contains("Test-Path -LiteralPath", script, StringComparison.Ordinal);
         Assert.Contains("[System.IO.File]::Open", script, StringComparison.Ordinal);
+        Assert.DoesNotContain(":wait_image", script, StringComparison.Ordinal);
     }
 
     private static AppUpdateService CreateService(string releasesPayload)
