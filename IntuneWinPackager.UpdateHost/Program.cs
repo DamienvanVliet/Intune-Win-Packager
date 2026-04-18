@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
 
-const int MaxWaitSeconds = 90;
+const int ParentWaitTimeoutMs = 30_000;
+const int ParentWaitPollMs = 200;
+const int PostExitGraceMs = 450;
 
 var options = ParseOptions(args);
 if (options is null)
@@ -14,7 +16,11 @@ TryWriteLog(options.LaunchLogPath, "Update host started.");
 TryCreateMarker(options.LaunchMarkerPath, options.LaunchLogPath);
 
 WaitForParentExit(options.ParentPid, options.LaunchLogPath);
-WaitForTargetUnlock(options.TargetExePath, options.LaunchLogPath);
+
+if (!string.IsNullOrWhiteSpace(options.TargetExePath))
+{
+    TryWriteLog(options.LaunchLogPath, $"Skipping explicit file-lock probing for faster handoff: {options.TargetExePath}");
+}
 
 if (!File.Exists(options.InstallerPath))
 {
@@ -55,39 +61,20 @@ static void WaitForParentExit(int parentPid, string launchLogPath)
         return;
     }
 
-    for (var attempt = 0; attempt < MaxWaitSeconds; attempt++)
+    var stopwatch = Stopwatch.StartNew();
+    while (stopwatch.ElapsedMilliseconds < ParentWaitTimeoutMs)
     {
         if (!IsProcessAlive(parentPid))
         {
             TryWriteLog(launchLogPath, $"Parent process exited (PID={parentPid}).");
+            Thread.Sleep(PostExitGraceMs);
             return;
         }
 
-        Thread.Sleep(1000);
+        Thread.Sleep(ParentWaitPollMs);
     }
 
     TryWriteLog(launchLogPath, $"Parent process wait timeout reached (PID={parentPid}). Continuing.");
-}
-
-static void WaitForTargetUnlock(string targetExePath, string launchLogPath)
-{
-    if (string.IsNullOrWhiteSpace(targetExePath) || !File.Exists(targetExePath))
-    {
-        return;
-    }
-
-    for (var attempt = 0; attempt < MaxWaitSeconds; attempt++)
-    {
-        if (TryOpenExclusive(targetExePath))
-        {
-            TryWriteLog(launchLogPath, $"Target unlock confirmed: {targetExePath}");
-            return;
-        }
-
-        Thread.Sleep(1000);
-    }
-
-    TryWriteLog(launchLogPath, $"Target unlock timeout reached for: {targetExePath}. Continuing.");
 }
 
 static bool IsProcessAlive(int processId)
@@ -96,19 +83,6 @@ static bool IsProcessAlive(int processId)
     {
         using var process = Process.GetProcessById(processId);
         return !process.HasExited;
-    }
-    catch
-    {
-        return false;
-    }
-}
-
-static bool TryOpenExclusive(string filePath)
-{
-    try
-    {
-        using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.None);
-        return true;
     }
     catch
     {

@@ -204,7 +204,7 @@ public class AppUpdateServiceTests
     }
 
     [Fact]
-    public void DeferredLauncherBatch_WaitsForProcessUnlockBeforeStartingInstaller()
+    public void DeferredLauncherBatch_WaitsForProcessExitBeforeStartingInstaller()
     {
         var buildBatchMethod = typeof(AppUpdateService).GetMethod(
             "BuildDeferredInstallerBatch",
@@ -228,19 +228,15 @@ public class AppUpdateServiceTests
         Assert.Contains("TARGET_EXE_PATH=", script, StringComparison.Ordinal);
         Assert.Contains("LAUNCH_MARKER=", script, StringComparison.Ordinal);
         Assert.Contains("launcher_started", script, StringComparison.Ordinal);
-        Assert.Contains("WAIT_PID_RETRIES_MAX=180", script, StringComparison.Ordinal);
-        Assert.Contains("WAIT_UNLOCK_RETRIES_MAX=180", script, StringComparison.Ordinal);
-        Assert.Contains("goto wait_unlock_retry", script, StringComparison.Ordinal);
-        Assert.Contains(":wait_unlock", script, StringComparison.Ordinal);
-        Assert.Contains("Test-Path -LiteralPath", script, StringComparison.Ordinal);
-        Assert.Contains("[System.IO.File]::Open", script, StringComparison.Ordinal);
-        Assert.Contains("[System.IO.FileAccess]::Read", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("[System.IO.FileAccess]::ReadWrite", script, StringComparison.Ordinal);
+        Assert.Contains("WAIT_PID_RETRIES_MAX=30", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("WAIT_UNLOCK_RETRIES_MAX", script, StringComparison.Ordinal);
+        Assert.DoesNotContain(":wait_unlock", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("[System.IO.File]::Open", script, StringComparison.Ordinal);
         Assert.DoesNotContain(":wait_image", script, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void DeferredLauncherPowerShellCommand_WaitsForPidAndUnlockBeforeStartingInstaller()
+    public void DeferredLauncherPowerShellCommand_WaitsForPidBeforeStartingInstaller()
     {
         var buildPowerShellMethod = typeof(AppUpdateService).GetMethod(
             "BuildDeferredInstallerPowerShellCommand",
@@ -261,9 +257,8 @@ public class AppUpdateServiceTests
         Assert.False(string.IsNullOrWhiteSpace(command));
         Assert.Contains("$targetPid=5678", command, StringComparison.Ordinal);
         Assert.Contains("Get-Process -Id $targetPid", command, StringComparison.Ordinal);
-        Assert.Contains("[System.IO.File]::Open", command, StringComparison.Ordinal);
-        Assert.Contains("[System.IO.FileAccess]::Read", command, StringComparison.Ordinal);
-        Assert.DoesNotContain("[System.IO.FileAccess]::ReadWrite", command, StringComparison.Ordinal);
+        Assert.Contains("Start-Sleep -Milliseconds 450", command, StringComparison.Ordinal);
+        Assert.DoesNotContain("[System.IO.File]::Open", command, StringComparison.Ordinal);
         Assert.Contains("Start-Process -FilePath $installerPath", command, StringComparison.Ordinal);
     }
 
