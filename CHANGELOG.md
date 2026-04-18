@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.38] - 2026-04-18
+
+### Added
+- Store UX update.\n\n- Added a dedicated Store tab so package discovery is separated from Updates & Changes.\n- Kept the Microsoft Store-like flow: select app, review details, then one-click import into Packaging.\n- Updates & Changes tab is now focused on app update status, changelog, and recent packages.\n- Updated localization keys and UI smoke tests for the new tab structure.
+
 ## [1.1.37] - 2026-04-18
 
 ### Fixed
