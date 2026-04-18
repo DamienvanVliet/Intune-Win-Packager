@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.39] - 2026-04-18
+
+### Added
+- Updater hotfix (launcher reliability).\n\n- Fixed deferred updater launcher hang where the app closed but installer never started.\n- Removed global image-name wait and now wait on the exact process PID + executable lock only.\n- Added bounded retry timeouts so updater always proceeds instead of waiting indefinitely.\n- Added regression checks for deferred launcher script behavior.
+
 ## [1.1.38] - 2026-04-18
 
 ### Added
