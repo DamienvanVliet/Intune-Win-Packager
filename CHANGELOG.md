@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.0] - 2026-04-18
+
+### Added
+- Major version baseline: moved to 2.0.
+- Includes the latest store reliability and UI improvements.
+- Installer and in-app updater assets published for this release.
+
 ## [1.1.41] - 2026-04-18
 
 ### Added
