@@ -48,6 +48,7 @@ public partial class MainViewModel : ObservableObject
 
     private const int MaxVisibleLogLines = 500;
     private const int MaxLogFlushBatchSize = 40;
+    private const int StoreSearchMaxResults = 50;
     private static readonly TimeSpan PreflightReuseWindow = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan BackgroundUpdateCheckInterval = TimeSpan.FromHours(4);
     private static readonly TimeSpan MinimumUpdateRecheckInterval = TimeSpan.FromMinutes(10);
@@ -318,10 +319,25 @@ public partial class MainViewModel : ObservableObject
     private bool showStoreAdvancedDetails;
 
     [ObservableProperty]
+    private int storeSortMode;
+
+    [ObservableProperty]
+    private int storeInstallerTypeFilterMode;
+
+    [ObservableProperty]
+    private bool storeReadyOnlyFilter;
+
+    [ObservableProperty]
+    private bool storeTrustedOnlyFilter;
+
+    [ObservableProperty]
     private PackageCatalogEntry? selectedCatalogEntry;
 
     [ObservableProperty]
     private PackageCatalogEntry? catalogEntryDetails;
+
+    [ObservableProperty]
+    private PackageCatalogEntry? selectedQueueCatalogEntry;
 
     [ObservableProperty]
     private int selectedMainTabIndex;
@@ -404,6 +420,30 @@ public partial class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(HasCatalogResults));
         };
 
+        StoreVisibleCatalogResults.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasStoreVisibleCatalogResults));
+        };
+
+        StoreImportQueue.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasStoreImportQueue));
+            if (ImportCatalogQueueCommand is not null)
+            {
+                ImportCatalogQueueCommand.NotifyCanExecuteChanged();
+            }
+
+            if (ClearCatalogQueueCommand is not null)
+            {
+                ClearCatalogQueueCommand.NotifyCanExecuteChanged();
+            }
+
+            if (UseQueuedCatalogEntryCommand is not null)
+            {
+                UseQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
+            }
+        };
+
         foreach (var preset in _installerCommandService.GetExeSilentPresets())
         {
             ExePresets.Add(preset);
@@ -435,6 +475,11 @@ public partial class MainViewModel : ObservableObject
         DownloadCatalogEntryCommand = new AsyncRelayCommand(DownloadCatalogEntryAsync, CanDownloadCatalogEntrySelection);
         UseCatalogEntryCommand = new AsyncRelayCommand(UseCatalogEntryAsync, CanUseCatalogEntrySelection);
         OpenCatalogHomepageCommand = new RelayCommand(OpenCatalogHomepage, CanOpenCatalogHomepageLink);
+        QueueCatalogEntryCommand = new RelayCommand<PackageCatalogEntry?>(QueueCatalogEntry, CanQueueCatalogEntry);
+        RemoveQueuedCatalogEntryCommand = new RelayCommand<PackageCatalogEntry?>(RemoveQueuedCatalogEntry, CanRemoveQueuedCatalogEntry);
+        ClearCatalogQueueCommand = new RelayCommand(ClearCatalogQueue, CanClearCatalogQueue);
+        ImportCatalogQueueCommand = new AsyncRelayCommand(ImportCatalogQueueAsync, CanImportCatalogQueue);
+        UseQueuedCatalogEntryCommand = new AsyncRelayCommand<PackageCatalogEntry?>(UseQueuedCatalogEntryAsync, CanUseQueuedCatalogEntry);
 
         _localizationService.LanguageChanged += HandleLanguageChanged;
 
@@ -462,6 +507,10 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<PreflightCheck> PreflightChecks { get; } = new();
 
     public ObservableCollection<PackageCatalogEntry> PackageCatalogResults { get; } = new();
+
+    public ObservableCollection<PackageCatalogEntry> StoreVisibleCatalogResults { get; } = new();
+
+    public ObservableCollection<PackageCatalogEntry> StoreImportQueue { get; } = new();
 
     public ReadOnlyObservableCollection<string> Logs => _readonlyLogs;
 
@@ -579,6 +628,10 @@ public partial class MainViewModel : ObservableObject
     public bool IsUpdateNotificationVisible => IsUpdateAvailable;
 
     public bool HasCatalogResults => PackageCatalogResults.Count > 0;
+
+    public bool HasStoreVisibleCatalogResults => StoreVisibleCatalogResults.Count > 0;
+
+    public bool HasStoreImportQueue => StoreImportQueue.Count > 0;
 
     public bool HasCatalogSelection => SelectedCatalogEntry is not null;
 
@@ -734,6 +787,16 @@ public partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand UseCatalogEntryCommand { get; }
 
     public IRelayCommand OpenCatalogHomepageCommand { get; }
+
+    public IRelayCommand<PackageCatalogEntry?> QueueCatalogEntryCommand { get; }
+
+    public IRelayCommand<PackageCatalogEntry?> RemoveQueuedCatalogEntryCommand { get; }
+
+    public IRelayCommand ClearCatalogQueueCommand { get; }
+
+    public IAsyncRelayCommand ImportCatalogQueueCommand { get; }
+
+    public IAsyncRelayCommand<PackageCatalogEntry?> UseQueuedCatalogEntryCommand { get; }
 
     public async Task InitializeAsync()
     {
@@ -1144,17 +1207,43 @@ public partial class MainViewModel : ObservableObject
         SearchCatalogCommand.NotifyCanExecuteChanged();
     }
 
+    partial void OnStoreSortModeChanged(int value)
+    {
+        RefreshStoreVisibleResults();
+    }
+
+    partial void OnStoreInstallerTypeFilterModeChanged(int value)
+    {
+        RefreshStoreVisibleResults();
+    }
+
+    partial void OnStoreReadyOnlyFilterChanged(bool value)
+    {
+        RefreshStoreVisibleResults();
+    }
+
+    partial void OnStoreTrustedOnlyFilterChanged(bool value)
+    {
+        RefreshStoreVisibleResults();
+    }
+
     partial void OnIsPackageCatalogBusyChanged(bool value)
     {
         SearchCatalogCommand.NotifyCanExecuteChanged();
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
+        QueueCatalogEntryCommand.NotifyCanExecuteChanged();
+        ImportCatalogQueueCommand.NotifyCanExecuteChanged();
+        ClearCatalogQueueCommand.NotifyCanExecuteChanged();
+        RemoveQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
+        UseQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnIsPackageCatalogDetailBusyChanged(bool value)
     {
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
+        QueueCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnSelectedCatalogEntryChanged(PackageCatalogEntry? value)
@@ -1163,6 +1252,7 @@ public partial class MainViewModel : ObservableObject
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
         OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
+        QueueCatalogEntryCommand.NotifyCanExecuteChanged();
 
         if (value is null ||
             _activeCatalogSelectionContext is null ||
@@ -1181,12 +1271,24 @@ public partial class MainViewModel : ObservableObject
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
         OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
+        QueueCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnIsCatalogDownloadBusyChanged(bool value)
     {
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
+        QueueCatalogEntryCommand.NotifyCanExecuteChanged();
+        ImportCatalogQueueCommand.NotifyCanExecuteChanged();
+        ClearCatalogQueueCommand.NotifyCanExecuteChanged();
+        RemoveQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
+        UseQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSelectedQueueCatalogEntryChanged(PackageCatalogEntry? value)
+    {
+        RemoveQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
+        UseQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnOperationStateChanged(OperationState value)
@@ -1211,6 +1313,11 @@ public partial class MainViewModel : ObservableObject
         DownloadCatalogEntryCommand.NotifyCanExecuteChanged();
         UseCatalogEntryCommand.NotifyCanExecuteChanged();
         OpenCatalogHomepageCommand.NotifyCanExecuteChanged();
+        QueueCatalogEntryCommand.NotifyCanExecuteChanged();
+        ImportCatalogQueueCommand.NotifyCanExecuteChanged();
+        ClearCatalogQueueCommand.NotifyCanExecuteChanged();
+        RemoveQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
+        UseQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnResultOutputPathChanged(string value)
@@ -1343,6 +1450,8 @@ public partial class MainViewModel : ObservableObject
     partial void OnPackageCatalogStatusChanged(string value)
     {
         OnPropertyChanged(nameof(HasCatalogResults));
+        OnPropertyChanged(nameof(HasStoreVisibleCatalogResults));
+        OnPropertyChanged(nameof(HasStoreImportQueue));
         OnPropertyChanged(nameof(HasCatalogSelection));
         OnPropertyChanged(nameof(HasCatalogDetails));
     }
@@ -2072,6 +2181,48 @@ public partial class MainViewModel : ObservableObject
         return !IsBusy && !string.IsNullOrWhiteSpace((CatalogEntryDetails ?? SelectedCatalogEntry)?.HomepageUrl);
     }
 
+    private bool CanQueueCatalogEntry(PackageCatalogEntry? entry)
+    {
+        var candidate = entry ?? CatalogEntryDetails ?? SelectedCatalogEntry;
+        return !IsBusy &&
+               !IsCatalogDownloadBusy &&
+               !IsPackageCatalogBusy &&
+               !IsPackageCatalogDetailBusy &&
+               candidate is not null;
+    }
+
+    private bool CanRemoveQueuedCatalogEntry(PackageCatalogEntry? entry)
+    {
+        var candidate = entry ?? SelectedQueueCatalogEntry;
+        return !IsBusy &&
+               !IsCatalogDownloadBusy &&
+               candidate is not null &&
+               StoreImportQueue.Any(existing => IsCatalogQueueEquivalent(existing, candidate));
+    }
+
+    private bool CanClearCatalogQueue()
+    {
+        return !IsBusy && !IsCatalogDownloadBusy && StoreImportQueue.Count > 0;
+    }
+
+    private bool CanImportCatalogQueue()
+    {
+        return !IsBusy &&
+               !IsCatalogDownloadBusy &&
+               !IsPackageCatalogBusy &&
+               !IsPackageCatalogDetailBusy &&
+               StoreImportQueue.Count > 0;
+    }
+
+    private bool CanUseQueuedCatalogEntry(PackageCatalogEntry? entry)
+    {
+        return entry is not null &&
+               !IsBusy &&
+               !IsCatalogDownloadBusy &&
+               !IsPackageCatalogBusy &&
+               !IsPackageCatalogDetailBusy;
+    }
+
     private async Task SearchCatalogAsync()
     {
         if (!CanSearchCatalog())
@@ -2102,7 +2253,9 @@ public partial class MainViewModel : ObservableObject
         SelectedCatalogEntry = null;
         _activeCatalogSelectionContext = null;
         PackageCatalogResults.Clear();
+        StoreVisibleCatalogResults.Clear();
         OnPropertyChanged(nameof(HasCatalogResults));
+        OnPropertyChanged(nameof(HasStoreVisibleCatalogResults));
 
         try
         {
@@ -2123,7 +2276,7 @@ public partial class MainViewModel : ObservableObject
             var results = await _packageCatalogService.SearchAsync(new PackageCatalogQuery
             {
                 SearchTerm = PackageCatalogSearchTerm.Trim(),
-                MaxResults = 24,
+                MaxResults = StoreSearchMaxResults,
                 IncludeWinget = IncludeWingetCatalogSource,
                 IncludeChocolatey = IncludeChocolateyCatalogSource,
                 IncludeGitHubReleases = IncludeGitHubCatalogSource,
@@ -2142,8 +2295,15 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            PackageCatalogStatus = TF("Vm.Store.Results", PackageCatalogResults.Count, PackageCatalogSearchTerm.Trim());
-            SelectedCatalogEntry = PackageCatalogResults[0];
+            RefreshStoreVisibleResults();
+            if (StoreVisibleCatalogResults.Count == 0)
+            {
+                PackageCatalogStatus = T("Vm.Store.FilteredOut");
+                return;
+            }
+
+            PackageCatalogStatus = TF("Vm.Store.Results", StoreVisibleCatalogResults.Count, PackageCatalogSearchTerm.Trim());
+            SelectedCatalogEntry = StoreVisibleCatalogResults[0];
             _ = PreloadCatalogIconsAsync(PackageCatalogResults.ToList(), cancellationToken);
         }
         catch (OperationCanceledException)
@@ -2215,6 +2375,11 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        await DownloadCatalogEntryInternalAsync(entry, switchToPackagingTab: true);
+    }
+
+    private async Task<bool> DownloadCatalogEntryInternalAsync(PackageCatalogEntry entry, bool switchToPackagingTab)
+    {
         IsBusy = true;
         IsCatalogDownloadBusy = true;
 
@@ -2243,7 +2408,7 @@ public partial class MainViewModel : ObservableObject
                     T("Vm.Status.CatalogDownloadFailedTitle"),
                     errorMessage);
                 AppendLog($"Store download failed for {entry.Name}: {errorMessage}");
-                return;
+                return false;
             }
 
             await SelectSetupFileAsync(downloadResult.InstallerPath);
@@ -2280,7 +2445,12 @@ public partial class MainViewModel : ObservableObject
                 downloadResult.InstallerSha256,
                 downloadResult.InstallerPath);
 
-            SelectedMainTabIndex = 0;
+            RefreshStoreVisibleResults();
+            if (switchToPackagingTab)
+            {
+                SelectedMainTabIndex = 0;
+            }
+
             PackageCatalogStatus = TF("Vm.Store.DownloadReady", entry.Name);
 
             var readyMessage = TF("Vm.Status.CatalogDownloadReadyMessage", Path.GetFileName(downloadResult.InstallerPath));
@@ -2290,10 +2460,12 @@ public partial class MainViewModel : ObservableObject
                 readyMessage);
             AppendLog($"Store download complete: {downloadResult.InstallerPath}");
             AppendLog("Packaging fields were auto-filled from the downloaded installer.");
+            return true;
         }
         catch (OperationCanceledException)
         {
             PackageCatalogStatus = T("Vm.Store.Canceled");
+            return false;
         }
         catch (Exception ex)
         {
@@ -2303,6 +2475,7 @@ public partial class MainViewModel : ObservableObject
                 T("Vm.Status.CatalogDownloadFailedTitle"),
                 ex.Message);
             AppendLog($"Store download error for {entry.Name}: {ex.Message}");
+            return false;
         }
         finally
         {
@@ -2313,25 +2486,159 @@ public partial class MainViewModel : ObservableObject
 
     private async Task UseCatalogEntryAsync()
     {
+        if (!CanUseCatalogEntrySelection())
+        {
+            return;
+        }
+
         var entry = CatalogEntryDetails ?? SelectedCatalogEntry;
         if (entry is null)
         {
             return;
         }
 
+        await UseCatalogEntryInternalAsync(entry, switchToPackagingTab: true);
+    }
+
+    private async Task<bool> UseCatalogEntryInternalAsync(PackageCatalogEntry entry, bool switchToPackagingTab)
+    {
         if (await TryApplyPreparedCatalogProfileAsync(entry))
         {
-            SelectedMainTabIndex = 0;
+            if (switchToPackagingTab)
+            {
+                SelectedMainTabIndex = 0;
+            }
+
+            SelectedCatalogEntry = DecorateCatalogEntry(entry);
+            CatalogEntryDetails = SelectedCatalogEntry;
             PackageCatalogStatus = TF("Vm.Store.DownloadReady", entry.Name);
             SetStatus(
                 OperationState.Success,
                 T("Vm.Status.CatalogDownloadReadyTitle"),
                 TF("Vm.Store.PreparedFromProfile", entry.Name));
             AppendLog($"Store profile reused for {entry.Name} ({entry.PackageId}).");
+            return true;
+        }
+
+        return await DownloadCatalogEntryInternalAsync(entry, switchToPackagingTab);
+    }
+
+    private void QueueCatalogEntry(PackageCatalogEntry? entry)
+    {
+        var candidate = entry ?? CatalogEntryDetails ?? SelectedCatalogEntry;
+        if (!CanQueueCatalogEntry(candidate) || candidate is null)
+        {
             return;
         }
 
-        await DownloadCatalogEntryAsync();
+        if (StoreImportQueue.Any(existing => IsCatalogQueueEquivalent(existing, candidate)))
+        {
+            PackageCatalogStatus = TF("Vm.Store.QueueAlreadyAdded", candidate.Name);
+            return;
+        }
+
+        StoreImportQueue.Add(candidate);
+        SelectedQueueCatalogEntry = candidate;
+        PackageCatalogStatus = TF("Vm.Store.QueueAdded", candidate.Name);
+    }
+
+    private void RemoveQueuedCatalogEntry(PackageCatalogEntry? entry)
+    {
+        var candidate = entry ?? SelectedQueueCatalogEntry;
+        if (candidate is null || !CanRemoveQueuedCatalogEntry(candidate))
+        {
+            return;
+        }
+
+        var existing = StoreImportQueue.FirstOrDefault(item => IsCatalogQueueEquivalent(item, candidate));
+        if (existing is null)
+        {
+            return;
+        }
+
+        StoreImportQueue.Remove(existing);
+        SelectedQueueCatalogEntry = StoreImportQueue.FirstOrDefault();
+        PackageCatalogStatus = TF("Vm.Store.QueueRemoved", candidate.Name);
+    }
+
+    private void ClearCatalogQueue()
+    {
+        if (!CanClearCatalogQueue())
+        {
+            return;
+        }
+
+        var removedCount = StoreImportQueue.Count;
+        StoreImportQueue.Clear();
+        SelectedQueueCatalogEntry = null;
+        PackageCatalogStatus = TF("Vm.Store.QueueCleared", removedCount);
+    }
+
+    private async Task ImportCatalogQueueAsync()
+    {
+        if (!CanImportCatalogQueue())
+        {
+            return;
+        }
+
+        var snapshot = StoreImportQueue.ToList();
+        var successCount = 0;
+        var failureCount = 0;
+
+        foreach (var queuedEntry in snapshot)
+        {
+            var success = await UseCatalogEntryInternalAsync(queuedEntry, switchToPackagingTab: false);
+            if (success)
+            {
+                var existing = StoreImportQueue.FirstOrDefault(item => IsCatalogQueueEquivalent(item, queuedEntry));
+                if (existing is not null)
+                {
+                    StoreImportQueue.Remove(existing);
+                }
+
+                successCount++;
+            }
+            else
+            {
+                failureCount++;
+            }
+        }
+
+        SelectedQueueCatalogEntry = StoreImportQueue.FirstOrDefault();
+        if (successCount > 0)
+        {
+            SelectedMainTabIndex = 0;
+        }
+
+        PackageCatalogStatus = TF("Vm.Store.QueueImportSummary", successCount, failureCount);
+        SetStatus(
+            failureCount > 0 ? OperationState.Error : OperationState.Success,
+            failureCount > 0 ? T("Vm.Status.CatalogQueueImportPartialTitle") : T("Vm.Status.CatalogQueueImportTitle"),
+            failureCount > 0
+                ? TF("Vm.Status.CatalogQueueImportPartialMessage", successCount, failureCount)
+                : TF("Vm.Status.CatalogQueueImportMessage", successCount));
+    }
+
+    private async Task UseQueuedCatalogEntryAsync(PackageCatalogEntry? entry)
+    {
+        if (!CanUseQueuedCatalogEntry(entry) || entry is null)
+        {
+            return;
+        }
+
+        var success = await UseCatalogEntryInternalAsync(entry, switchToPackagingTab: true);
+        if (!success)
+        {
+            return;
+        }
+
+        var existing = StoreImportQueue.FirstOrDefault(item => IsCatalogQueueEquivalent(item, entry));
+        if (existing is not null)
+        {
+            StoreImportQueue.Remove(existing);
+        }
+
+        SelectedQueueCatalogEntry = StoreImportQueue.FirstOrDefault();
     }
 
     private static bool ContainsCatalogTemplatePlaceholder(string command)
@@ -2571,6 +2878,11 @@ public partial class MainViewModel : ObservableObject
             PackageCatalogResults[index] = DecorateCatalogEntry(PackageCatalogResults[index]);
         }
 
+        for (var index = 0; index < StoreImportQueue.Count; index++)
+        {
+            StoreImportQueue[index] = DecorateCatalogEntry(StoreImportQueue[index]);
+        }
+
         if (SelectedCatalogEntry is not null)
         {
             SelectedCatalogEntry = DecorateCatalogEntry(SelectedCatalogEntry);
@@ -2580,6 +2892,121 @@ public partial class MainViewModel : ObservableObject
         {
             CatalogEntryDetails = DecorateCatalogEntry(CatalogEntryDetails);
         }
+
+        RefreshStoreVisibleResults();
+    }
+
+    private void RefreshStoreVisibleResults()
+    {
+        var previousSelection = SelectedCatalogEntry;
+        var filtered = PackageCatalogResults
+            .Where(StoreEntryMatchesFilters)
+            .ToList();
+
+        IEnumerable<PackageCatalogEntry> ordered = filtered;
+        ordered = StoreSortMode switch
+        {
+            1 => filtered
+                .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.Publisher, StringComparer.OrdinalIgnoreCase),
+            2 => filtered
+                .OrderByDescending(item => item.Version, Comparer<string>.Create(CompareVersionsForNotification))
+                .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase),
+            3 => filtered
+                .OrderByDescending(item => CalculateStoreTrustScore(item))
+                .ThenByDescending(item => item.ConfidenceScore)
+                .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase),
+            4 => filtered
+                .OrderByDescending(item => GetStoreReadinessRank(item.ReadinessState))
+                .ThenByDescending(item => item.ConfidenceScore)
+                .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase),
+            _ => filtered
+        };
+
+        StoreVisibleCatalogResults.Clear();
+        foreach (var item in ordered)
+        {
+            StoreVisibleCatalogResults.Add(item);
+        }
+
+        var hasPreviousSelection = previousSelection is not null;
+        if (hasPreviousSelection)
+        {
+            var matchingSelection = StoreVisibleCatalogResults
+                .FirstOrDefault(candidate => IsCatalogQueueEquivalent(candidate, previousSelection!));
+            SelectedCatalogEntry = matchingSelection ?? StoreVisibleCatalogResults.FirstOrDefault();
+        }
+        else if (SelectedCatalogEntry is null && StoreVisibleCatalogResults.Count > 0)
+        {
+            SelectedCatalogEntry = StoreVisibleCatalogResults[0];
+        }
+
+        OnPropertyChanged(nameof(HasStoreVisibleCatalogResults));
+    }
+
+    private bool StoreEntryMatchesFilters(PackageCatalogEntry entry)
+    {
+        if (entry is null)
+        {
+            return false;
+        }
+
+        if (StoreReadyOnlyFilter && entry.ReadinessState != CatalogReadinessState.Ready)
+        {
+            return false;
+        }
+
+        if (StoreTrustedOnlyFilter && CalculateStoreTrustScore(entry) == 0)
+        {
+            return false;
+        }
+
+        return StoreInstallerTypeFilterMode switch
+        {
+            1 => entry.InstallerType == InstallerType.Msi,
+            2 => entry.InstallerType == InstallerType.Exe,
+            3 => entry.InstallerType == InstallerType.AppxMsix,
+            4 => entry.InstallerType == InstallerType.Script,
+            5 => entry.InstallerType == InstallerType.Unknown,
+            _ => true
+        };
+    }
+
+    private static int GetStoreReadinessRank(CatalogReadinessState readinessState)
+    {
+        return readinessState switch
+        {
+            CatalogReadinessState.Ready => 3,
+            CatalogReadinessState.NeedsReview => 2,
+            CatalogReadinessState.Blocked => 1,
+            _ => 0
+        };
+    }
+
+    private static int CalculateStoreTrustScore(PackageCatalogEntry entry)
+    {
+        var score = 0;
+        if (entry.HashVerifiedBySource)
+        {
+            score += 3;
+        }
+
+        if (entry.VendorSigned)
+        {
+            score += 2;
+        }
+
+        if (entry.SilentSwitchProbeDetected)
+        {
+            score += 1;
+        }
+
+        if (entry.DetectionReady)
+        {
+            score += 2;
+        }
+
+        return score;
     }
 
     private async Task PreloadCatalogIconsAsync(IReadOnlyList<PackageCatalogEntry> entries, CancellationToken cancellationToken)
@@ -2624,6 +3051,32 @@ public partial class MainViewModel : ObservableObject
             }
 
             PackageCatalogResults[index] = current with { CachedIconPath = iconPath };
+        }
+
+        for (var index = 0; index < StoreVisibleCatalogResults.Count; index++)
+        {
+            var current = StoreVisibleCatalogResults[index];
+            if (current.Source != entry.Source ||
+                !current.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase) ||
+                !IsCatalogVersionMatch(current.Version, entry.Version))
+            {
+                continue;
+            }
+
+            StoreVisibleCatalogResults[index] = current with { CachedIconPath = iconPath };
+        }
+
+        for (var index = 0; index < StoreImportQueue.Count; index++)
+        {
+            var current = StoreImportQueue[index];
+            if (current.Source != entry.Source ||
+                !current.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase) ||
+                !IsCatalogVersionMatch(current.Version, entry.Version))
+            {
+                continue;
+            }
+
+            StoreImportQueue[index] = current with { CachedIconPath = iconPath };
         }
 
         if (SelectedCatalogEntry is not null &&
@@ -2855,6 +3308,27 @@ public partial class MainViewModel : ObservableObject
         return entry.Source == context.Source &&
                entry.PackageId.Equals(context.PackageId, StringComparison.OrdinalIgnoreCase) &&
                IsCatalogSourceChannelMatch(entry.SourceChannel, context.SourceChannel);
+    }
+
+    private static bool IsCatalogQueueEquivalent(PackageCatalogEntry left, PackageCatalogEntry right)
+    {
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(left.CanonicalPackageKey) &&
+            !string.IsNullOrWhiteSpace(right.CanonicalPackageKey) &&
+            left.CanonicalPackageKey.Equals(right.CanonicalPackageKey, StringComparison.OrdinalIgnoreCase) &&
+            IsCatalogVersionMatch(left.Version, right.Version))
+        {
+            return true;
+        }
+
+        return left.Source == right.Source &&
+               left.PackageId.Equals(right.PackageId, StringComparison.OrdinalIgnoreCase) &&
+               IsCatalogSourceChannelMatch(left.SourceChannel, right.SourceChannel) &&
+               IsCatalogVersionMatch(left.Version, right.Version);
     }
 
     private static CatalogInstallerVariant? ResolveCatalogVariant(

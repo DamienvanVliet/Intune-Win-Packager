@@ -1144,7 +1144,11 @@
                                         <TextBox Grid.Column="0"
                                                  Text="{Binding PackageCatalogSearchTerm, UpdateSourceTrigger=PropertyChanged}"
                                                  Margin="0,0,10,0"
-                                                 MinHeight="36" />
+                                                 MinHeight="36">
+                                            <TextBox.InputBindings>
+                                                <KeyBinding Key="Enter" Command="{Binding SearchCatalogCommand}" />
+                                            </TextBox.InputBindings>
+                                        </TextBox>
                                         <Button Grid.Column="1"
                                                 Content="{DynamicResource Ui.Store.SearchButton}"
                                                 Style="{StaticResource PrimaryButtonStyle}"
@@ -1169,6 +1173,53 @@
                                                   Margin="0,0,0,6" />
                                     </WrapPanel>
 
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="190" />
+                                            <ColumnDefinition Width="10" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="190" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{DynamicResource Ui.Store.SortLabel}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   VerticalAlignment="Center" />
+                                        <ComboBox Grid.Column="1"
+                                                  SelectedIndex="{Binding StoreSortMode}"
+                                                  Margin="6,0,0,0"
+                                                  MinHeight="32">
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.Sort.BestMatch}" />
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.Sort.Name}" />
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.Sort.Version}" />
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.Sort.Trust}" />
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.Sort.Ready}" />
+                                        </ComboBox>
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{DynamicResource Ui.Store.FilterInstallerType}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   VerticalAlignment="Center" />
+                                        <ComboBox Grid.Column="4"
+                                                  SelectedIndex="{Binding StoreInstallerTypeFilterMode}"
+                                                  Margin="6,0,0,0"
+                                                  MinHeight="32">
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.FilterInstaller.All}" />
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.FilterInstaller.Msi}" />
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.FilterInstaller.Exe}" />
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.FilterInstaller.Appx}" />
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.FilterInstaller.Script}" />
+                                            <ComboBoxItem Content="{DynamicResource Ui.Store.FilterInstaller.Unknown}" />
+                                        </ComboBox>
+                                        <WrapPanel Grid.Column="5" Margin="12,4,0,0" VerticalAlignment="Center">
+                                            <CheckBox Content="{DynamicResource Ui.Store.FilterReadyOnly}"
+                                                      IsChecked="{Binding StoreReadyOnlyFilter}"
+                                                      Margin="0,0,12,0" />
+                                            <CheckBox Content="{DynamicResource Ui.Store.FilterTrustedOnly}"
+                                                      IsChecked="{Binding StoreTrustedOnlyFilter}" />
+                                        </WrapPanel>
+                                    </Grid>
+
                                     <Border CornerRadius="10"
                                             BorderThickness="1"
                                             BorderBrush="{DynamicResource PanelBorderBrush}"
@@ -1183,12 +1234,27 @@
                                     <DockPanel Margin="0,0,0,8">
                                         <TextBlock Text="{DynamicResource Ui.Store.Results}" Style="{StaticResource SectionTitleTextStyle}" />
                                         <TextBlock DockPanel.Dock="Right"
-                                                   Text="{Binding PackageCatalogResults.Count, StringFormat='{}{0}'}"
+                                                   Text="{Binding StoreVisibleCatalogResults.Count, StringFormat='{}{0}'}"
                                                    Style="{StaticResource BodyTextStyle}"
                                                    VerticalAlignment="Center" />
                                     </DockPanel>
 
-                                    <ListBox ItemsSource="{Binding PackageCatalogResults}"
+                                    <ProgressBar Height="4"
+                                                 IsIndeterminate="True"
+                                                 Margin="0,0,0,8">
+                                        <ProgressBar.Style>
+                                            <Style TargetType="ProgressBar">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsPackageCatalogBusy}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ProgressBar.Style>
+                                    </ProgressBar>
+
+                                    <ListBox ItemsSource="{Binding StoreVisibleCatalogResults}"
                                              SelectedItem="{Binding SelectedCatalogEntry}"
                                              BorderThickness="0"
                                              Background="Transparent"
@@ -1301,12 +1367,38 @@
                                                                     <Run Text="{Binding UpgradeFromVersion}" />
                                                                 </TextBlock>
                                                             </Border>
+                                                            <Button Content="{DynamicResource Ui.Store.AddToQueue}"
+                                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                                    Margin="0,6,0,0"
+                                                                    FontSize="11"
+                                                                    MinWidth="90"
+                                                                    Command="{Binding DataContext.QueueCatalogEntryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}" />
                                                         </StackPanel>
                                                     </Grid>
                                                 </Border>
                                             </DataTemplate>
                                         </ListBox.ItemTemplate>
                                     </ListBox>
+
+                                    <TextBlock Text="{DynamicResource Ui.Store.EmptyResults}"
+                                               Margin="0,6,0,0"
+                                               TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding HasStoreVisibleCatalogResults}" Value="False" />
+                                                            <Condition Binding="{Binding IsPackageCatalogBusy}" Value="False" />
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                 </StackPanel>
                             </Border>
 
@@ -1605,6 +1697,10 @@
                                                     Style="{StaticResource SecondaryButtonStyle}"
                                                     Margin="8,0,0,0"
                                                     Command="{Binding DownloadCatalogEntryCommand}" />
+                                            <Button Content="{DynamicResource Ui.Store.AddToQueue}"
+                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                    Margin="8,0,0,0"
+                                                    Command="{Binding QueueCatalogEntryCommand}" />
                                             <Button Content="{DynamicResource Ui.Store.OpenHomepage}"
                                                     Style="{StaticResource SecondaryButtonStyle}"
                                                     Margin="8,0,0,0"
@@ -1612,6 +1708,120 @@
                                         </WrapPanel>
                                     </StackPanel>
                                 </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBorderStyle}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <DockPanel Margin="0,0,0,8">
+                                        <TextBlock Text="{DynamicResource Ui.Store.QueueTitle}" Style="{StaticResource SectionTitleTextStyle}" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="{Binding StoreImportQueue.Count, StringFormat='{}{0}'}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   VerticalAlignment="Center" />
+                                    </DockPanel>
+
+                                    <TextBlock Grid.Row="1"
+                                               Text="{DynamicResource Ui.Store.QueueDescription}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,0,0,8"
+                                               TextWrapping="Wrap" />
+
+                                    <ListBox Grid.Row="1"
+                                             Margin="0,28,0,0"
+                                             ItemsSource="{Binding StoreImportQueue}"
+                                             SelectedItem="{Binding SelectedQueueCatalogEntry}"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             MinHeight="120"
+                                             MaxHeight="260">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="Padding" Value="0" />
+                                                <Setter Property="Margin" Value="0,0,0,8" />
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                <Setter Property="BorderThickness" Value="0" />
+                                                <Setter Property="Background" Value="Transparent" />
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border CornerRadius="10"
+                                                        BorderThickness="1"
+                                                        BorderBrush="{DynamicResource PanelBorderBrush}"
+                                                        Background="{DynamicResource PanelBackgroundBrush}"
+                                                        Padding="8">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Name}"
+                                                                       FontFamily="Segoe UI Variable Display"
+                                                                       FontSize="13"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Style="{StaticResource BodyTextStyle}" FontSize="11">
+                                                                <Run Text="{Binding SourceDisplayName}" />
+                                                                <Run Text="  |  " />
+                                                                <Run Text="{Binding BuildVersion}" />
+                                                            </TextBlock>
+                                                        </StackPanel>
+
+                                                        <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                                                            <Button Content="{DynamicResource Ui.Store.QueueImportItem}"
+                                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                                    FontSize="11"
+                                                                    Margin="0,0,6,0"
+                                                                    Command="{Binding DataContext.UseQueuedCatalogEntryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}" />
+                                                            <Button Content="{DynamicResource Ui.Store.QueueRemoveItem}"
+                                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                                    FontSize="11"
+                                                                    Command="{Binding DataContext.RemoveQueuedCatalogEntryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}" />
+                                                        </WrapPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <StackPanel Grid.Row="2">
+                                        <TextBlock Text="{DynamicResource Ui.Store.QueueEmpty}"
+                                                   Margin="0,6,0,0"
+                                                   TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasStoreImportQueue}" Value="False">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <WrapPanel Margin="0,8,0,0">
+                                            <Button Content="{DynamicResource Ui.Store.QueueImportAll}"
+                                                    Style="{StaticResource PrimaryButtonStyle}"
+                                                    Command="{Binding ImportCatalogQueueCommand}" />
+                                            <Button Content="{DynamicResource Ui.Store.QueueClear}"
+                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                    Margin="8,0,0,0"
+                                                    Command="{Binding ClearCatalogQueueCommand}" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Grid>
                             </Border>
 
                         </StackPanel>

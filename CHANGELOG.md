@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.1.0] - 2026-04-19
+
+### Added
+- Massive Store Update release.
+- Added queue-based store workflow so multiple apps can be staged and imported in sequence.
+- Added per-result quick action to queue packages directly from search cards.
+- Added queue actions: import one, import all, remove, and clear.
+
+### Changed
+- Store search now supports keyboard Enter submit, richer filtering, and explicit sorting.
+- Added installer-type filter (All/MSI/EXE/APPX-MSIX/Script/Unknown).
+- Added readiness-only and trust-only filters for faster triage.
+- Increased store result capacity for broader discovery in one search.
+- Store result list now binds to filtered/sorted view instead of raw source order.
+- Store details now include direct "Add to Queue" action alongside import/download.
+
+### Fixed
+- Store icon/state updates now propagate to filtered results and queue entries consistently.
+- Added deterministic status messaging for queue and filter-driven states.
+- Localized all new store UI + status keys for English and Dutch.
+
 ## [2.0.0] - 2026-04-18
 
 ### Added
