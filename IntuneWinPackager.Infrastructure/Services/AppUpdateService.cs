@@ -340,6 +340,10 @@ public sealed class AppUpdateService : IAppUpdateService
             {
                 currentProcessPath = Process.GetCurrentProcess().MainModule?.FileName;
             }
+
+            var launchMarkerPath = Path.Combine(
+                Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory,
+                $"launch-update-{Guid.NewGuid():N}.started");
             var launcherScriptPath = Path.Combine(
                 Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory,
                 $"launch-update-{Guid.NewGuid():N}.cmd");
@@ -348,7 +352,8 @@ public sealed class AppUpdateService : IAppUpdateService
                 currentProcessName,
                 currentProcessPath,
                 installerPath,
-                installerArguments);
+                installerArguments,
+                launchMarkerPath);
             File.WriteAllText(launcherScriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
             var launcherStartInfo = new ProcessStartInfo
@@ -360,7 +365,35 @@ public sealed class AppUpdateService : IAppUpdateService
                 WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory
             };
 
-            Process.Start(launcherStartInfo);
+            var launcherProcess = Process.Start(launcherStartInfo);
+            if (launcherProcess is null)
+            {
+                errorMessage = "Deferred launcher process could not be started.";
+                return TryScheduleInstallerAfterCurrentProcessExitWithPowerShell(
+                    currentPid,
+                    currentProcessPath,
+                    installerPath,
+                    installerArguments,
+                    out errorMessage);
+            }
+
+            if (!WaitForDeferredLauncherSignal(launcherProcess, launchMarkerPath, TimeSpan.FromSeconds(3)))
+            {
+                var fallbackScheduled = TryScheduleInstallerAfterCurrentProcessExitWithPowerShell(
+                    currentPid,
+                    currentProcessPath,
+                    installerPath,
+                    installerArguments,
+                    out var fallbackError);
+                if (fallbackScheduled)
+                {
+                    return true;
+                }
+
+                errorMessage = $"Deferred launcher failed to initialize. {fallbackError}";
+                return false;
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -375,11 +408,13 @@ public sealed class AppUpdateService : IAppUpdateService
         string processName,
         string? processPath,
         string installerPath,
-        string installerArguments)
+        string installerArguments,
+        string launchMarkerPath)
     {
         var escapedProcessPath = EscapeBatchVariableValue(processPath ?? string.Empty);
         var escapedInstallerPath = EscapeBatchVariableValue(installerPath);
         var escapedInstallerArgs = EscapeBatchVariableValue(installerArguments);
+        var escapedLaunchMarkerPath = EscapeBatchVariableValue(launchMarkerPath);
 
         return string.Join(
             Environment.NewLine,
@@ -389,6 +424,10 @@ public sealed class AppUpdateService : IAppUpdateService
             $"set \"TARGET_EXE_PATH={escapedProcessPath}\"",
             $"set \"INSTALLER_PATH={escapedInstallerPath}\"",
             $"set \"INSTALLER_ARGS={escapedInstallerArgs}\"",
+            $"set \"LAUNCH_MARKER={escapedLaunchMarkerPath}\"",
+            "if not \"%LAUNCH_MARKER%\"==\"\" (",
+            "  >\"%LAUNCH_MARKER%\" echo launcher_started",
+            ")",
             "set \"WAIT_PID_RETRIES=0\"",
             "set \"WAIT_PID_RETRIES_MAX=180\"",
             "set \"WAIT_UNLOCK_RETRIES=0\"",
@@ -421,8 +460,121 @@ public sealed class AppUpdateService : IAppUpdateService
             ") else (",
             "  start \"\" \"%INSTALLER_PATH%\" %INSTALLER_ARGS%",
             ")",
+            "if not \"%LAUNCH_MARKER%\"==\"\" del \"%LAUNCH_MARKER%\" >NUL 2>&1",
             "del \"%~f0\" >NUL 2>&1",
             "endlocal");
+    }
+
+    private static bool WaitForDeferredLauncherSignal(Process launcherProcess, string launchMarkerPath, TimeSpan timeout)
+    {
+        var deadlineUtc = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadlineUtc)
+        {
+            if (File.Exists(launchMarkerPath))
+            {
+                return true;
+            }
+
+            if (launcherProcess.HasExited && launcherProcess.ExitCode != 0)
+            {
+                return false;
+            }
+
+            Thread.Sleep(120);
+        }
+
+        return File.Exists(launchMarkerPath);
+    }
+
+    private static bool TryScheduleInstallerAfterCurrentProcessExitWithPowerShell(
+        int processId,
+        string? processPath,
+        string installerPath,
+        string installerArguments,
+        out string errorMessage)
+    {
+        errorMessage = string.Empty;
+
+        var powerShellPath = ResolvePowerShellPath();
+        if (string.IsNullOrWhiteSpace(powerShellPath))
+        {
+            errorMessage = "PowerShell is unavailable for fallback scheduling.";
+            return false;
+        }
+
+        try
+        {
+            var script = BuildDeferredInstallerPowerShellCommand(
+                processId,
+                processPath,
+                installerPath,
+                installerArguments);
+            var encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = powerShellPath,
+                Arguments = $"-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand {encodedCommand}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory
+            };
+
+            var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                errorMessage = "PowerShell fallback process could not be started.";
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"PowerShell fallback failed: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static string ResolvePowerShellPath()
+    {
+        var windowsFolder = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        if (!string.IsNullOrWhiteSpace(windowsFolder))
+        {
+            var canonicalPowerShellPath = Path.Combine(
+                windowsFolder,
+                "System32",
+                "WindowsPowerShell",
+                "v1.0",
+                "powershell.exe");
+            if (File.Exists(canonicalPowerShellPath))
+            {
+                return canonicalPowerShellPath;
+            }
+        }
+
+        return "powershell.exe";
+    }
+
+    private static string BuildDeferredInstallerPowerShellCommand(
+        int processId,
+        string? processPath,
+        string installerPath,
+        string installerArguments)
+    {
+        var escapedProcessPath = EscapePowerShellSingleQuotedString(processPath ?? string.Empty);
+        var escapedInstallerPath = EscapePowerShellSingleQuotedString(installerPath);
+        var escapedInstallerArgs = EscapePowerShellSingleQuotedString(installerArguments);
+
+        return string.Join(
+            "; ",
+            "$ErrorActionPreference='SilentlyContinue'",
+            $"$targetPid={processId}",
+            $"$targetExe='{escapedProcessPath}'",
+            $"$installerPath='{escapedInstallerPath}'",
+            $"$installerArgs='{escapedInstallerArgs}'",
+            "for($i=0; $i -lt 180; $i++){ if(-not (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)){ break }; Start-Sleep -Seconds 1 }",
+            "if(-not [string]::IsNullOrWhiteSpace($targetExe) -and (Test-Path -LiteralPath $targetExe)){ for($i=0; $i -lt 180; $i++){ try { $stream=[System.IO.File]::Open($targetExe,[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None); $stream.Close(); break } catch { Start-Sleep -Seconds 1 } } }",
+            "if([string]::IsNullOrWhiteSpace($installerArgs)){ Start-Process -FilePath $installerPath | Out-Null } else { Start-Process -FilePath $installerPath -ArgumentList $installerArgs | Out-Null }");
     }
 
     private static string EscapeBatchVariableValue(string value)
@@ -430,6 +582,11 @@ public sealed class AppUpdateService : IAppUpdateService
         return value
             .Replace("%", "%%", StringComparison.Ordinal)
             .Replace("\"", "\"\"", StringComparison.Ordinal);
+    }
+
+    private static string EscapePowerShellSingleQuotedString(string value)
+    {
+        return value.Replace("'", "''", StringComparison.Ordinal);
     }
 
     private async Task<AppUpdateInfo?> TryCheckWithGhCliAsync(

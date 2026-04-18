@@ -220,11 +220,14 @@ public class AppUpdateServiceTests
                 "IntuneWinPackager.App",
                 @"C:\Program Files\Intune Win Packager\IntuneWinPackager.App.exe",
                 @"C:\Temp\IntuneWinPackager-Setup-1.1.36.exe",
-                "/NORESTART /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS"
+                "/NORESTART /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS",
+                @"C:\Temp\launch-update.started"
             });
 
         Assert.False(string.IsNullOrWhiteSpace(script));
         Assert.Contains("TARGET_EXE_PATH=", script, StringComparison.Ordinal);
+        Assert.Contains("LAUNCH_MARKER=", script, StringComparison.Ordinal);
+        Assert.Contains("launcher_started", script, StringComparison.Ordinal);
         Assert.Contains("WAIT_PID_RETRIES_MAX=180", script, StringComparison.Ordinal);
         Assert.Contains("WAIT_UNLOCK_RETRIES_MAX=180", script, StringComparison.Ordinal);
         Assert.Contains("goto wait_unlock_retry", script, StringComparison.Ordinal);
@@ -232,6 +235,32 @@ public class AppUpdateServiceTests
         Assert.Contains("Test-Path -LiteralPath", script, StringComparison.Ordinal);
         Assert.Contains("[System.IO.File]::Open", script, StringComparison.Ordinal);
         Assert.DoesNotContain(":wait_image", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeferredLauncherPowerShellCommand_WaitsForPidAndUnlockBeforeStartingInstaller()
+    {
+        var buildPowerShellMethod = typeof(AppUpdateService).GetMethod(
+            "BuildDeferredInstallerPowerShellCommand",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(buildPowerShellMethod);
+
+        var command = (string?)buildPowerShellMethod!.Invoke(
+            null,
+            new object?[]
+            {
+                5678,
+                @"C:\Program Files\Intune Win Packager\IntuneWinPackager.App.exe",
+                @"C:\Temp\IntuneWinPackager-Setup-1.1.40.exe",
+                "/NORESTART /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS"
+            });
+
+        Assert.False(string.IsNullOrWhiteSpace(command));
+        Assert.Contains("$targetPid=5678", command, StringComparison.Ordinal);
+        Assert.Contains("Get-Process -Id $targetPid", command, StringComparison.Ordinal);
+        Assert.Contains("[System.IO.File]::Open", command, StringComparison.Ordinal);
+        Assert.Contains("Start-Process -FilePath $installerPath", command, StringComparison.Ordinal);
     }
 
     private static AppUpdateService CreateService(string releasesPayload)
