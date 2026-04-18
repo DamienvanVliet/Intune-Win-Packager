@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.34] - 2026-04-18
+
+### Fixed
+- Update check now prefers the highest installable release when a newer release exists without installer assets, so users are no longer blocked unnecessarily.
+- Release notes in the updater are normalized so literal escaped sequences like `\n` render as real line breaks.
+- Added updater regression tests for installable-release fallback and release-note newline normalization.
+
 ## [1.1.33] - 2026-04-18
 
 ### Added

@@ -639,12 +639,9 @@ public sealed class AppUpdateService : IAppUpdateService
                 return null;
             }
 
-            JsonElement? bestStable = null;
-            JsonElement? bestAny = null;
-            var bestStableVersion = "0.0.0";
-            var bestAnyVersion = "0.0.0";
-            DateTimeOffset? bestStablePublishedAt = null;
-            DateTimeOffset? bestAnyPublishedAt = null;
+            AppUpdateInfo? bestInstallableUpdate = null;
+            AppUpdateInfo? bestInformationalStable = null;
+            AppUpdateInfo? bestInformationalAny = null;
 
             foreach (var release in document.RootElement.EnumerateArray())
             {
@@ -654,42 +651,44 @@ public sealed class AppUpdateService : IAppUpdateService
                     continue;
                 }
 
-                var candidateVersion = NormalizeVersion(GetStringWithFallback(release, "tag_name", "tagName"));
-                var candidatePublishedAt = TryGetDateTimeOffsetWithFallback(release, "published_at", "publishedAt");
+                var updateInfo = BuildUpdateInfoFromReleasePayload(release, currentNormalized, currentBuildTimestampUtc);
+                var isInstallableUpdate =
+                    updateInfo.IsUpdateAvailable &&
+                    !string.IsNullOrWhiteSpace(updateInfo.InstallerDownloadUrl) &&
+                    IsValidSha256(updateInfo.InstallerSha256);
 
-                if (bestAny is null ||
-                    CompareVersions(candidateVersion, bestAnyVersion) > 0 ||
-                    (CompareVersions(candidateVersion, bestAnyVersion) == 0 &&
-                     IsPublishedLater(candidatePublishedAt, bestAnyPublishedAt)))
+                if (isInstallableUpdate &&
+                    (bestInstallableUpdate is null || IsHigherPriorityUpdate(updateInfo, bestInstallableUpdate)))
                 {
-                    bestAny = release;
-                    bestAnyVersion = candidateVersion;
-                    bestAnyPublishedAt = candidatePublishedAt;
+                    bestInstallableUpdate = updateInfo;
                 }
 
                 var isPrerelease = TryGetBoolean(release, "prerelease");
-                if (!isPrerelease)
+                if (!isPrerelease &&
+                    (bestInformationalStable is null || IsHigherPriorityUpdate(updateInfo, bestInformationalStable)))
                 {
-                    if (bestStable is null ||
-                        CompareVersions(candidateVersion, bestStableVersion) > 0 ||
-                        (CompareVersions(candidateVersion, bestStableVersion) == 0 &&
-                         IsPublishedLater(candidatePublishedAt, bestStablePublishedAt)))
-                    {
-                        bestStable = release;
-                        bestStableVersion = candidateVersion;
-                        bestStablePublishedAt = candidatePublishedAt;
-                    }
+                    bestInformationalStable = updateInfo;
+                }
+
+                if (bestInformationalAny is null || IsHigherPriorityUpdate(updateInfo, bestInformationalAny))
+                {
+                    bestInformationalAny = updateInfo;
                 }
             }
 
-            if (bestStable is not null)
+            if (bestInstallableUpdate is not null)
             {
-                return BuildUpdateInfoFromReleasePayload(bestStable.Value, currentNormalized, currentBuildTimestampUtc);
+                return bestInstallableUpdate;
             }
 
-            if (bestAny is not null)
+            if (bestInformationalStable is not null)
             {
-                return BuildUpdateInfoFromReleasePayload(bestAny.Value, currentNormalized, currentBuildTimestampUtc);
+                return bestInformationalStable;
+            }
+
+            if (bestInformationalAny is not null)
+            {
+                return bestInformationalAny;
             }
 
             return null;
@@ -700,6 +699,17 @@ public sealed class AppUpdateService : IAppUpdateService
         }
     }
 
+    private static bool IsHigherPriorityUpdate(AppUpdateInfo left, AppUpdateInfo right)
+    {
+        var compare = CompareVersions(left.LatestVersion, right.LatestVersion);
+        if (compare != 0)
+        {
+            return compare > 0;
+        }
+
+        return IsPublishedLater(left.PublishedAtUtc, right.PublishedAtUtc);
+    }
+
     private static AppUpdateInfo BuildUpdateInfoFromReleasePayload(
         JsonElement root,
         string currentNormalized,
@@ -707,7 +717,7 @@ public sealed class AppUpdateService : IAppUpdateService
     {
         var tagName = GetStringWithFallback(root, "tag_name", "tagName");
         var releaseName = GetString(root, "name");
-        var releaseNotes = GetString(root, "body");
+        var releaseNotes = NormalizeReleaseNotes(GetString(root, "body"));
         var publishedAt = TryGetDateTimeOffsetWithFallback(root, "published_at", "publishedAt");
         var latestVersion = NormalizeVersion(tagName);
         var installerAsset = GetInstallerAssetMetadata(root);
@@ -804,6 +814,31 @@ public sealed class AppUpdateService : IAppUpdateService
                 ? $"A newer build for version {latestVersion} is available."
                 : $"Update available: {latestVersion}"
         };
+    }
+
+    private static string NormalizeReleaseNotes(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return string.Empty;
+        }
+
+        var normalized = raw
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal);
+
+        if (normalized.Contains("\\n", StringComparison.Ordinal) ||
+            normalized.Contains("\\r", StringComparison.Ordinal) ||
+            normalized.Contains("\\t", StringComparison.Ordinal))
+        {
+            normalized = normalized
+                .Replace("\\r\\n", "\n", StringComparison.Ordinal)
+                .Replace("\\n", "\n", StringComparison.Ordinal)
+                .Replace("\\r", "\n", StringComparison.Ordinal)
+                .Replace("\\t", "\t", StringComparison.Ordinal);
+        }
+
+        return normalized.Trim();
     }
 
     private static string WithCode(string code, string message)

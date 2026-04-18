@@ -130,6 +130,78 @@ public class AppUpdateServiceTests
         Assert.Equal("1.1.5", result.CurrentVersion);
     }
 
+    [Fact]
+    public async Task CheckForUpdatesAsync_SkipsNonInstallableNewerRelease_WhenInstallableReleaseExists()
+    {
+        var payload = """
+                      [
+                        {
+                          "tag_name": "v1.1.40",
+                          "draft": false,
+                          "prerelease": false,
+                          "published_at": "2026-04-18T12:00:00Z",
+                          "assets": []
+                        },
+                        {
+                          "tag_name": "v1.1.39",
+                          "draft": false,
+                          "prerelease": false,
+                          "published_at": "2026-04-18T10:00:00Z",
+                          "assets": [
+                            {
+                              "name": "IntuneWinPackager-Setup-1.1.39.exe",
+                              "browser_download_url": "https://example.com/iwp-1.1.39.exe",
+                              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            }
+                          ]
+                        }
+                      ]
+                      """;
+
+        var sut = CreateService(payload);
+
+        var result = await sut.CheckForUpdatesAsync("1.1.38");
+
+        Assert.True(result.CheckSucceeded);
+        Assert.True(result.IsUpdateAvailable);
+        Assert.Equal("1.1.39", result.LatestVersion);
+        Assert.Contains("1.1.39", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckForUpdatesAsync_NormalizesEscapedNewLinesInReleaseNotes()
+    {
+        var payload = """
+                      [
+                        {
+                          "tag_name": "v1.1.8",
+                          "name": "v1.1.8",
+                          "body": "Line 1\\n\\n- Item A\\n- Item B",
+                          "draft": false,
+                          "prerelease": false,
+                          "published_at": "2026-04-13T12:00:00Z",
+                          "assets": [
+                            {
+                              "name": "IntuneWinPackager-Setup-1.1.8.exe",
+                              "browser_download_url": "https://example.com/iwp-1.1.8.exe",
+                              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            }
+                          ]
+                        }
+                      ]
+                      """;
+
+        var sut = CreateService(payload);
+
+        var result = await sut.CheckForUpdatesAsync("1.1.7");
+
+        Assert.True(result.CheckSucceeded);
+        Assert.True(result.IsUpdateAvailable);
+        Assert.Contains("Line 1", result.ReleaseNotes, StringComparison.Ordinal);
+        Assert.Contains('\n', result.ReleaseNotes);
+        Assert.DoesNotContain("\\n", result.ReleaseNotes, StringComparison.Ordinal);
+    }
+
     private static AppUpdateService CreateService(string releasesPayload)
     {
         var handler = new StubHttpMessageHandler(releasesPayload);
