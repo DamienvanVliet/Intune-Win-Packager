@@ -5,6 +5,7 @@
     <sys:String x:Key="Ui.AppSubtitle">Bereid productieklare Intune Win32-packages voor met duidelijke install-commando's, detectieregels, requirements en deploymentmetadata.</sys:String>
 
     <sys:String x:Key="Ui.Tab.Packaging">Packaging</sys:String>
+    <sys:String x:Key="Ui.Tab.Store">Store</sys:String>
     <sys:String x:Key="Ui.Tab.ToolsChecks">Tools &amp; Controles</sys:String>
     <sys:String x:Key="Ui.Tab.UpdatesChanges">Updates &amp; Wijzigingen</sys:String>
     <sys:String x:Key="Ui.Tab.Settings">Instellingen</sys:String>
@@ -124,7 +125,7 @@
     <sys:String x:Key="Ui.Store.UninstallCommandHint">Uninstall command template</sys:String>
     <sys:String x:Key="Ui.Store.DetectionHint">Detectie-richtlijn</sys:String>
     <sys:String x:Key="Ui.Store.Download">Downloaden</sys:String>
-    <sys:String x:Key="Ui.Store.UseInPackager">Voorbereiden in Packaging</sys:String>
+    <sys:String x:Key="Ui.Store.UseInPackager">Importeer naar Packaging</sys:String>
     <sys:String x:Key="Ui.Store.OpenHomepage">Open Homepage</sys:String>
     <sys:String x:Key="Ui.Store.ShowAdvanced">Toon geavanceerde details</sys:String>
     <sys:String x:Key="Ui.Store.AdvancedHiddenHint">Geavanceerde command/detectie-details zijn verborgen om dit scherm rustig te houden.</sys:String>

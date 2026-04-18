@@ -5,6 +5,7 @@
     <sys:String x:Key="Ui.AppSubtitle">Prepare production-ready Intune Win32 packages with clear install commands, detection rules, requirements, and deployment metadata.</sys:String>
 
     <sys:String x:Key="Ui.Tab.Packaging">Packaging</sys:String>
+    <sys:String x:Key="Ui.Tab.Store">Store</sys:String>
     <sys:String x:Key="Ui.Tab.ToolsChecks">Tools &amp; Checks</sys:String>
     <sys:String x:Key="Ui.Tab.UpdatesChanges">Updates &amp; Changes</sys:String>
     <sys:String x:Key="Ui.Tab.Settings">Settings</sys:String>
@@ -124,7 +125,7 @@
     <sys:String x:Key="Ui.Store.UninstallCommandHint">Uninstall command template</sys:String>
     <sys:String x:Key="Ui.Store.DetectionHint">Detection guidance</sys:String>
     <sys:String x:Key="Ui.Store.Download">Download</sys:String>
-    <sys:String x:Key="Ui.Store.UseInPackager">Prepare In Packaging</sys:String>
+    <sys:String x:Key="Ui.Store.UseInPackager">Import to Packaging</sys:String>
     <sys:String x:Key="Ui.Store.OpenHomepage">Open Homepage</sys:String>
     <sys:String x:Key="Ui.Store.ShowAdvanced">Show advanced details</sys:String>
     <sys:String x:Key="Ui.Store.AdvancedHiddenHint">Advanced command/detection details are hidden to keep this view simple.</sys:String>

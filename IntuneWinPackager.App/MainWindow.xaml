@@ -1116,8 +1116,8 @@
             <TabItem>
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE895;" Margin="0,0,6,0" />
-                        <TextBlock Text="{DynamicResource Ui.Tab.UpdatesChanges}" />
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE719;" Margin="0,0,6,0" />
+                        <TextBlock Text="{DynamicResource Ui.Tab.Store}" />
                     </StackPanel>
                 </TabItem.Header>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -1270,57 +1270,6 @@
                                 </StackPanel>
                             </Border>
 
-                            <Border Style="{StaticResource CardBorderStyle}">
-                                <StackPanel>
-                                    <TextBlock Text="{DynamicResource Ui.AppUpdates.Title}" Style="{StaticResource SectionTitleTextStyle}" />
-                                    <TextBlock Text="{Binding CurrentVersionDisplay}"
-                                               Style="{StaticResource BodyTextStyle}"
-                                               Margin="0,4,0,0" />
-                                    <TextBlock Text="{Binding LatestVersionDisplay}"
-                                               Style="{StaticResource BodyTextStyle}"
-                                               Margin="0,2,0,10" />
-
-                                    <CheckBox Content="{DynamicResource Ui.SilentUpdateMode}"
-                                              IsChecked="{Binding EnableSilentAppUpdates}"
-                                              Margin="0,0,0,8" />
-                                    <TextBlock Text="{DynamicResource Ui.SilentUpdateHint}"
-                                               Style="{StaticResource BodyTextStyle}"
-                                               FontSize="11"
-                                               Margin="0,0,0,10" />
-
-                                    <WrapPanel Margin="0,0,0,10">
-                                        <Button Content="{DynamicResource Ui.CheckForUpdates}"
-                                                Style="{StaticResource SecondaryButtonStyle}"
-                                                Command="{Binding CheckForUpdatesCommand}" />
-                                        <Button Content="{DynamicResource Ui.InstallUpdate}"
-                                                Style="{StaticResource PrimaryButtonStyle}"
-                                                Margin="8,0,0,0"
-                                                Command="{Binding InstallUpdateCommand}" />
-                                    </WrapPanel>
-
-                                    <Border CornerRadius="10"
-                                            Background="{DynamicResource PanelBackgroundBrush}"
-                                            BorderBrush="{DynamicResource PanelBorderBrush}"
-                                            BorderThickness="1"
-                                            Padding="10"
-                                            Margin="0,0,0,8">
-                                        <TextBlock Text="{Binding UpdateStatus}"
-                                                   Style="{StaticResource BodyTextStyle}"
-                                                   TextWrapping="Wrap" />
-                                    </Border>
-
-                                    <TextBlock Text="{DynamicResource Ui.Changelog}"
-                                               Style="{StaticResource BodyTextStyle}"
-                                               FontWeight="SemiBold"
-                                               Margin="0,0,0,6" />
-                                    <TextBox Text="{Binding UpdateChangelog}"
-                                             IsReadOnly="True"
-                                             TextWrapping="Wrap"
-                                             AcceptsReturn="True"
-                                             VerticalScrollBarVisibility="Auto"
-                                             Height="220" />
-                                </StackPanel>
-                            </Border>
                         </StackPanel>
 
                         <StackPanel Grid.Column="1">
@@ -1622,6 +1571,80 @@
                                 </StackPanel>
                             </Border>
 
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE895;" Margin="0,0,6,0" />
+                        <TextBlock Text="{DynamicResource Ui.Tab.UpdatesChanges}" />
+                    </StackPanel>
+                </TabItem.Header>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <Border Style="{StaticResource CardBorderStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Ui.AppUpdates.Title}" Style="{StaticResource SectionTitleTextStyle}" />
+                                    <TextBlock Text="{Binding CurrentVersionDisplay}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,4,0,0" />
+                                    <TextBlock Text="{Binding LatestVersionDisplay}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,2,0,10" />
+
+                                    <CheckBox Content="{DynamicResource Ui.SilentUpdateMode}"
+                                              IsChecked="{Binding EnableSilentAppUpdates}"
+                                              Margin="0,0,0,8" />
+                                    <TextBlock Text="{DynamicResource Ui.SilentUpdateHint}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               FontSize="11"
+                                               Margin="0,0,0,10" />
+
+                                    <WrapPanel Margin="0,0,0,10">
+                                        <Button Content="{DynamicResource Ui.CheckForUpdates}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Command="{Binding CheckForUpdatesCommand}" />
+                                        <Button Content="{DynamicResource Ui.InstallUpdate}"
+                                                Style="{StaticResource PrimaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding InstallUpdateCommand}" />
+                                    </WrapPanel>
+
+                                    <Border CornerRadius="10"
+                                            Background="{DynamicResource PanelBackgroundBrush}"
+                                            BorderBrush="{DynamicResource PanelBorderBrush}"
+                                            BorderThickness="1"
+                                            Padding="10"
+                                            Margin="0,0,0,8">
+                                        <TextBlock Text="{Binding UpdateStatus}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   TextWrapping="Wrap" />
+                                    </Border>
+
+                                    <TextBlock Text="{DynamicResource Ui.Changelog}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               FontWeight="SemiBold"
+                                               Margin="0,0,0,6" />
+                                    <TextBox Text="{Binding UpdateChangelog}"
+                                             IsReadOnly="True"
+                                             TextWrapping="Wrap"
+                                             AcceptsReturn="True"
+                                             VerticalScrollBarVisibility="Auto"
+                                             Height="280" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1">
                             <Border Style="{StaticResource CardBorderStyle}">
                                 <StackPanel>
                                     <TextBlock Text="{DynamicResource Ui.RecentPackages.Title}" Style="{StaticResource SectionTitleTextStyle}" />

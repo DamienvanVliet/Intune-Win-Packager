@@ -10,12 +10,14 @@ public class UiRegressionSmokeTests
         var xaml = File.ReadAllText(GetPath("IntuneWinPackager.App", "MainWindow.xaml"));
 
         Assert.Contains("Ui.Tab.Packaging", xaml, StringComparison.Ordinal);
+        Assert.Contains("Ui.Tab.Store", xaml, StringComparison.Ordinal);
         Assert.Contains("Ui.Tab.ToolsChecks", xaml, StringComparison.Ordinal);
         Assert.Contains("Ui.Tab.UpdatesChanges", xaml, StringComparison.Ordinal);
         Assert.Contains("Ui.Tab.Settings", xaml, StringComparison.Ordinal);
 
         Assert.Contains("Segoe MDL2 Assets", xaml, StringComparison.Ordinal);
         Assert.Contains("&#xE8A5;", xaml, StringComparison.Ordinal); // package
+        Assert.Contains("&#xE719;", xaml, StringComparison.Ordinal); // store
         Assert.Contains("&#xE9D9;", xaml, StringComparison.Ordinal); // tools/check
         Assert.Contains("&#xE895;", xaml, StringComparison.Ordinal); // updates
         Assert.Contains("&#xE713;", xaml, StringComparison.Ordinal); // settings
