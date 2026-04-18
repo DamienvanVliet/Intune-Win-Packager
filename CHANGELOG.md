@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.32] - 2026-04-18
+
+### Added
+- Product Store Phase 2: canonical package identity (`publisher + product + release channel`) for normalized cross-source matching.
+- Product Store Phase 2: structured installer variants per package (source/channel/type/arch/scope/url/hash/signing metadata).
+- Product Store Phase 2: deterministic detection strategy mapping per installer variant:
+  - MSI: ProductCode-first.
+  - EXE: strict exact registry equality script (DisplayName, Publisher, DisplayVersion).
+  - APPX/MSIX: exact identity + version script.
+- Added canonical/variant-aware profile matching and promotion so prepared profiles survive source differences.
+- Added tests for canonical source merge, deterministic EXE detection mapping, and multi-asset GitHub variant mapping.
+
+### Changed
+- Store search now merges duplicate apps across providers into one logical package while preserving source variants.
+- Store download flow now includes fallback to alternate source variants when the primary source fails.
+
 ## [1.1.31] - 2026-04-18
 
 ### Added
