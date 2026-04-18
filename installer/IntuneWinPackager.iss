@@ -45,7 +45,8 @@ Name: "dutch"; MessagesFile: "compiler:Languages\Dutch.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "{#SourceDir}\IntuneWinPackager.App.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+Source: "{#SourceDir}\IntuneWinPackager.App.exe"; DestDir: "{app}"; Flags: ignoreversion; Check: not WizardSilent
+Source: "{#SourceDir}\IntuneWinPackager.App.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace; Check: WizardSilent
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "IntuneWinPackager.App.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

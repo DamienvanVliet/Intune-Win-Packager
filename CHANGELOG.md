@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.36] - 2026-04-18
+
+### Fixed
+- Removed forced reboot path for normal interactive self-updates by restoring split installer behavior (`restartreplace` is now silent-only again for the app executable).
+- Hardened deferred updater launch with an explicit file-unlock gate: setup now waits until `IntuneWinPackager.App.exe` can be opened exclusively before starting, reducing recurring `DeleteFile failed; code 32` races.
+- Added updater regression coverage for the deferred launcher script to ensure unlock waiting behavior remains in place.
+
 ## [1.1.35] - 2026-04-18
 
 ### Fixed

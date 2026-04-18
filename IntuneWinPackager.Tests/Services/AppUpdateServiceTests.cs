@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Text;
 using IntuneWinPackager.Infrastructure.Services;
 
@@ -200,6 +201,33 @@ public class AppUpdateServiceTests
         Assert.Contains("Line 1", result.ReleaseNotes, StringComparison.Ordinal);
         Assert.Contains('\n', result.ReleaseNotes);
         Assert.DoesNotContain("\\n", result.ReleaseNotes, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeferredLauncherBatch_WaitsForProcessUnlockBeforeStartingInstaller()
+    {
+        var buildBatchMethod = typeof(AppUpdateService).GetMethod(
+            "BuildDeferredInstallerBatch",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(buildBatchMethod);
+
+        var script = (string?)buildBatchMethod!.Invoke(
+            null,
+            new object?[]
+            {
+                1234,
+                "IntuneWinPackager.App",
+                @"C:\Program Files\Intune Win Packager\IntuneWinPackager.App.exe",
+                @"C:\Temp\IntuneWinPackager-Setup-1.1.36.exe",
+                "/NORESTART /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS"
+            });
+
+        Assert.False(string.IsNullOrWhiteSpace(script));
+        Assert.Contains("TARGET_EXE_PATH=", script, StringComparison.Ordinal);
+        Assert.Contains(":wait_unlock", script, StringComparison.Ordinal);
+        Assert.Contains("Test-Path -LiteralPath", script, StringComparison.Ordinal);
+        Assert.Contains("[System.IO.File]::Open", script, StringComparison.Ordinal);
     }
 
     private static AppUpdateService CreateService(string releasesPayload)

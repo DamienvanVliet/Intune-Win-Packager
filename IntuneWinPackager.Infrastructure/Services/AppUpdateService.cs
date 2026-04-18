@@ -335,12 +335,18 @@ public sealed class AppUpdateService : IAppUpdateService
 
             var currentPid = Environment.ProcessId;
             var currentProcessName = Process.GetCurrentProcess().ProcessName;
+            var currentProcessPath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(currentProcessPath))
+            {
+                currentProcessPath = Process.GetCurrentProcess().MainModule?.FileName;
+            }
             var launcherScriptPath = Path.Combine(
                 Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory,
                 $"launch-update-{Guid.NewGuid():N}.cmd");
             var script = BuildDeferredInstallerBatch(
                 currentPid,
                 currentProcessName,
+                currentProcessPath,
                 installerPath,
                 installerArguments);
             File.WriteAllText(launcherScriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -367,6 +373,7 @@ public sealed class AppUpdateService : IAppUpdateService
     private static string BuildDeferredInstallerBatch(
         int processId,
         string processName,
+        string? processPath,
         string installerPath,
         string installerArguments)
     {
@@ -375,6 +382,7 @@ public sealed class AppUpdateService : IAppUpdateService
             : $"{processName}.exe";
 
         var escapedImage = EscapeBatchVariableValue(targetImage);
+        var escapedProcessPath = EscapeBatchVariableValue(processPath ?? string.Empty);
         var escapedInstallerPath = EscapeBatchVariableValue(installerPath);
         var escapedInstallerArgs = EscapeBatchVariableValue(installerArguments);
 
@@ -384,6 +392,7 @@ public sealed class AppUpdateService : IAppUpdateService
             "setlocal",
             $"set \"TARGET_PID={processId}\"",
             $"set \"TARGET_IMAGE={escapedImage}\"",
+            $"set \"TARGET_EXE_PATH={escapedProcessPath}\"",
             $"set \"INSTALLER_PATH={escapedInstallerPath}\"",
             $"set \"INSTALLER_ARGS={escapedInstallerArgs}\"",
             ":wait_pid",
@@ -398,6 +407,17 @@ public sealed class AppUpdateService : IAppUpdateService
             "  timeout /t 1 /nobreak >NUL",
             "  goto wait_image",
             ")",
+            "if \"%TARGET_EXE_PATH%\"==\"\" goto launch_installer",
+            "if not exist \"%TARGET_EXE_PATH%\" goto launch_installer",
+            "where powershell >NUL 2>&1",
+            "if errorlevel 1 goto launch_installer",
+            ":wait_unlock",
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command \"try { $path = $env:TARGET_EXE_PATH; if (-not (Test-Path -LiteralPath $path)) { exit 0 }; $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None); $stream.Close(); exit 0 } catch { exit 1 }\" >NUL 2>&1",
+            "if errorlevel 1 (",
+            "  timeout /t 1 /nobreak >NUL",
+            "  goto wait_unlock",
+            ")",
+            ":launch_installer",
             "timeout /t 1 /nobreak >NUL",
             "if \"%INSTALLER_ARGS%\"==\"\" (",
             "  start \"\" \"%INSTALLER_PATH%\"",
