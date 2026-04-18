@@ -54,6 +54,7 @@ function Install-InnoSetup {
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptRoot "..")).Path
 $projectPath = Join-Path $repoRoot "IntuneWinPackager.App\IntuneWinPackager.App.csproj"
+$updateHostProjectPath = Join-Path $repoRoot "IntuneWinPackager.UpdateHost\IntuneWinPackager.UpdateHost.csproj"
 $issPath = Join-Path $repoRoot "installer\IntuneWinPackager.iss"
 $publishDir = Join-Path $repoRoot ("artifacts\publish\" + $Runtime)
 $installerDir = Join-Path $repoRoot "artifacts\installer"
@@ -64,6 +65,10 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 
 if (-not (Test-Path -LiteralPath $projectPath)) {
     throw "Project file not found: $projectPath"
+}
+
+if (-not (Test-Path -LiteralPath $updateHostProjectPath)) {
+    throw "Update host project file not found: $updateHostProjectPath"
 }
 
 if (-not (Test-Path -LiteralPath $issPath)) {
@@ -90,9 +95,29 @@ if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed. Exit code: $LASTEXITCODE"
 }
 
+Write-Step "Publishing standalone update host helper ($Runtime, $Configuration)..."
+& dotnet publish $updateHostProjectPath `
+    -c $Configuration `
+    -r $Runtime `
+    --self-contained true `
+    -o $publishDir `
+    /p:PublishSingleFile=true `
+    /p:IncludeNativeLibrariesForSelfExtract=true `
+    /p:PublishReadyToRun=true `
+    /p:DebugSymbols=false `
+    /p:DebugType=None
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet publish (update host) failed. Exit code: $LASTEXITCODE"
+}
+
 $appExePath = Join-Path $publishDir "IntuneWinPackager.App.exe"
 if (-not (Test-Path -LiteralPath $appExePath)) {
     throw "Published executable not found: $appExePath"
+}
+
+$updateHostExePath = Join-Path $publishDir "IntuneWinPackager.UpdateHost.exe"
+if (-not (Test-Path -LiteralPath $updateHostExePath)) {
+    throw "Published update host executable not found: $updateHostExePath"
 }
 
 $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExePath)

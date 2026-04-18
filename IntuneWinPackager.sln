@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IntuneWinPackager.Models", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IntuneWinPackager.Tests", "IntuneWinPackager.Tests\IntuneWinPackager.Tests.csproj", "{258AA25A-14AD-4C07-8448-BF54ED4C292B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IntuneWinPackager.UpdateHost", "IntuneWinPackager.UpdateHost\IntuneWinPackager.UpdateHost.csproj", "{B7ECC6B2-2C5C-4101-B4AF-756AF607BB3C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -42,5 +44,9 @@ Global
 		{258AA25A-14AD-4C07-8448-BF54ED4C292B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{258AA25A-14AD-4C07-8448-BF54ED4C292B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{258AA25A-14AD-4C07-8448-BF54ED4C292B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B7ECC6B2-2C5C-4101-B4AF-756AF607BB3C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B7ECC6B2-2C5C-4101-B4AF-756AF607BB3C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B7ECC6B2-2C5C-4101-B4AF-756AF607BB3C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B7ECC6B2-2C5C-4101-B4AF-756AF607BB3C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

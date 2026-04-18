@@ -234,6 +234,8 @@ public class AppUpdateServiceTests
         Assert.Contains(":wait_unlock", script, StringComparison.Ordinal);
         Assert.Contains("Test-Path -LiteralPath", script, StringComparison.Ordinal);
         Assert.Contains("[System.IO.File]::Open", script, StringComparison.Ordinal);
+        Assert.Contains("[System.IO.FileAccess]::Read", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("[System.IO.FileAccess]::ReadWrite", script, StringComparison.Ordinal);
         Assert.DoesNotContain(":wait_image", script, StringComparison.Ordinal);
     }
 
@@ -260,14 +262,16 @@ public class AppUpdateServiceTests
         Assert.Contains("$targetPid=5678", command, StringComparison.Ordinal);
         Assert.Contains("Get-Process -Id $targetPid", command, StringComparison.Ordinal);
         Assert.Contains("[System.IO.File]::Open", command, StringComparison.Ordinal);
+        Assert.Contains("[System.IO.FileAccess]::Read", command, StringComparison.Ordinal);
+        Assert.DoesNotContain("[System.IO.FileAccess]::ReadWrite", command, StringComparison.Ordinal);
         Assert.Contains("Start-Process -FilePath $installerPath", command, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void DeferredAppHostScheduling_ReturnsFalseWhenProcessPathIsInvalid()
+    public void DeferredUpdaterHostScheduling_ReturnsFalseWhenProcessPathIsInvalid()
     {
         var scheduleWithAppHostMethod = typeof(AppUpdateService).GetMethod(
-            "TryScheduleInstallerAfterCurrentProcessExitWithAppHost",
+            "TryScheduleInstallerAfterCurrentProcessExitWithUpdaterHost",
             BindingFlags.NonPublic | BindingFlags.Static);
 
         Assert.NotNull(scheduleWithAppHostMethod);

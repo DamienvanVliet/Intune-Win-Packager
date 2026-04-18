@@ -340,17 +340,17 @@ public sealed class AppUpdateService : IAppUpdateService
                 currentProcessPath = Process.GetCurrentProcess().MainModule?.FileName;
             }
 
-            if (TryScheduleInstallerAfterCurrentProcessExitWithAppHost(
+            if (TryScheduleInstallerAfterCurrentProcessExitWithUpdaterHost(
                     currentPid,
                     currentProcessPath,
                     installerPath,
                     installerArguments,
-                    out var appHostError))
+                    out var updaterHostError))
             {
                 return true;
             }
 
-            errorMessage = appHostError;
+            errorMessage = updaterHostError;
 
             var fallbackScheduled = TryScheduleInstallerAfterCurrentProcessExitWithPowerShell(
                 currentPid,
@@ -363,7 +363,7 @@ public sealed class AppUpdateService : IAppUpdateService
                 return true;
             }
 
-            errorMessage = $"Primary and fallback update scheduling failed. {appHostError} {fallbackError}".Trim();
+            errorMessage = $"Primary and fallback update scheduling failed. {updaterHostError} {fallbackError}".Trim();
             return false;
         }
         catch (Exception ex)
@@ -373,7 +373,7 @@ public sealed class AppUpdateService : IAppUpdateService
         }
     }
 
-    private static bool TryScheduleInstallerAfterCurrentProcessExitWithAppHost(
+    private static bool TryScheduleInstallerAfterCurrentProcessExitWithUpdaterHost(
         int processId,
         string? processPath,
         string installerPath,
@@ -397,15 +397,21 @@ public sealed class AppUpdateService : IAppUpdateService
             var launchLogPath = Path.Combine(updatesDirectory, $"launch-host-{Guid.NewGuid():N}.log");
             TryDeleteFile(launchMarkerPath);
 
+            var updaterHostPath = ResolveUpdaterHostPath(processPath);
+            if (!File.Exists(updaterHostPath))
+            {
+                errorMessage = $"Updater host executable is missing: {updaterHostPath}";
+                return false;
+            }
+
             var startInfo = new ProcessStartInfo
             {
-                FileName = processPath,
+                FileName = updaterHostPath,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(processPath) ?? AppContext.BaseDirectory
+                WorkingDirectory = Path.GetDirectoryName(updaterHostPath) ?? AppContext.BaseDirectory
             };
 
-            startInfo.ArgumentList.Add("--deferred-update");
             startInfo.ArgumentList.Add("--parent-pid");
             startInfo.ArgumentList.Add(processId.ToString(CultureInfo.InvariantCulture));
             startInfo.ArgumentList.Add("--target-exe-path");
@@ -422,13 +428,16 @@ public sealed class AppUpdateService : IAppUpdateService
             var hostProcess = Process.Start(startInfo);
             if (hostProcess is null)
             {
-                errorMessage = "Deferred app-host process could not be started.";
+                errorMessage = "Updater host process could not be started.";
                 return false;
             }
 
             if (!WaitForDeferredLauncherSignal(hostProcess, launchMarkerPath, TimeSpan.FromSeconds(5)))
             {
-                errorMessage = $"Deferred app-host did not signal startup. Inspect log: {launchLogPath}";
+                var exitPart = hostProcess.HasExited
+                    ? $" (exit code {hostProcess.ExitCode.ToString(CultureInfo.InvariantCulture)})"
+                    : string.Empty;
+                errorMessage = $"Updater host did not signal startup{exitPart}. Inspect log: {launchLogPath}";
                 return false;
             }
 
@@ -436,9 +445,15 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            errorMessage = $"Deferred app-host launch failed: {ex.Message}";
+            errorMessage = $"Updater host launch failed: {ex.Message}";
             return false;
         }
+    }
+
+    private static string ResolveUpdaterHostPath(string processPath)
+    {
+        var applicationDirectory = Path.GetDirectoryName(processPath) ?? AppContext.BaseDirectory;
+        return Path.Combine(applicationDirectory, "IntuneWinPackager.UpdateHost.exe");
     }
 
     private static string BuildDeferredInstallerBatch(
@@ -483,7 +498,7 @@ public sealed class AppUpdateService : IAppUpdateService
             "where powershell >NUL 2>&1",
             "if errorlevel 1 goto launch_installer",
             ":wait_unlock",
-            "powershell -NoProfile -ExecutionPolicy Bypass -Command \"try { $path = $env:TARGET_EXE_PATH; if (-not (Test-Path -LiteralPath $path)) { exit 0 }; $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None); $stream.Close(); exit 0 } catch { exit 1 }\" >NUL 2>&1",
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command \"try { $path = $env:TARGET_EXE_PATH; if (-not (Test-Path -LiteralPath $path)) { exit 0 }; $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None); $stream.Close(); exit 0 } catch { exit 1 }\" >NUL 2>&1",
             "if errorlevel 1 goto wait_unlock_retry",
             "goto launch_installer",
             ":wait_unlock_retry",
@@ -611,7 +626,7 @@ public sealed class AppUpdateService : IAppUpdateService
             $"$installerPath='{escapedInstallerPath}'",
             $"$installerArgs='{escapedInstallerArgs}'",
             "for($i=0; $i -lt 180; $i++){ if(-not (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)){ break }; Start-Sleep -Seconds 1 }",
-            "if(-not [string]::IsNullOrWhiteSpace($targetExe) -and (Test-Path -LiteralPath $targetExe)){ for($i=0; $i -lt 180; $i++){ try { $stream=[System.IO.File]::Open($targetExe,[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None); $stream.Close(); break } catch { Start-Sleep -Seconds 1 } } }",
+            "if(-not [string]::IsNullOrWhiteSpace($targetExe) -and (Test-Path -LiteralPath $targetExe)){ for($i=0; $i -lt 180; $i++){ try { $stream=[System.IO.File]::Open($targetExe,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::None); $stream.Close(); break } catch { Start-Sleep -Seconds 1 } } }",
             "if([string]::IsNullOrWhiteSpace($installerArgs)){ Start-Process -FilePath $installerPath | Out-Null } else { Start-Process -FilePath $installerPath -ArgumentList $installerArgs | Out-Null }");
     }
 
