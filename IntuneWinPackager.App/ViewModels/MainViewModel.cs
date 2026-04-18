@@ -747,7 +747,7 @@ public partial class MainViewModel : ObservableObject
         await RunStartupStepAsync("LoadSettings", LoadSettingsAsync);
         await RunStartupStepAsync("RefreshProfiles", RefreshProfileListAsync);
         await RunStartupStepAsync("RefreshHistory", RefreshHistoryAsync);
-        await RunStartupStepAsync("ReloadCatalogProfiles", ReloadCatalogProfilesAsync);
+        await RunStartupStepAsync("ReloadCatalogProfiles", () => ReloadCatalogProfilesAsync());
 
         UpdateValidation();
 

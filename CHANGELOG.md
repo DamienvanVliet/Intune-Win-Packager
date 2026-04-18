@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.37] - 2026-04-18
+
+### Fixed
+- Prevented the app from silently closing when startup initialization steps fail.
+- Added startup resilience: settings/profile/history/catalog load failures are now isolated and logged instead of crashing startup.
+- Added an explicit single-instance warning message instead of immediate silent shutdown when another instance/mutex is detected.
+
 ## [1.1.36] - 2026-04-18
 
 ### Fixed
