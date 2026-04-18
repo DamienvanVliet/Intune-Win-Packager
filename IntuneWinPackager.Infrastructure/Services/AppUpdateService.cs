@@ -280,7 +280,7 @@ public sealed class AppUpdateService : IAppUpdateService
         {
             var installerArguments = silentInstall
                 ? "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS"
-                : string.Empty;
+                : "/NORESTART /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS";
 
             logProgress?.Report("Scheduling update installer after app shutdown...");
 

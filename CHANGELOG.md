@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.35] - 2026-04-18
+
+### Fixed
+- Restored lock-safe self-update behavior for `IntuneWinPackager.App.exe` by using `restartreplace` in the installer file map (prevents recurring `DeleteFile failed; code 32` during in-place upgrades).
+- In-app non-silent updater now also passes `NORESTART` plus no-close-app flags for consistent update behavior.
+
 ## [1.1.34] - 2026-04-18
 
 ### Fixed
