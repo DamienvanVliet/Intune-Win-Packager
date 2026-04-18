@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.41] - 2026-04-18
+
+### Added
+- Definitive updater handoff fix.
+- Replaced cmd-script handoff with a built-in deferred update host mode in the app executable.
+- Updater handoff now uses direct argument passing + startup marker + log file in LocalAppData updates folder.
+- Added deterministic startup handling before mutex so deferred host can run reliably while main UI instance is still active.
+- Kept PowerShell scheduling as fallback only.
+- Added regression test coverage for invalid app-host scheduling input.
+
 ## [1.1.40] - 2026-04-18
 
 ### Added
