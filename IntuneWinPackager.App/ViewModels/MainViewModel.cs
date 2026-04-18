@@ -2106,7 +2106,19 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            await ReloadCatalogProfilesAsync(cancellationToken);
+            try
+            {
+                await ReloadCatalogProfilesAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _catalogProfiles = [];
+                AppendLog($"Catalog profile cache reload failed. Search continued without local profile decorations. {ex.Message}");
+            }
 
             var results = await _packageCatalogService.SearchAsync(new PackageCatalogQuery
             {

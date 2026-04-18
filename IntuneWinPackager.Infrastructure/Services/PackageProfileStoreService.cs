@@ -304,7 +304,7 @@ public sealed class PackageProfileStoreService : IPackageProfileStoreService
         command.Parameters.AddWithValue("$prepared_at_utc", profile.LastPreparedAtUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue(
             "$verified_at_utc",
-            profile.LastVerifiedAtUtc?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+            (object?)profile.LastVerifiedAtUtc?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? DBNull.Value);
         command.Parameters.AddWithValue("$payload_json", payload);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

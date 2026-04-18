@@ -173,7 +173,7 @@ public sealed class PackageCatalogServiceTests
         var sut = new PackageCatalogService(processRunner, httpClient);
         var results = await sut.SearchAsync(new PackageCatalogQuery
         {
-            SearchTerm = "contoso",
+            SearchTerm = $"contoso-{Guid.NewGuid():N}",
             IncludeWinget = false,
             IncludeChocolatey = false,
             IncludeGitHubReleases = true
@@ -245,7 +245,7 @@ public sealed class PackageCatalogServiceTests
         var sut = new PackageCatalogService(processRunner, httpClient);
         var results = await sut.SearchAsync(new PackageCatalogQuery
         {
-            SearchTerm = "app",
+            SearchTerm = $"app-{Guid.NewGuid():N}",
             IncludeWinget = true,
             IncludeChocolatey = false,
             IncludeGitHubReleases = false
@@ -334,7 +334,7 @@ public sealed class PackageCatalogServiceTests
         var sut = new PackageCatalogService(processRunner, httpClient);
         var results = await sut.SearchAsync(new PackageCatalogQuery
         {
-            SearchTerm = "spotify",
+            SearchTerm = $"spotify-{Guid.NewGuid():N}",
             IncludeWinget = true,
             IncludeChocolatey = true,
             IncludeGitHubReleases = false
@@ -386,7 +386,7 @@ public sealed class PackageCatalogServiceTests
         var sut = new PackageCatalogService(processRunner, httpClient);
         var results = await sut.SearchAsync(new PackageCatalogQuery
         {
-            SearchTerm = "notepad",
+            SearchTerm = $"notepad-{Guid.NewGuid():N}",
             IncludeWinget = false,
             IncludeChocolatey = true,
             IncludeGitHubReleases = false
@@ -465,7 +465,7 @@ public sealed class PackageCatalogServiceTests
         var sut = new PackageCatalogService(processRunner, httpClient);
         var results = await sut.SearchAsync(new PackageCatalogQuery
         {
-            SearchTerm = "fabrikam",
+            SearchTerm = $"fabrikam-{Guid.NewGuid():N}",
             IncludeWinget = false,
             IncludeChocolatey = false,
             IncludeGitHubReleases = true

@@ -128,19 +128,19 @@ public sealed class PackageCatalogService : IPackageCatalogService
     {
         var term = query.SearchTerm?.Trim() ?? string.Empty;
         var wingetTask = query.IncludeWinget
-            ? SearchWingetAsync(term, perSource, cancellationToken)
+            ? SearchProviderSafeAsync("winget", "configured", () => SearchWingetAsync(term, perSource, cancellationToken), cancellationToken)
             : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
         var chocolateyTask = query.IncludeChocolatey
-            ? SearchChocolateyAsync(term, perSource, cancellationToken)
+            ? SearchProviderSafeAsync("chocolatey", "configured", () => SearchChocolateyAsync(term, perSource, cancellationToken), cancellationToken)
             : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
         var githubTask = query.IncludeGitHubReleases
-            ? SearchGitHubReleasesAsync(term, perSource, cancellationToken)
+            ? SearchProviderSafeAsync("github", "public", () => SearchGitHubReleasesAsync(term, perSource, cancellationToken), cancellationToken)
             : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
         var scoopTask = query.IncludeScoop
-            ? SearchScoopAsync(term, perSource, cancellationToken)
+            ? SearchProviderSafeAsync("scoop", "configured", () => SearchScoopAsync(term, perSource, cancellationToken), cancellationToken)
             : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
         var nugetTask = query.IncludeNuGet
-            ? SearchNuGetAsync(term, perSource, cancellationToken)
+            ? SearchProviderSafeAsync("nuget", "configured", () => SearchNuGetAsync(term, perSource, cancellationToken), cancellationToken)
             : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
 
         await Task.WhenAll(wingetTask, chocolateyTask, githubTask, scoopTask, nugetTask);
@@ -158,6 +158,44 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
 
         return MergeCanonicalEntries(sourceEntries);
+    }
+
+    private async Task<IReadOnlyList<PackageCatalogEntry>> SearchProviderSafeAsync(
+        string providerId,
+        string sourceChannel,
+        Func<Task<IReadOnlyList<PackageCatalogEntry>>> searchFactory,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await searchFactory();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                await RecordProviderFailureAsync(
+                    providerId,
+                    sourceChannel,
+                    Truncate(ex.Message ?? string.Empty, 240),
+                    isTimeout: false,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Provider health logging must never fail catalog search.
+            }
+
+            return [];
+        }
     }
 
     private void TriggerBackgroundRefresh(string cacheKey, PackageCatalogQuery query, int perSource)
@@ -852,10 +890,12 @@ public sealed class PackageCatalogService : IPackageCatalogService
             return;
         }
 
-        await EnsureCatalogDatabaseReadyAsync(cancellationToken);
-        await _databaseGate.WaitAsync(cancellationToken);
+        var gateHeld = false;
         try
         {
+            await EnsureCatalogDatabaseReadyAsync(cancellationToken);
+            await _databaseGate.WaitAsync(cancellationToken);
+            gateHeld = true;
             await using var connection = await OpenCatalogDatabaseConnectionAsync(cancellationToken);
             await using var command = connection.CreateCommand();
             command.CommandText =
@@ -897,9 +937,20 @@ public sealed class PackageCatalogService : IPackageCatalogService
             command.Parameters.AddWithValue("@last_success_utc", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Provider diagnostics are best-effort only.
+        }
         finally
         {
-            _databaseGate.Release();
+            if (gateHeld)
+            {
+                _databaseGate.Release();
+            }
         }
     }
 
@@ -915,10 +966,12 @@ public sealed class PackageCatalogService : IPackageCatalogService
             return;
         }
 
-        await EnsureCatalogDatabaseReadyAsync(cancellationToken);
-        await _databaseGate.WaitAsync(cancellationToken);
+        var gateHeld = false;
         try
         {
+            await EnsureCatalogDatabaseReadyAsync(cancellationToken);
+            await _databaseGate.WaitAsync(cancellationToken);
+            gateHeld = true;
             await using var connection = await OpenCatalogDatabaseConnectionAsync(cancellationToken);
             await using var command = connection.CreateCommand();
             command.CommandText =
@@ -962,9 +1015,20 @@ public sealed class PackageCatalogService : IPackageCatalogService
             command.Parameters.AddWithValue("@last_failure_utc", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Provider diagnostics are best-effort only.
+        }
         finally
         {
-            _databaseGate.Release();
+            if (gateHeld)
+            {
+                _databaseGate.Release();
+            }
         }
     }
 
@@ -3062,15 +3126,31 @@ public sealed class PackageCatalogService : IPackageCatalogService
             }
         });
 
-        var result = await _processRunner.RunAsync(new ProcessRunRequest
+        try
         {
-            FileName = executable,
-            Arguments = arguments,
-            WorkingDirectory = Environment.CurrentDirectory,
-            PreferLowImpact = true
-        }, progress, cancellationToken);
+            var result = await _processRunner.RunAsync(new ProcessRunRequest
+            {
+                FileName = executable,
+                Arguments = arguments,
+                WorkingDirectory = Environment.CurrentDirectory,
+                PreferLowImpact = true
+            }, progress, cancellationToken);
 
-        return (result.ExitCode, lines.ToArray());
+            return (result.ExitCode, lines.ToArray());
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (!string.IsNullOrWhiteSpace(ex.Message))
+            {
+                lines.Enqueue(ex.Message.Trim());
+            }
+
+            return (-1, lines.ToArray());
+        }
     }
 
     private async Task<IReadOnlyList<WingetSourceInfo>> GetWingetSearchSourcesAsync(CancellationToken cancellationToken)
@@ -4486,7 +4566,16 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
     private static string Truncate(string value, int maxLength)
     {
-        if (string.IsNullOrWhiteSpace(value) || value.Length <= maxLength) return value;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        if (value.Length <= maxLength)
+        {
+            return value;
+        }
+
         return value[..(maxLength - 1)].TrimEnd() + "...";
     }
 
