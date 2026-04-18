@@ -256,6 +256,227 @@ public sealed class PackageCatalogServiceTests
         Assert.DoesNotContain(results, entry => entry.Source == PackageCatalogSource.Winget && entry.SourceChannel.Equals("winget-font", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task SearchAsync_MergesCrossSourceDuplicates_IntoCanonicalPackage()
+    {
+        var processRunner = new RoutingProcessRunner(request =>
+        {
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("source list", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name    Argument                                      Explicit",
+                    "---------------------------------------------------------------",
+                    "winget  https://cdn.winget.microsoft.com/cache        false"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("search ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name      Id                Version Match",
+                    "------------------------------------------",
+                    "Spotify   Spotify.Spotify   1.2.90  Tag"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("show ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Found Spotify [Spotify.Spotify]",
+                    "Version: 1.2.90",
+                    "Publisher: Spotify AB",
+                    "Installer Type: exe",
+                    "Installer Url: https://download.spotify.com/SpotifySetup.exe"
+                ]);
+            }
+
+            return new StubProcessResult(1, []);
+        });
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.Contains("/Search()", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <feed xmlns="http://www.w3.org/2005/Atom"
+                          xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices"
+                          xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata">
+                      <entry>
+                        <title type="text">Spotify</title>
+                        <summary type="text">Spotify desktop app.</summary>
+                        <author><name>Spotify AB</name></author>
+                        <content type="application/zip" src="https://community.chocolatey.org/api/v2/package/spotify/1.2.90" />
+                        <m:properties>
+                          <d:Id>spotify</d:Id>
+                          <d:Version>1.2.90</d:Version>
+                          <d:Tags>exe music player</d:Tags>
+                        </m:properties>
+                      </entry>
+                    </feed>
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = "spotify",
+            IncludeWinget = true,
+            IncludeChocolatey = true,
+            IncludeGitHubReleases = false
+        });
+
+        var entry = Assert.Single(results);
+        Assert.NotEmpty(entry.CanonicalPackageKey);
+        Assert.True(entry.SourceVariantCount >= 2);
+        Assert.True(entry.InstallerVariantCount >= 2);
+        Assert.Contains(entry.InstallerVariants, variant => variant.Source == PackageCatalogSource.Winget);
+        Assert.Contains(entry.InstallerVariants, variant => variant.Source == PackageCatalogSource.Chocolatey);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ExeVariant_UsesDeterministicExactRegistryDetection()
+    {
+        var processRunner = new StubProcessRunner([]);
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.Contains("/Search()", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <feed xmlns="http://www.w3.org/2005/Atom"
+                          xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices"
+                          xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata">
+                      <entry>
+                        <title type="text">Notepad++</title>
+                        <summary type="text">Notepad++ editor.</summary>
+                        <author><name>Notepad++ Team</name></author>
+                        <content type="application/zip" src="https://community.chocolatey.org/api/v2/package/notepadplusplus/8.7.2" />
+                        <m:properties>
+                          <d:Id>notepadplusplus</d:Id>
+                          <d:Version>8.7.2</d:Version>
+                          <d:Tags>exe editor</d:Tags>
+                        </m:properties>
+                      </entry>
+                    </feed>
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = "notepad",
+            IncludeWinget = false,
+            IncludeChocolatey = true,
+            IncludeGitHubReleases = false
+        });
+
+        var entry = Assert.Single(results);
+        var variant = Assert.Single(entry.InstallerVariants);
+        Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Equal(IntuneDetectionRuleType.Script, variant.DetectionRule.RuleType);
+        Assert.True(variant.IsDeterministicDetection);
+        Assert.Contains("DisplayName -eq", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+        Assert.Contains("DisplayVersion -eq", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SearchAsync_GitHubRelease_WithMultipleAssets_BuildsMultipleVariants()
+    {
+        var processRunner = new StubProcessRunner([]);
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.Contains("/search/repositories", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "items": [
+                        {
+                          "name": "fabrikam-app",
+                          "full_name": "fabrikam/fabrikam-app",
+                          "description": "Fabrikam desktop app",
+                          "html_url": "https://github.com/fabrikam/fabrikam-app",
+                          "owner": {
+                            "login": "fabrikam",
+                            "avatar_url": "https://avatars.githubusercontent.com/u/2?v=4"
+                          }
+                        }
+                      ]
+                    }
+                    """)
+                };
+            }
+
+            if (url.Contains("/repos/fabrikam/fabrikam-app/releases/latest", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "tag_name": "v3.0.1",
+                      "name": "v3.0.1",
+                      "published_at": "2026-04-10T08:00:00Z",
+                      "assets": [
+                        {
+                          "name": "FabrikamApp-x64.msi",
+                          "browser_download_url": "https://github.com/fabrikam/fabrikam-app/releases/download/v3.0.1/FabrikamApp-x64.msi",
+                          "content_type": "application/x-msi",
+                          "size": 512000
+                        },
+                        {
+                          "name": "FabrikamApp-x64.exe",
+                          "browser_download_url": "https://github.com/fabrikam/fabrikam-app/releases/download/v3.0.1/FabrikamApp-x64.exe",
+                          "content_type": "application/octet-stream",
+                          "size": 490000
+                        }
+                      ]
+                    }
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = "fabrikam",
+            IncludeWinget = false,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = true
+        });
+
+        var entry = Assert.Single(results);
+        Assert.True(entry.InstallerVariantCount >= 2);
+        Assert.Contains(entry.InstallerVariants, variant => variant.InstallerType == InstallerType.Msi);
+        Assert.Contains(entry.InstallerVariants, variant => variant.InstallerType == InstallerType.Exe);
+        Assert.Contains(entry.InstallerVariants, variant => variant.Architecture.Equals("x64", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static void TryDeleteDirectory(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))

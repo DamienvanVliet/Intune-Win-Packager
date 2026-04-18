@@ -15,5 +15,7 @@ public interface IPackageProfileStoreService
         string packageId,
         string version,
         string installerSha256,
+        string canonicalPackageKey = "",
+        string installerVariantKey = "",
         CancellationToken cancellationToken = default);
 }

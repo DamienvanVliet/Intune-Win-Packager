@@ -20,6 +20,10 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private static readonly Regex MultiSpaceRegex = new(@"\s{2,}", RegexOptions.Compiled);
     private static readonly Regex UrlRegex = new(@"https?://[^\s'""`]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex GitHubRepoIdRegex = new(@"^(?<owner>[A-Za-z0-9_.-]+)/(?<repo>[A-Za-z0-9_.-]+)$", RegexOptions.Compiled);
+    private static readonly Regex GuidInTextRegex = new(@"\{[0-9A-Fa-f\-]{36}\}", RegexOptions.Compiled);
+    private static readonly Regex GuidCodeRegex = new(@"^\{[0-9A-Fa-f\-]{36}\}$", RegexOptions.Compiled);
+    private static readonly Regex Sha256Regex = new(@"^[0-9A-Fa-f]{64}$", RegexOptions.Compiled);
+    private static readonly char[] IdentitySeparators = ['.', '-', '_', '/', '\\', ' '];
     private static readonly string[] SupportedInstallerExtensions =
     [
         ".msi",
@@ -76,13 +80,19 @@ public sealed class PackageCatalogService : IPackageCatalogService
             : Task.FromResult<IReadOnlyList<PackageCatalogEntry>>([]);
 
         await Task.WhenAll(wingetTask, chocolateyTask, githubTask);
-
-        return wingetTask.Result
+        var sourceEntries = wingetTask.Result
             .Concat(chocolateyTask.Result)
             .Concat(githubTask.Result)
-            .GroupBy(entry => $"{entry.Source}:{entry.SourceChannel}:{entry.PackageId}", StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
+            .Select(NormalizeCatalogEntry)
+            .ToList();
+        if (sourceEntries.Count == 0)
+        {
+            return [];
+        }
+
+        return MergeCanonicalEntries(sourceEntries)
             .OrderByDescending(entry => Relevance(entry, term))
+            .ThenByDescending(entry => entry.InstallerVariantCount)
             .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
             .Take(max)
             .ToList();
@@ -97,17 +107,26 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
         try
         {
-            return entry.Source switch
+            var detailed = entry.Source switch
             {
                 PackageCatalogSource.Winget => await GetWingetDetailsAsync(entry, cancellationToken),
                 PackageCatalogSource.Chocolatey => await GetChocolateyDetailsAsync(entry, cancellationToken),
                 PackageCatalogSource.GitHubReleases => await GetGitHubReleaseDetailsAsync(entry, cancellationToken),
                 _ => entry
             };
+
+            var normalizedDetailed = NormalizeCatalogEntry(detailed);
+            if (entry.InstallerVariants.Count == 0)
+            {
+                return normalizedDetailed;
+            }
+
+            var merged = MergeCanonicalEntries([entry, normalizedDetailed]);
+            return merged.FirstOrDefault() ?? normalizedDetailed;
         }
         catch
         {
-            return entry;
+            return NormalizeCatalogEntry(entry);
         }
     }
 
@@ -134,18 +153,48 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
         try
         {
-            return entry.Source switch
+            var normalizedEntry = NormalizeCatalogEntry(entry);
+            var primaryResult = await DownloadFromEntryBySourceAsync(normalizedEntry, workingFolder, progress, cancellationToken);
+            if (primaryResult.Success || normalizedEntry.InstallerVariants.Count <= 1)
             {
-                PackageCatalogSource.Winget => await DownloadWingetInstallerAsync(entry, workingFolder, progress, cancellationToken),
-                PackageCatalogSource.Chocolatey => await DownloadChocolateyInstallerAsync(entry, workingFolder, progress, cancellationToken),
-                PackageCatalogSource.GitHubReleases => await DownloadGitHubReleaseInstallerAsync(entry, workingFolder, progress, cancellationToken),
-                _ => new PackageCatalogDownloadResult
-                {
-                    Success = false,
-                    Message = $"Source {entry.SourceDisplayName} is not supported for download.",
-                    WorkingFolderPath = workingFolder
-                }
+                return primaryResult;
+            }
+
+            var attemptedSourceKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                BuildSourceEntryKey(normalizedEntry.Source, normalizedEntry.SourceChannel, normalizedEntry.PackageId, normalizedEntry.Version)
             };
+
+            foreach (var variant in normalizedEntry.InstallerVariants
+                         .OrderByDescending(candidate => candidate.ConfidenceScore)
+                         .ThenBy(candidate => candidate.SourceDisplayName, StringComparer.OrdinalIgnoreCase))
+            {
+                var sourceKey = BuildSourceEntryKey(variant.Source, variant.SourceChannel, variant.PackageId, variant.Version);
+                if (!attemptedSourceKeys.Add(sourceKey))
+                {
+                    continue;
+                }
+
+                var fallbackEntry = BuildEntryFromVariant(normalizedEntry, variant);
+                if (fallbackEntry.Source == normalizedEntry.Source &&
+                    fallbackEntry.PackageId.Equals(normalizedEntry.PackageId, StringComparison.OrdinalIgnoreCase) &&
+                    IsVersionEquivalent(fallbackEntry.Version, normalizedEntry.Version))
+                {
+                    continue;
+                }
+
+                progress?.Report($"Primary source failed; trying fallback source '{fallbackEntry.SourceDisplayName}'.");
+                var fallbackResult = await DownloadFromEntryBySourceAsync(fallbackEntry, workingFolder, progress, cancellationToken);
+                if (fallbackResult.Success)
+                {
+                    return fallbackResult with
+                    {
+                        Message = $"{fallbackResult.Message} (fallback source: {fallbackEntry.SourceDisplayName})"
+                    };
+                }
+            }
+
+            return primaryResult;
         }
         catch (OperationCanceledException)
         {
@@ -160,6 +209,51 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 WorkingFolderPath = workingFolder
             };
         }
+    }
+
+    private async Task<PackageCatalogDownloadResult> DownloadFromEntryBySourceAsync(
+        PackageCatalogEntry entry,
+        string workingFolder,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        return entry.Source switch
+        {
+            PackageCatalogSource.Winget => await DownloadWingetInstallerAsync(entry, workingFolder, progress, cancellationToken),
+            PackageCatalogSource.Chocolatey => await DownloadChocolateyInstallerAsync(entry, workingFolder, progress, cancellationToken),
+            PackageCatalogSource.GitHubReleases => await DownloadGitHubReleaseInstallerAsync(entry, workingFolder, progress, cancellationToken),
+            _ => new PackageCatalogDownloadResult
+            {
+                Success = false,
+                Message = $"Source {entry.SourceDisplayName} is not supported for download.",
+                WorkingFolderPath = workingFolder
+            }
+        };
+    }
+
+    private static string BuildSourceEntryKey(PackageCatalogSource source, string sourceChannel, string packageId, string version)
+    {
+        return $"{source}:{sourceChannel}:{packageId}:{NormalizeVersionSegment(version)}";
+    }
+
+    private static PackageCatalogEntry BuildEntryFromVariant(PackageCatalogEntry entry, CatalogInstallerVariant variant)
+    {
+        return entry with
+        {
+            Source = variant.Source,
+            SourceDisplayName = Coalesce(variant.SourceDisplayName, entry.SourceDisplayName),
+            SourceChannel = Coalesce(variant.SourceChannel, entry.SourceChannel),
+            PackageId = Coalesce(variant.PackageId, entry.PackageId),
+            Version = Coalesce(variant.Version, entry.Version),
+            BuildVersion = Coalesce(variant.BuildVersion, entry.BuildVersion),
+            InstallerType = variant.InstallerType,
+            InstallerTypeRaw = Coalesce(variant.InstallerTypeRaw, entry.InstallerTypeRaw),
+            InstallerDownloadUrl = Coalesce(variant.InstallerDownloadUrl, entry.InstallerDownloadUrl),
+            SuggestedInstallCommand = Coalesce(variant.SuggestedInstallCommand, entry.SuggestedInstallCommand),
+            SuggestedUninstallCommand = Coalesce(variant.SuggestedUninstallCommand, entry.SuggestedUninstallCommand),
+            DetectionGuidance = Coalesce(variant.DetectionGuidance, entry.DetectionGuidance),
+            ConfidenceScore = Math.Max(entry.ConfidenceScore, variant.ConfidenceScore)
+        };
     }
 
     public async Task<string> ResolveCachedIconPathAsync(
@@ -357,11 +451,53 @@ public sealed class PackageCatalogService : IPackageCatalogService
             }
         }
 
+        var packageId = Coalesce(map.GetValueOrDefault("Package Identifier"), entry.PackageId);
+        var packageName = Coalesce(detailName, map.GetValueOrDefault("Package Name"), entry.Name);
+        var publisher = Coalesce(map.GetValueOrDefault("Publisher"), entry.Publisher);
+        var version = Coalesce(map.GetValueOrDefault("Version"), entry.Version, entry.BuildVersion);
         var installerRaw = map.GetValueOrDefault("Installer Type", entry.InstallerTypeRaw);
         var installerType = InferInstallerType(installerRaw, map.GetValueOrDefault("Description"));
-        var template = BuildTemplate(entry.PackageId, installerType, installerRaw);
+        var architecture = Coalesce(map.GetValueOrDefault("Architecture"), InferArchitecture(packageName, packageId, version, installerRaw));
+        var scope = Coalesce(map.GetValueOrDefault("Scope"), InferScope(sourceName, packageName, packageId));
+        var installerSha256 = NormalizeSha256(Coalesce(map.GetValueOrDefault("Installer SHA256")));
+        var msiProductCode = NormalizeMsiProductCode(Coalesce(map.GetValueOrDefault("ProductCode"), map.GetValueOrDefault("Product Code")));
+        var appxIdentity = Coalesce(map.GetValueOrDefault("Package Family Name"), map.GetValueOrDefault("Package Name"));
+        var template = BuildTemplate(packageId, installerType, installerRaw);
+        var installCommand = template.InstallCommand;
+        var uninstallCommand = ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode, appxIdentity);
+        var detection = BuildDeterministicDetectionRule(
+            installerType,
+            packageId,
+            packageName,
+            publisher,
+            version,
+            msiProductCode,
+            appxIdentity);
         var homepage = Coalesce(map.GetValueOrDefault("Homepage"), map.GetValueOrDefault("Publisher Url"), entry.HomepageUrl);
         var installerUrl = Coalesce(map.GetValueOrDefault("Installer Url"), entry.InstallerDownloadUrl);
+        var variant = BuildInstallerVariant(
+            entry.Source,
+            entry.SourceDisplayName,
+            sourceName,
+            packageId,
+            version,
+            Coalesce(version, entry.BuildVersion),
+            installerType,
+            installerRaw,
+            architecture,
+            scope,
+            installerUrl,
+            installerSha256,
+            hashVerifiedBySource: false,
+            vendorSigned: false,
+            signerSubject: string.Empty,
+            suggestedInstallCommand: installCommand,
+            suggestedUninstallCommand: uninstallCommand,
+            detectionRule: detection.Rule,
+            detectionGuidance: detection.Guidance,
+            isDeterministicDetection: detection.IsDeterministic,
+            confidenceScore: template.ConfidenceScore,
+            publishedAtUtc: null);
 
         DateTimeOffset? releaseDate = null;
         if (DateTimeOffset.TryParse(map.GetValueOrDefault("Release Date"), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
@@ -371,25 +507,27 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
         return entry with
         {
-            Name = Coalesce(detailName, entry.Name),
-            Version = Coalesce(map.GetValueOrDefault("Version"), entry.Version),
-            BuildVersion = Coalesce(map.GetValueOrDefault("Version"), entry.BuildVersion),
-            Publisher = Coalesce(map.GetValueOrDefault("Publisher"), entry.Publisher),
+            Name = packageName,
+            PackageId = packageId,
+            Version = version,
+            BuildVersion = Coalesce(version, entry.BuildVersion),
+            Publisher = publisher,
             Description = Coalesce(map.GetValueOrDefault("Description"), entry.Description),
             HomepageUrl = homepage,
-            IconUrl = ResolveIconUrl(map.GetValueOrDefault("Icon"), homepage, entry.PackageId),
+            IconUrl = ResolveIconUrl(map.GetValueOrDefault("Icon"), homepage, packageId),
             InstallerDownloadUrl = installerUrl,
             InstallerType = installerType,
             InstallerTypeRaw = installerRaw,
-            SuggestedInstallCommand = template.InstallCommand,
-            SuggestedUninstallCommand = template.UninstallCommand,
-            DetectionGuidance = template.DetectionGuidance,
+            SuggestedInstallCommand = installCommand,
+            SuggestedUninstallCommand = uninstallCommand,
+            DetectionGuidance = detection.Guidance,
             ConfidenceScore = template.ConfidenceScore,
             MetadataNotes = string.IsNullOrWhiteSpace(map.GetValueOrDefault("Installer Url"))
                 ? $"Detailed metadata from WinGet source '{sourceName}'."
                 : $"Installer URL: {map["Installer Url"]}",
             PublishedAtUtc = releaseDate,
-            HasDetailedMetadata = true
+            HasDetailedMetadata = true,
+            InstallerVariants = [variant]
         };
     }
 
@@ -469,6 +607,41 @@ public sealed class PackageCatalogService : IPackageCatalogService
             var author = atomEntry.Element(atom + "author")?.Element(atom + "name")?.Value?.Trim() ?? string.Empty;
             var installerType = InferInstallerType(tags, summary);
             var template = BuildTemplate(id, installerType, tags);
+            var architecture = InferArchitecture(name, id, version, tags);
+            var scope = InferScope("community", name, id);
+            var appxIdentity = installerType == InstallerType.AppxMsix ? id : string.Empty;
+            var uninstallCommand = ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode: string.Empty, appxIdentity);
+            var detection = BuildDeterministicDetectionRule(
+                installerType,
+                id,
+                name,
+                author,
+                version,
+                msiProductCode: string.Empty,
+                appxIdentity);
+            var variant = BuildInstallerVariant(
+                PackageCatalogSource.Chocolatey,
+                "Chocolatey",
+                "community",
+                id,
+                version,
+                version,
+                installerType,
+                tags,
+                architecture,
+                scope,
+                packageDownloadUrl,
+                installerSha256: string.Empty,
+                hashVerifiedBySource: false,
+                vendorSigned: false,
+                signerSubject: string.Empty,
+                suggestedInstallCommand: template.InstallCommand,
+                suggestedUninstallCommand: uninstallCommand,
+                detectionRule: detection.Rule,
+                detectionGuidance: detection.Guidance,
+                isDeterministicDetection: detection.IsDeterministic,
+                confidenceScore: Math.Max(30, template.ConfidenceScore - 20),
+                publishedAtUtc: null);
 
             parsed.Add(new PackageCatalogEntry
             {
@@ -487,11 +660,12 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 InstallerType = installerType,
                 InstallerTypeRaw = tags,
                 SuggestedInstallCommand = template.InstallCommand,
-                SuggestedUninstallCommand = template.UninstallCommand,
-                DetectionGuidance = template.DetectionGuidance,
+                SuggestedUninstallCommand = uninstallCommand,
+                DetectionGuidance = detection.Guidance,
                 MetadataNotes = string.IsNullOrWhiteSpace(tags) ? "Metadata from Chocolatey package feed." : $"Tags: {tags}",
                 ConfidenceScore = Math.Max(30, template.ConfidenceScore - 20),
-                HasDetailedMetadata = true
+                HasDetailedMetadata = true,
+                InstallerVariants = [variant]
             });
         }
 
@@ -551,14 +725,24 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 continue;
             }
 
-            var asset = SelectPreferredGitHubAsset(release.Assets);
-            if (asset is null)
+            var normalizedVersion = NormalizeGitHubTagVersion(release.TagName);
+            var variants = BuildGitHubInstallerVariants(
+                sourceDisplayName: "GitHub Releases",
+                sourceChannel: fullName,
+                packageId: fullName,
+                packageName: Coalesce(GetJsonStringOrDefault(repo, "name"), fullName),
+                publisher: owner,
+                version: normalizedVersion,
+                release);
+            if (variants.Count == 0)
             {
                 continue;
             }
 
-            var installerType = InferInstallerType(Path.GetExtension(asset.FileName), asset.ContentType);
-            var template = BuildTemplate(fullName, installerType, Path.GetExtension(asset.FileName));
+            var preferredVariant = variants
+                .OrderByDescending(candidate => candidate.ConfidenceScore)
+                .ThenBy(candidate => InstallerPriority(candidate.InstallerDownloadUrl))
+                .First();
             entries.Add(new PackageCatalogEntry
             {
                 Source = PackageCatalogSource.GitHubReleases,
@@ -566,24 +750,25 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 SourceChannel = fullName,
                 PackageId = fullName,
                 Name = Coalesce(GetJsonStringOrDefault(repo, "name"), fullName),
-                Version = NormalizeGitHubTagVersion(release.TagName),
-                BuildVersion = NormalizeGitHubTagVersion(release.TagName),
+                Version = normalizedVersion,
+                BuildVersion = normalizedVersion,
                 Publisher = owner,
                 Description = Truncate(Coalesce(GetJsonStringOrDefault(repo, "description"), release.ReleaseName), 260),
                 HomepageUrl = Coalesce(GetJsonStringOrDefault(repo, "html_url"), $"https://github.com/{fullName}"),
                 IconUrl = Coalesce(repo.TryGetProperty("owner", out var ownerObject)
                     ? GetJsonStringOrDefault(ownerObject, "avatar_url")
                     : string.Empty),
-                InstallerDownloadUrl = asset.DownloadUrl,
-                InstallerType = installerType,
-                InstallerTypeRaw = Path.GetExtension(asset.FileName),
-                SuggestedInstallCommand = template.InstallCommand,
-                SuggestedUninstallCommand = template.UninstallCommand,
-                DetectionGuidance = template.DetectionGuidance,
-                MetadataNotes = $"GitHub release asset: {asset.FileName}",
-                ConfidenceScore = Math.Max(52, template.ConfidenceScore - 18),
+                InstallerDownloadUrl = preferredVariant.InstallerDownloadUrl,
+                InstallerType = preferredVariant.InstallerType,
+                InstallerTypeRaw = preferredVariant.InstallerTypeRaw,
+                SuggestedInstallCommand = preferredVariant.SuggestedInstallCommand,
+                SuggestedUninstallCommand = preferredVariant.SuggestedUninstallCommand,
+                DetectionGuidance = preferredVariant.DetectionGuidance,
+                MetadataNotes = $"GitHub release assets: {variants.Count} installer candidate(s).",
+                ConfidenceScore = Math.Max(52, preferredVariant.ConfidenceScore),
                 HasDetailedMetadata = true,
-                PublishedAtUtc = release.PublishedAtUtc
+                PublishedAtUtc = release.PublishedAtUtc,
+                InstallerVariants = variants
             });
         }
 
@@ -612,32 +797,45 @@ public sealed class PackageCatalogService : IPackageCatalogService
             return entry;
         }
 
-        var asset = SelectPreferredGitHubAsset(release.Assets);
-        if (asset is null)
+        var version = NormalizeGitHubTagVersion(release.TagName);
+        var packageName = Coalesce(entry.Name, repo);
+        var publisher = Coalesce(entry.Publisher, owner);
+        var variants = BuildGitHubInstallerVariants(
+            sourceDisplayName: "GitHub Releases",
+            sourceChannel: $"{owner}/{repo}",
+            packageId: entry.PackageId,
+            packageName,
+            publisher,
+            version,
+            release);
+        if (variants.Count == 0)
         {
             return entry;
         }
 
-        var installerType = InferInstallerType(Path.GetExtension(asset.FileName), asset.ContentType);
-        var template = BuildTemplate(entry.PackageId, installerType, Path.GetExtension(asset.FileName));
+        var preferredVariant = variants
+            .OrderByDescending(candidate => candidate.ConfidenceScore)
+            .ThenBy(candidate => InstallerPriority(candidate.InstallerDownloadUrl))
+            .First();
 
         return entry with
         {
             SourceDisplayName = "GitHub Releases",
             SourceChannel = $"{owner}/{repo}",
-            Version = NormalizeGitHubTagVersion(release.TagName),
-            BuildVersion = NormalizeGitHubTagVersion(release.TagName),
+            Version = version,
+            BuildVersion = version,
             Description = Truncate(Coalesce(entry.Description, release.ReleaseName), 260),
-            InstallerDownloadUrl = asset.DownloadUrl,
-            InstallerType = installerType,
-            InstallerTypeRaw = Path.GetExtension(asset.FileName),
-            SuggestedInstallCommand = template.InstallCommand,
-            SuggestedUninstallCommand = template.UninstallCommand,
-            DetectionGuidance = template.DetectionGuidance,
-            MetadataNotes = $"Latest GitHub release asset: {asset.FileName}",
-            ConfidenceScore = Math.Max(entry.ConfidenceScore, Math.Max(56, template.ConfidenceScore - 16)),
+            InstallerDownloadUrl = preferredVariant.InstallerDownloadUrl,
+            InstallerType = preferredVariant.InstallerType,
+            InstallerTypeRaw = preferredVariant.InstallerTypeRaw,
+            SuggestedInstallCommand = preferredVariant.SuggestedInstallCommand,
+            SuggestedUninstallCommand = preferredVariant.SuggestedUninstallCommand,
+            DetectionGuidance = preferredVariant.DetectionGuidance,
+            MetadataNotes = $"Latest GitHub release assets: {variants.Count} installer candidate(s).",
+            ConfidenceScore = Math.Max(entry.ConfidenceScore, Math.Max(56, preferredVariant.ConfidenceScore)),
             HasDetailedMetadata = true,
-            PublishedAtUtc = release.PublishedAtUtc
+            PublishedAtUtc = release.PublishedAtUtc,
+            InstallerVariants = variants
         };
     }
 
@@ -1337,6 +1535,999 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return normalized;
     }
 
+    private static PackageCatalogEntry NormalizeCatalogEntry(PackageCatalogEntry entry)
+    {
+        var packageId = Coalesce(entry.PackageId, entry.SourceChannel, entry.Name);
+        var name = Coalesce(entry.Name, packageId);
+        var publisher = Coalesce(entry.Publisher, DerivePublisherFromPackageId(packageId));
+        var version = Coalesce(entry.Version, entry.BuildVersion);
+        var buildVersion = Coalesce(entry.BuildVersion, version);
+        var releaseChannel = InferReleaseChannel(entry.ReleaseChannel, name, packageId, version, buildVersion);
+        var canonicalPublisher = NormalizeIdentityComponent(Coalesce(entry.CanonicalPublisher, publisher));
+        if (string.IsNullOrWhiteSpace(canonicalPublisher))
+        {
+            canonicalPublisher = NormalizeIdentityComponent(DerivePublisherFromPackageId(packageId));
+        }
+
+        var canonicalProduct = NormalizeIdentityComponent(Coalesce(entry.CanonicalProductName, DeriveCanonicalProduct(name, packageId)));
+        if (string.IsNullOrWhiteSpace(canonicalProduct))
+        {
+            canonicalProduct = "package";
+        }
+
+        var canonicalKey = Coalesce(entry.CanonicalPackageKey, BuildCanonicalPackageKey(canonicalPublisher, canonicalProduct, releaseChannel));
+        var variants = NormalizeInstallerVariants(entry, packageId, name, publisher, version, buildVersion);
+        var preferredVariant = variants
+            .OrderByDescending(VariantPreferenceScore)
+            .FirstOrDefault();
+
+        return entry with
+        {
+            CanonicalPackageKey = canonicalKey,
+            CanonicalPublisher = canonicalPublisher,
+            CanonicalProductName = canonicalProduct,
+            ReleaseChannel = releaseChannel,
+            PackageId = packageId,
+            Name = name,
+            Publisher = publisher,
+            Version = version,
+            BuildVersion = buildVersion,
+            InstallerType = preferredVariant?.InstallerType ?? entry.InstallerType,
+            InstallerTypeRaw = Coalesce(preferredVariant?.InstallerTypeRaw, entry.InstallerTypeRaw),
+            InstallerDownloadUrl = Coalesce(preferredVariant?.InstallerDownloadUrl, entry.InstallerDownloadUrl),
+            SuggestedInstallCommand = Coalesce(preferredVariant?.SuggestedInstallCommand, entry.SuggestedInstallCommand),
+            SuggestedUninstallCommand = Coalesce(preferredVariant?.SuggestedUninstallCommand, entry.SuggestedUninstallCommand),
+            DetectionGuidance = Coalesce(preferredVariant?.DetectionGuidance, entry.DetectionGuidance),
+            ConfidenceScore = Math.Max(entry.ConfidenceScore, preferredVariant?.ConfidenceScore ?? 0),
+            InstallerVariants = variants
+        };
+    }
+
+    private static IReadOnlyList<PackageCatalogEntry> MergeCanonicalEntries(IEnumerable<PackageCatalogEntry> entries)
+    {
+        var normalized = entries
+            .Where(entry => entry is not null)
+            .Select(NormalizeCatalogEntry)
+            .ToList();
+        if (normalized.Count == 0)
+        {
+            return [];
+        }
+
+        return normalized
+            .GroupBy(entry => entry.CanonicalPackageKey, StringComparer.OrdinalIgnoreCase)
+            .Select(MergeCanonicalGroup)
+            .ToList();
+    }
+
+    private static PackageCatalogEntry MergeCanonicalGroup(IGrouping<string, PackageCatalogEntry> group)
+    {
+        var entries = group.ToList();
+        var preferredEntry = entries
+            .OrderByDescending(EntryQualityScore)
+            .First();
+        var mergedVariants = entries
+            .SelectMany(entry => entry.InstallerVariants)
+            .GroupBy(variant => Coalesce(variant.VariantKey, BuildVariantKey(
+                variant.Source,
+                variant.SourceChannel,
+                variant.PackageId,
+                variant.Version,
+                variant.InstallerType,
+                variant.Architecture,
+                variant.Scope,
+                variant.InstallerDownloadUrl)), StringComparer.OrdinalIgnoreCase)
+            .Select(variantGroup => variantGroup
+                .OrderByDescending(VariantPreferenceScore)
+                .First())
+            .OrderByDescending(VariantPreferenceScore)
+            .ToList();
+
+        var preferredVariant = mergedVariants.FirstOrDefault();
+        var sourceVariantCount = mergedVariants
+            .Select(variant => $"{variant.Source}:{variant.SourceChannel}:{variant.PackageId}")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        var confidenceBonus = sourceVariantCount > 1 ? 8 : 0;
+        var mergedConfidence = Math.Min(
+            100,
+            Math.Max(preferredEntry.ConfidenceScore, preferredVariant?.ConfidenceScore ?? 0) + confidenceBonus);
+        var mergedVersion = entries
+            .Select(entry => entry.Version)
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+            ?? preferredEntry.Version;
+        var mergedBuildVersion = entries
+            .Select(entry => entry.BuildVersion)
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+            ?? preferredEntry.BuildVersion;
+        var mergedPublishedAt = entries
+            .Select(entry => entry.PublishedAtUtc)
+            .Where(value => value.HasValue)
+            .Max();
+
+        var mergedNotes = CleanDisplayValue(string.Join(
+            " ",
+            entries.Select(entry => entry.MetadataNotes).Where(note => !string.IsNullOrWhiteSpace(note)).Distinct(StringComparer.OrdinalIgnoreCase)));
+        if (string.IsNullOrWhiteSpace(mergedNotes))
+        {
+            mergedNotes = sourceVariantCount > 1
+                ? $"Merged package from {sourceVariantCount} source variants."
+                : preferredEntry.MetadataNotes;
+        }
+        else if (sourceVariantCount > 1)
+        {
+            mergedNotes += $" Merged package from {sourceVariantCount} source variants.";
+        }
+
+        return preferredEntry with
+        {
+            Source = preferredVariant?.Source ?? preferredEntry.Source,
+            SourceDisplayName = Coalesce(preferredVariant?.SourceDisplayName, preferredEntry.SourceDisplayName),
+            SourceChannel = Coalesce(preferredVariant?.SourceChannel, preferredEntry.SourceChannel),
+            PackageId = Coalesce(preferredVariant?.PackageId, preferredEntry.PackageId),
+            Version = mergedVersion,
+            BuildVersion = mergedBuildVersion,
+            InstallerType = preferredVariant?.InstallerType ?? preferredEntry.InstallerType,
+            InstallerTypeRaw = Coalesce(preferredVariant?.InstallerTypeRaw, preferredEntry.InstallerTypeRaw),
+            InstallerDownloadUrl = Coalesce(preferredVariant?.InstallerDownloadUrl, preferredEntry.InstallerDownloadUrl),
+            SuggestedInstallCommand = Coalesce(preferredVariant?.SuggestedInstallCommand, preferredEntry.SuggestedInstallCommand),
+            SuggestedUninstallCommand = Coalesce(preferredVariant?.SuggestedUninstallCommand, preferredEntry.SuggestedUninstallCommand),
+            DetectionGuidance = Coalesce(preferredVariant?.DetectionGuidance, preferredEntry.DetectionGuidance),
+            Description = entries
+                .Select(entry => entry.Description)
+                .OrderByDescending(value => value?.Length ?? 0)
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+                ?? preferredEntry.Description,
+            HomepageUrl = entries
+                .Select(entry => entry.HomepageUrl)
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+                ?? preferredEntry.HomepageUrl,
+            IconUrl = entries
+                .Select(entry => entry.IconUrl)
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+                ?? preferredEntry.IconUrl,
+            ConfidenceScore = mergedConfidence,
+            MetadataNotes = mergedNotes,
+            HasDetailedMetadata = entries.Any(entry => entry.HasDetailedMetadata),
+            PublishedAtUtc = mergedPublishedAt,
+            HashVerifiedBySource = entries.Any(entry => entry.HashVerifiedBySource) || mergedVariants.Any(variant => variant.HashVerifiedBySource),
+            VendorSigned = entries.Any(entry => entry.VendorSigned) || mergedVariants.Any(variant => variant.VendorSigned),
+            InstallerVariants = mergedVariants
+        };
+    }
+
+    private static IReadOnlyList<CatalogInstallerVariant> NormalizeInstallerVariants(
+        PackageCatalogEntry entry,
+        string packageId,
+        string packageName,
+        string publisher,
+        string version,
+        string buildVersion)
+    {
+        if (entry.InstallerVariants.Count == 0)
+        {
+            var msiProductCode = ExtractGuidFromText(entry.SuggestedUninstallCommand);
+            var appxIdentity = entry.InstallerType == InstallerType.AppxMsix
+                ? InferAppxIdentity(packageId, packageName, entry.PackageId)
+                : string.Empty;
+            var detection = BuildDeterministicDetectionRule(
+                entry.InstallerType,
+                packageId,
+                packageName,
+                publisher,
+                version,
+                msiProductCode,
+                appxIdentity);
+            var variant = BuildInstallerVariant(
+                entry.Source,
+                entry.SourceDisplayName,
+                entry.SourceChannel,
+                packageId,
+                version,
+                buildVersion,
+                entry.InstallerType,
+                entry.InstallerTypeRaw,
+                architecture: InferArchitecture(packageName, packageId, version, entry.InstallerTypeRaw),
+                scope: InferScope(entry.SourceChannel, packageName, packageId),
+                installerDownloadUrl: entry.InstallerDownloadUrl,
+                installerSha256: entry.InstallerSha256,
+                hashVerifiedBySource: entry.HashVerifiedBySource,
+                vendorSigned: entry.VendorSigned,
+                signerSubject: string.Empty,
+                suggestedInstallCommand: entry.SuggestedInstallCommand,
+                suggestedUninstallCommand: entry.SuggestedUninstallCommand,
+                detectionRule: detection.Rule,
+                detectionGuidance: Coalesce(entry.DetectionGuidance, detection.Guidance),
+                isDeterministicDetection: detection.IsDeterministic,
+                confidenceScore: entry.ConfidenceScore,
+                publishedAtUtc: entry.PublishedAtUtc);
+            return [variant];
+        }
+
+        return entry.InstallerVariants
+            .Select(variant => NormalizeInstallerVariant(entry, variant, packageId, packageName, publisher, version, buildVersion))
+            .GroupBy(variant => variant.VariantKey, StringComparer.OrdinalIgnoreCase)
+            .Select(variantGroup => variantGroup
+                .OrderByDescending(VariantPreferenceScore)
+                .First())
+            .OrderByDescending(VariantPreferenceScore)
+            .ToList();
+    }
+
+    private static CatalogInstallerVariant NormalizeInstallerVariant(
+        PackageCatalogEntry entry,
+        CatalogInstallerVariant variant,
+        string packageId,
+        string packageName,
+        string publisher,
+        string version,
+        string buildVersion)
+    {
+        var resolvedInstallerType = variant.InstallerType == InstallerType.Unknown
+            ? entry.InstallerType
+            : variant.InstallerType;
+        var resolvedPackageId = Coalesce(variant.PackageId, packageId);
+        var resolvedVersion = Coalesce(variant.Version, version);
+        var resolvedBuildVersion = Coalesce(variant.BuildVersion, buildVersion, resolvedVersion);
+        var resolvedArchitecture = Coalesce(variant.Architecture, InferArchitecture(packageName, resolvedPackageId, resolvedVersion, variant.InstallerTypeRaw));
+        var resolvedScope = Coalesce(variant.Scope, InferScope(variant.SourceChannel, packageName, resolvedPackageId));
+        var msiProductCode = ExtractGuidFromText(Coalesce(variant.SuggestedUninstallCommand, entry.SuggestedUninstallCommand));
+        var appxIdentity = resolvedInstallerType == InstallerType.AppxMsix
+            ? InferAppxIdentity(resolvedPackageId, packageName, variant.PackageId)
+            : string.Empty;
+        var detection = variant.DetectionRule.RuleType != IntuneDetectionRuleType.None
+            ? new DetectionStrategyPlan(variant.DetectionRule, variant.DetectionGuidance, variant.IsDeterministicDetection)
+            : BuildDeterministicDetectionRule(
+                resolvedInstallerType,
+                resolvedPackageId,
+                packageName,
+                publisher,
+                resolvedVersion,
+                msiProductCode,
+                appxIdentity);
+
+        var template = BuildTemplate(resolvedPackageId, resolvedInstallerType, variant.InstallerTypeRaw);
+        var installCommand = Coalesce(variant.SuggestedInstallCommand, entry.SuggestedInstallCommand, template.InstallCommand);
+        var uninstallCommand = Coalesce(
+            variant.SuggestedUninstallCommand,
+            entry.SuggestedUninstallCommand,
+            ResolveUninstallTemplate(template.UninstallCommand, resolvedInstallerType, msiProductCode, appxIdentity));
+
+        return BuildInstallerVariant(
+            source: variant.Source,
+            sourceDisplayName: Coalesce(variant.SourceDisplayName, entry.SourceDisplayName),
+            sourceChannel: Coalesce(variant.SourceChannel, entry.SourceChannel),
+            packageId: resolvedPackageId,
+            version: resolvedVersion,
+            buildVersion: resolvedBuildVersion,
+            installerType: resolvedInstallerType,
+            installerTypeRaw: Coalesce(variant.InstallerTypeRaw, entry.InstallerTypeRaw),
+            architecture: resolvedArchitecture,
+            scope: resolvedScope,
+            installerDownloadUrl: Coalesce(variant.InstallerDownloadUrl, entry.InstallerDownloadUrl),
+            installerSha256: Coalesce(NormalizeSha256(variant.InstallerSha256), NormalizeSha256(entry.InstallerSha256)),
+            hashVerifiedBySource: variant.HashVerifiedBySource || entry.HashVerifiedBySource,
+            vendorSigned: variant.VendorSigned || entry.VendorSigned,
+            signerSubject: variant.SignerSubject,
+            suggestedInstallCommand: installCommand,
+            suggestedUninstallCommand: uninstallCommand,
+            detectionRule: detection.Rule,
+            detectionGuidance: Coalesce(variant.DetectionGuidance, entry.DetectionGuidance, detection.Guidance),
+            isDeterministicDetection: variant.IsDeterministicDetection || detection.IsDeterministic,
+            confidenceScore: Math.Max(variant.ConfidenceScore, entry.ConfidenceScore),
+            publishedAtUtc: variant.PublishedAtUtc ?? entry.PublishedAtUtc,
+            variantKey: variant.VariantKey);
+    }
+
+    private static CatalogInstallerVariant BuildInstallerVariant(
+        PackageCatalogSource source,
+        string sourceDisplayName,
+        string sourceChannel,
+        string packageId,
+        string version,
+        string buildVersion,
+        InstallerType installerType,
+        string installerTypeRaw,
+        string architecture,
+        string scope,
+        string installerDownloadUrl,
+        string installerSha256,
+        bool hashVerifiedBySource,
+        bool vendorSigned,
+        string signerSubject,
+        string suggestedInstallCommand,
+        string suggestedUninstallCommand,
+        IntuneDetectionRule detectionRule,
+        string detectionGuidance,
+        bool isDeterministicDetection,
+        int confidenceScore,
+        DateTimeOffset? publishedAtUtc,
+        string variantKey = "")
+    {
+        var resolvedVersion = Coalesce(version, buildVersion);
+        var resolvedBuildVersion = Coalesce(buildVersion, resolvedVersion);
+        var resolvedVariantKey = string.IsNullOrWhiteSpace(variantKey)
+            ? BuildVariantKey(source, sourceChannel, packageId, resolvedVersion, installerType, architecture, scope, installerDownloadUrl)
+            : variantKey;
+
+        return new CatalogInstallerVariant
+        {
+            VariantKey = resolvedVariantKey,
+            Source = source,
+            SourceDisplayName = sourceDisplayName,
+            SourceChannel = sourceChannel,
+            PackageId = packageId,
+            Version = resolvedVersion,
+            BuildVersion = resolvedBuildVersion,
+            InstallerType = installerType,
+            InstallerTypeRaw = installerTypeRaw,
+            Architecture = architecture,
+            Scope = scope,
+            InstallerDownloadUrl = installerDownloadUrl,
+            InstallerSha256 = NormalizeSha256(installerSha256),
+            HashVerifiedBySource = hashVerifiedBySource,
+            VendorSigned = vendorSigned,
+            SignerSubject = signerSubject,
+            SuggestedInstallCommand = suggestedInstallCommand,
+            SuggestedUninstallCommand = suggestedUninstallCommand,
+            DetectionRule = detectionRule,
+            DetectionGuidance = detectionGuidance,
+            IsDeterministicDetection = isDeterministicDetection,
+            ConfidenceScore = confidenceScore,
+            PublishedAtUtc = publishedAtUtc
+        };
+    }
+
+    private static string BuildVariantKey(
+        PackageCatalogSource source,
+        string sourceChannel,
+        string packageId,
+        string version,
+        InstallerType installerType,
+        string architecture,
+        string scope,
+        string installerDownloadUrl)
+    {
+        var identity = string.Join("|",
+            source,
+            sourceChannel.Trim().ToLowerInvariant(),
+            packageId.Trim().ToLowerInvariant(),
+            NormalizeVersionSegment(version),
+            installerType,
+            architecture.Trim().ToLowerInvariant(),
+            scope.Trim().ToLowerInvariant(),
+            installerDownloadUrl.Trim().ToLowerInvariant());
+        return ComputeStableHash(identity);
+    }
+
+    private static IReadOnlyList<CatalogInstallerVariant> BuildGitHubInstallerVariants(
+        string sourceDisplayName,
+        string sourceChannel,
+        string packageId,
+        string packageName,
+        string publisher,
+        string version,
+        GitHubReleaseInfo release)
+    {
+        var variants = new List<CatalogInstallerVariant>();
+        foreach (var asset in release.Assets)
+        {
+            if (!IsPotentialInstallerAsset(asset.FileName))
+            {
+                continue;
+            }
+
+            var extension = Path.GetExtension(asset.FileName);
+            var installerType = InferInstallerType(extension, asset.ContentType);
+            var template = BuildTemplate(packageId, installerType, asset.FileName);
+            var architecture = InferArchitecture(asset.FileName, packageId, version, asset.ContentType);
+            var scope = InferScope(sourceChannel, asset.FileName, packageId);
+            var appxIdentity = installerType == InstallerType.AppxMsix
+                ? InferAppxIdentity(packageId, packageName, asset.FileName)
+                : string.Empty;
+            var detection = BuildDeterministicDetectionRule(
+                installerType,
+                packageId,
+                packageName,
+                publisher,
+                version,
+                msiProductCode: string.Empty,
+                appxIdentity);
+            var variantConfidence = installerType == InstallerType.Unknown
+                ? 44
+                : Math.Max(56, template.ConfidenceScore - 12);
+
+            variants.Add(BuildInstallerVariant(
+                source: PackageCatalogSource.GitHubReleases,
+                sourceDisplayName,
+                sourceChannel,
+                packageId,
+                version,
+                version,
+                installerType,
+                extension,
+                architecture,
+                scope,
+                asset.DownloadUrl,
+                installerSha256: string.Empty,
+                hashVerifiedBySource: false,
+                vendorSigned: false,
+                signerSubject: string.Empty,
+                suggestedInstallCommand: template.InstallCommand,
+                suggestedUninstallCommand: ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode: string.Empty, appxIdentity),
+                detectionRule: detection.Rule,
+                detectionGuidance: detection.Guidance,
+                isDeterministicDetection: detection.IsDeterministic,
+                confidenceScore: variantConfidence,
+                publishedAtUtc: release.PublishedAtUtc));
+        }
+
+        return variants
+            .GroupBy(variant => variant.VariantKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(VariantPreferenceScore)
+                .First())
+            .OrderByDescending(VariantPreferenceScore)
+            .ToList();
+    }
+
+    private static bool IsPotentialInstallerAsset(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        if (IsSupportedInstallerFile(fileName))
+        {
+            return true;
+        }
+
+        var extension = Path.GetExtension(fileName);
+        return extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".nupkg", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static DetectionStrategyPlan BuildDeterministicDetectionRule(
+        InstallerType installerType,
+        string packageId,
+        string packageName,
+        string publisher,
+        string version,
+        string msiProductCode,
+        string appxIdentity)
+    {
+        if (installerType == InstallerType.Msi)
+        {
+            msiProductCode = NormalizeMsiProductCode(msiProductCode);
+            if (!string.IsNullOrWhiteSpace(msiProductCode) && GuidCodeRegex.IsMatch(msiProductCode))
+            {
+                return new DetectionStrategyPlan(
+                    new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.MsiProductCode,
+                        Msi = new MsiDetectionRule
+                        {
+                            ProductCode = msiProductCode,
+                            ProductVersion = version
+                        }
+                    },
+                    "Deterministic: MSI Product Code detection.",
+                    true);
+            }
+
+            return new DetectionStrategyPlan(
+                new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None },
+                "MSI detected, but Product Code is missing. Resolve Product Code before packaging.",
+                false);
+        }
+
+        if (installerType == InstallerType.Exe)
+        {
+            if (!string.IsNullOrWhiteSpace(packageName) &&
+                !string.IsNullOrWhiteSpace(publisher) &&
+                !string.IsNullOrWhiteSpace(version))
+            {
+                return new DetectionStrategyPlan(
+                    new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Script,
+                        Script = new ScriptDetectionRule
+                        {
+                            ScriptBody = BuildExactRegistryDetectionScript(packageName, publisher, version),
+                            RunAs32BitOn64System = false,
+                            EnforceSignatureCheck = false
+                        }
+                    },
+                    "Deterministic: exact registry equality on DisplayName, Publisher, and DisplayVersion.",
+                    true);
+            }
+
+            return new DetectionStrategyPlan(
+                new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None },
+                "EXE detected, but strict registry values are incomplete. Fill exact DisplayName/Publisher/Version.",
+                false);
+        }
+
+        if (installerType == InstallerType.AppxMsix)
+        {
+            var identity = Coalesce(appxIdentity, packageId);
+            if (!string.IsNullOrWhiteSpace(identity) && !string.IsNullOrWhiteSpace(version))
+            {
+                return new DetectionStrategyPlan(
+                    new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Script,
+                        Script = new ScriptDetectionRule
+                        {
+                            ScriptBody = BuildExactAppxDetectionScript(identity, version),
+                            RunAs32BitOn64System = false,
+                            EnforceSignatureCheck = false
+                        }
+                    },
+                    "Deterministic: exact APPX/MSIX identity and version.",
+                    true);
+            }
+
+            return new DetectionStrategyPlan(
+                new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None },
+                "APPX/MSIX detected, but package identity/version is incomplete.",
+                false);
+        }
+
+        return new DetectionStrategyPlan(
+            new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None },
+            "Installer type is unknown. Configure deterministic detection manually.",
+            false);
+    }
+
+    private static string BuildExactRegistryDetectionScript(string displayName, string publisher, string version)
+    {
+        var escapedDisplayName = EscapePowerShellDoubleQuoted(displayName);
+        var escapedPublisher = EscapePowerShellDoubleQuoted(publisher);
+        var escapedVersion = EscapePowerShellDoubleQuoted(version);
+
+        return string.Join(Environment.NewLine,
+        [
+            $"$displayName = \"{escapedDisplayName}\"",
+            $"$publisher = \"{escapedPublisher}\"",
+            $"$displayVersion = \"{escapedVersion}\"",
+            "$roots = @(",
+            "    'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+            "    'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+            "    'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'",
+            ")",
+            "$match = Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue | Where-Object {",
+            "    $_.DisplayName -eq $displayName -and",
+            "    $_.Publisher -eq $publisher -and",
+            "    $_.DisplayVersion -eq $displayVersion",
+            "} | Select-Object -First 1",
+            "if ($null -ne $match) { exit 0 }",
+            "exit 1"
+        ]);
+    }
+
+    private static string BuildExactAppxDetectionScript(string appxIdentity, string version)
+    {
+        var escapedIdentity = EscapePowerShellDoubleQuoted(appxIdentity);
+        var escapedVersion = EscapePowerShellDoubleQuoted(version);
+
+        return string.Join(Environment.NewLine,
+        [
+            $"$packageName = \"{escapedIdentity}\"",
+            $"$expectedVersion = \"{escapedVersion}\"",
+            "$match = Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue | Where-Object {",
+            "    $_.Version.ToString() -eq $expectedVersion",
+            "} | Select-Object -First 1",
+            "if ($null -ne $match) { exit 0 }",
+            "exit 1"
+        ]);
+    }
+
+    private static int VariantPreferenceScore(CatalogInstallerVariant variant)
+    {
+        var score = variant.ConfidenceScore;
+        if (variant.IsDeterministicDetection)
+        {
+            score += 14;
+        }
+
+        if (!string.IsNullOrWhiteSpace(variant.InstallerDownloadUrl))
+        {
+            score += 8;
+        }
+
+        if (variant.HashVerifiedBySource)
+        {
+            score += 8;
+        }
+
+        if (variant.VendorSigned)
+        {
+            score += 6;
+        }
+
+        score += variant.InstallerType switch
+        {
+            InstallerType.Msi => 16,
+            InstallerType.AppxMsix => 12,
+            InstallerType.Exe => 8,
+            InstallerType.Script => 6,
+            _ => 0
+        };
+
+        return score;
+    }
+
+    private static int EntryQualityScore(PackageCatalogEntry entry)
+    {
+        var score = entry.ConfidenceScore;
+        if (entry.HasDetailedMetadata)
+        {
+            score += 10;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.InstallerDownloadUrl))
+        {
+            score += 8;
+        }
+
+        score += entry.Source switch
+        {
+            PackageCatalogSource.Winget => 7,
+            PackageCatalogSource.Chocolatey => 5,
+            PackageCatalogSource.GitHubReleases => 4,
+            _ => 0
+        };
+
+        if (entry.PublishedAtUtc.HasValue)
+        {
+            score += 2;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Publisher))
+        {
+            score += 2;
+        }
+
+        return score;
+    }
+
+    private static string ResolveUninstallTemplate(string template, InstallerType installerType, string msiProductCode, string appxIdentity)
+    {
+        msiProductCode = NormalizeMsiProductCode(msiProductCode);
+        if (installerType == InstallerType.Msi &&
+            !string.IsNullOrWhiteSpace(msiProductCode) &&
+            GuidCodeRegex.IsMatch(msiProductCode))
+        {
+            return $"msiexec /x {msiProductCode} /quiet /norestart";
+        }
+
+        if (installerType == InstallerType.AppxMsix && !string.IsNullOrWhiteSpace(appxIdentity))
+        {
+            var escapedIdentity = appxIdentity.Replace("'", "''", StringComparison.Ordinal);
+            return $"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Get-AppxPackage -Name '{escapedIdentity}' | Remove-AppxPackage\"";
+        }
+
+        return template;
+    }
+
+    private static string ExtractGuidFromText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var match = GuidInTextRegex.Match(value);
+        return match.Success ? match.Value : string.Empty;
+    }
+
+    private static string NormalizeMsiProductCode(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        trimmed = trimmed.Trim('{', '}');
+        if (!Guid.TryParse(trimmed, out var guid))
+        {
+            return string.Empty;
+        }
+
+        return $"{{{guid:D}}}".ToUpperInvariant();
+    }
+
+    private static string InferArchitecture(string first, string second, string third, string fourth)
+    {
+        var text = $"{first} {second} {third} {fourth}".ToLowerInvariant();
+        if (text.Contains("arm64", StringComparison.Ordinal))
+        {
+            return "arm64";
+        }
+
+        if (text.Contains("x64", StringComparison.Ordinal) || text.Contains("amd64", StringComparison.Ordinal) || text.Contains("win64", StringComparison.Ordinal))
+        {
+            return "x64";
+        }
+
+        if (text.Contains("x86", StringComparison.Ordinal) || text.Contains("32-bit", StringComparison.Ordinal) || text.Contains("win32", StringComparison.Ordinal))
+        {
+            return "x86";
+        }
+
+        if (text.Contains("arm", StringComparison.Ordinal))
+        {
+            return "arm";
+        }
+
+        return string.Empty;
+    }
+
+    private static string InferScope(string sourceChannel, string first, string second)
+    {
+        var text = $"{sourceChannel} {first} {second}".ToLowerInvariant();
+        if (text.Contains("per-user", StringComparison.Ordinal) ||
+            text.Contains("per user", StringComparison.Ordinal) ||
+            text.Contains("user", StringComparison.Ordinal))
+        {
+            return "user";
+        }
+
+        if (text.Contains("machine", StringComparison.Ordinal) ||
+            text.Contains("system", StringComparison.Ordinal) ||
+            text.Contains("allusers", StringComparison.Ordinal))
+        {
+            return "machine";
+        }
+
+        if (sourceChannel.Equals("msstore", StringComparison.OrdinalIgnoreCase))
+        {
+            return "user";
+        }
+
+        return string.Empty;
+    }
+
+    private static string NormalizeSha256(string hash)
+    {
+        if (string.IsNullOrWhiteSpace(hash))
+        {
+            return string.Empty;
+        }
+
+        var normalized = hash.Trim().Replace(" ", string.Empty, StringComparison.Ordinal);
+        return Sha256Regex.IsMatch(normalized) ? normalized.ToLowerInvariant() : string.Empty;
+    }
+
+    private static string InferAppxIdentity(string packageId, string packageName, string fallback)
+    {
+        if (!string.IsNullOrWhiteSpace(fallback) && fallback.Contains('.', StringComparison.Ordinal))
+        {
+            return fallback.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(packageId) && packageId.Contains('.', StringComparison.Ordinal))
+        {
+            return packageId.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(packageName))
+        {
+            return packageName.Trim();
+        }
+
+        return packageId.Trim();
+    }
+
+    private static string BuildCanonicalPackageKey(string canonicalPublisher, string canonicalProduct, string releaseChannel)
+    {
+        var publisher = string.IsNullOrWhiteSpace(canonicalPublisher) ? "unknown" : canonicalPublisher;
+        var product = string.IsNullOrWhiteSpace(canonicalProduct) ? "package" : canonicalProduct;
+        var channel = NormalizeReleaseChannel(releaseChannel);
+        return $"{publisher}|{product}|{channel}";
+    }
+
+    private static string DerivePublisherFromPackageId(string packageId)
+    {
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            return string.Empty;
+        }
+
+        var parts = packageId
+            .Split(IdentitySeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length == 0 ? string.Empty : parts[0];
+    }
+
+    private static string DeriveCanonicalProduct(string packageName, string packageId)
+    {
+        var candidate = Coalesce(packageName, packageId);
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return "package";
+        }
+
+        var normalized = NormalizeIdentityComponent(candidate);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return "package";
+        }
+
+        var ignoredTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "setup",
+            "installer",
+            "install",
+            "windows",
+            "win32",
+            "x86",
+            "x64",
+            "arm",
+            "arm64",
+            "stable",
+            "beta",
+            "preview",
+            "dev",
+            "canary",
+            "nightly",
+            "lts"
+        };
+
+        var tokens = normalized
+            .Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(token => !ignoredTokens.Contains(token))
+            .Take(4)
+            .ToList();
+
+        if (tokens.Count == 0)
+        {
+            return normalized;
+        }
+
+        return string.Join("-", tokens);
+    }
+
+    private static string InferReleaseChannel(string explicitChannel, string packageName, string packageId, string version, string buildVersion)
+    {
+        if (!string.IsNullOrWhiteSpace(explicitChannel))
+        {
+            return NormalizeReleaseChannel(explicitChannel);
+        }
+
+        var text = $"{packageName} {packageId} {version} {buildVersion}".ToLowerInvariant();
+        if (text.Contains("canary", StringComparison.Ordinal))
+        {
+            return "canary";
+        }
+
+        if (text.Contains("nightly", StringComparison.Ordinal))
+        {
+            return "nightly";
+        }
+
+        if (text.Contains("preview", StringComparison.Ordinal) || text.Contains("insider", StringComparison.Ordinal))
+        {
+            return "preview";
+        }
+
+        if (text.Contains("beta", StringComparison.Ordinal))
+        {
+            return "beta";
+        }
+
+        if (text.Contains("dev", StringComparison.Ordinal))
+        {
+            return "dev";
+        }
+
+        if (text.Contains("lts", StringComparison.Ordinal))
+        {
+            return "lts";
+        }
+
+        return "stable";
+    }
+
+    private static string NormalizeReleaseChannel(string releaseChannel)
+    {
+        if (string.IsNullOrWhiteSpace(releaseChannel))
+        {
+            return "stable";
+        }
+
+        var normalized = releaseChannel.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "stable" => "stable",
+            "beta" => "beta",
+            "preview" => "preview",
+            "canary" => "canary",
+            "dev" => "dev",
+            "nightly" => "nightly",
+            "lts" => "lts",
+            _ => "stable"
+        };
+    }
+
+    private static string NormalizeIdentityComponent(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var builder = new System.Text.StringBuilder(value.Length);
+        var pendingSeparator = false;
+
+        foreach (var character in value.ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                if (pendingSeparator && builder.Length > 0)
+                {
+                    builder.Append('-');
+                }
+
+                builder.Append(character);
+                pendingSeparator = false;
+            }
+            else
+            {
+                pendingSeparator = true;
+            }
+        }
+
+        return builder.ToString().Trim('-');
+    }
+
+    private static string NormalizeVersionSegment(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return "latest";
+        }
+
+        var normalized = version.Trim().ToLowerInvariant();
+        var plusIndex = normalized.IndexOf('+');
+        if (plusIndex > 0)
+        {
+            normalized = normalized[..plusIndex];
+        }
+
+        return normalized;
+    }
+
+    private static bool IsVersionEquivalent(string left, string right)
+    {
+        return NormalizeVersionSegment(left).Equals(NormalizeVersionSegment(right), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EscapePowerShellDoubleQuoted(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return value.Replace("`", "``", StringComparison.Ordinal)
+            .Replace("\"", "`\"", StringComparison.Ordinal);
+    }
+
+    private static string CleanDisplayValue(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var compact = MultiSpaceRegex.Replace(value, " ").Trim();
+        return compact.Length <= 520 ? compact : compact[..520].TrimEnd();
+    }
+
     private static TemplateSuggestion BuildTemplate(string packageId, InstallerType installerType, string? raw)
     {
         var normalized = raw?.ToLowerInvariant() ?? string.Empty;
@@ -1554,6 +2745,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return 0;
     }
 
+    private sealed record DetectionStrategyPlan(IntuneDetectionRule Rule, string Guidance, bool IsDeterministic);
     private sealed record TemplateSuggestion(string InstallCommand, string UninstallCommand, string DetectionGuidance, int ConfidenceScore);
     private sealed record WingetSourceInfo(string Name, bool IsExplicit);
     private sealed record GitHubReleaseInfo(string TagName, string ReleaseName, DateTimeOffset? PublishedAtUtc, IReadOnlyList<GitHubAssetInfo> Assets);

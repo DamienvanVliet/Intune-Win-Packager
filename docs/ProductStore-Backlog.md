@@ -55,6 +55,19 @@ Expand the package store beyond the current baseline while keeping Intune prepar
 
 ## Phase 2 - Normalization and Mapping
 
+### Current Status
+- Started.
+- Implemented:
+  - Canonical package identity (`publisher + product + release channel`) on catalog entries and stored profiles.
+  - Cross-source canonical merge so duplicates from different providers are grouped into one logical package.
+  - Structured installer variants (architecture/scope/type/version/url/hash/signing/detection metadata).
+  - Deterministic variant detection mapping strategy:
+    - MSI: Product Code first.
+    - EXE: strict exact registry equality script (DisplayName/Publisher/DisplayVersion).
+    - APPX/MSIX: exact identity + version script.
+  - Profile matching/promotion upgraded to canonical + variant-aware matching.
+  - Test coverage extended for canonical merge and multi-variant mapping.
+
 ### 1. Canonical package identity
 - Add normalization key strategy (publisher + product + channel).
 - Merge duplicates across sources into one logical package with source variants.

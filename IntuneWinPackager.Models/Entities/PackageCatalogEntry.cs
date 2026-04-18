@@ -4,6 +4,14 @@ namespace IntuneWinPackager.Models.Entities;
 
 public sealed record PackageCatalogEntry
 {
+    public string CanonicalPackageKey { get; init; } = string.Empty;
+
+    public string CanonicalPublisher { get; init; } = string.Empty;
+
+    public string CanonicalProductName { get; init; } = string.Empty;
+
+    public string ReleaseChannel { get; init; } = "stable";
+
     public PackageCatalogSource Source { get; init; } = PackageCatalogSource.Winget;
 
     public string SourceDisplayName { get; init; } = string.Empty;
@@ -76,7 +84,16 @@ public sealed record PackageCatalogEntry
 
     public DateTimeOffset? LastVerifiedAtUtc { get; init; }
 
+    public IReadOnlyList<CatalogInstallerVariant> InstallerVariants { get; init; } = [];
+
     public bool HasPreparedProfile => LastPreparedAtUtc.HasValue;
+
+    public int InstallerVariantCount => InstallerVariants.Count;
+
+    public int SourceVariantCount => InstallerVariants
+        .Select(variant => $"{variant.Source}:{variant.SourceChannel}:{variant.PackageId}")
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
 
     public string EffectiveIconPath => string.IsNullOrWhiteSpace(CachedIconPath)
         ? IconUrl

@@ -4,6 +4,14 @@ namespace IntuneWinPackager.Models.Entities;
 
 public sealed record CatalogPackageProfile
 {
+    public string CanonicalPackageKey { get; init; } = string.Empty;
+
+    public string CanonicalPublisher { get; init; } = string.Empty;
+
+    public string CanonicalProductName { get; init; } = string.Empty;
+
+    public string ReleaseChannel { get; init; } = "stable";
+
     public PackageCatalogSource Source { get; init; } = PackageCatalogSource.Winget;
 
     public string SourceChannel { get; init; } = string.Empty;
@@ -19,6 +27,12 @@ public sealed record CatalogPackageProfile
     public string InstallerPath { get; init; } = string.Empty;
 
     public string InstallerSha256 { get; init; } = string.Empty;
+
+    public string InstallerVariantKey { get; init; } = string.Empty;
+
+    public string InstallerArchitecture { get; init; } = string.Empty;
+
+    public string InstallerScope { get; init; } = string.Empty;
 
     public InstallerType InstallerType { get; init; } = InstallerType.Unknown;
 

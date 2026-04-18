@@ -1138,8 +1138,7 @@ public partial class MainViewModel : ObservableObject
 
         if (value is null ||
             _activeCatalogSelectionContext is null ||
-            value.Source != _activeCatalogSelectionContext.Source ||
-            !value.PackageId.Equals(_activeCatalogSelectionContext.PackageId, StringComparison.OrdinalIgnoreCase) ||
+            !IsCatalogSelectionContextMatch(value, _activeCatalogSelectionContext) ||
             !IsCatalogVersionMatch(value.Version, _activeCatalogSelectionContext.Version))
         {
             _activeCatalogSelectionContext = null;
@@ -2220,11 +2219,14 @@ public partial class MainViewModel : ObservableObject
             var refreshedEntry = DecorateCatalogEntry(entry);
             SelectedCatalogEntry = refreshedEntry;
             CatalogEntryDetails = refreshedEntry;
+            var selectedVariant = ResolveCatalogVariant(refreshedEntry, downloadResult.InstallerSha256);
             _activeCatalogSelectionContext = new CatalogSelectionContext(
+                refreshedEntry.CanonicalPackageKey,
                 refreshedEntry.Source,
                 refreshedEntry.SourceChannel,
                 refreshedEntry.PackageId,
                 refreshedEntry.Version,
+                selectedVariant?.VariantKey ?? string.Empty,
                 downloadResult.InstallerSha256,
                 downloadResult.InstallerPath);
 
@@ -2435,10 +2437,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         var packageProfiles = _catalogProfiles
-            .Where(profile =>
-                profile.Source == entry.Source &&
-                IsCatalogSourceChannelMatch(profile.SourceChannel, entry.SourceChannel) &&
-                profile.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase))
+            .Where(profile => IsCatalogProfileMatchEntry(profile, entry))
             .ToList();
 
         var exactProfile = packageProfiles
@@ -2630,9 +2629,14 @@ public partial class MainViewModel : ObservableObject
         var resolvedSha = string.IsNullOrWhiteSpace(downloadResult.InstallerSha256)
             ? ComputeFileSha256(installerPath)
             : downloadResult.InstallerSha256;
+        var selectedVariant = ResolveCatalogVariant(entry, resolvedSha);
 
         var profile = new CatalogPackageProfile
         {
+            CanonicalPackageKey = entry.CanonicalPackageKey,
+            CanonicalPublisher = entry.CanonicalPublisher,
+            CanonicalProductName = entry.CanonicalProductName,
+            ReleaseChannel = entry.ReleaseChannel,
             Source = entry.Source,
             SourceChannel = entry.SourceChannel,
             PackageId = entry.PackageId,
@@ -2641,6 +2645,9 @@ public partial class MainViewModel : ObservableObject
             BuildVersion = entry.BuildVersion,
             InstallerPath = installerPath,
             InstallerSha256 = resolvedSha,
+            InstallerVariantKey = selectedVariant?.VariantKey ?? string.Empty,
+            InstallerArchitecture = selectedVariant?.Architecture ?? string.Empty,
+            InstallerScope = selectedVariant?.Scope ?? string.Empty,
             InstallerType = InstallerType,
             InstallCommand = InstallCommand,
             UninstallCommand = UninstallCommand,
@@ -2664,12 +2671,14 @@ public partial class MainViewModel : ObservableObject
     {
         await ReloadCatalogProfilesAsync();
         var profile = _catalogProfiles
-            .Where(candidate =>
-                candidate.Source == entry.Source &&
-                IsCatalogSourceChannelMatch(candidate.SourceChannel, entry.SourceChannel) &&
-                candidate.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase) &&
-                IsCatalogVersionMatch(candidate.Version, entry.Version))
-            .OrderByDescending(candidate => candidate.LastVerifiedAtUtc ?? DateTimeOffset.MinValue)
+            .Where(candidate => IsCatalogProfileMatchEntry(candidate, entry) &&
+                                IsCatalogVersionMatch(candidate.Version, entry.Version))
+            .OrderByDescending(candidate => IsCatalogProfileCanonicalMatch(candidate, entry))
+            .ThenByDescending(candidate =>
+                !string.IsNullOrWhiteSpace(candidate.InstallerVariantKey) &&
+                entry.InstallerVariants.Any(variant =>
+                    variant.VariantKey.Equals(candidate.InstallerVariantKey, StringComparison.OrdinalIgnoreCase)))
+            .ThenByDescending(candidate => candidate.LastVerifiedAtUtc ?? DateTimeOffset.MinValue)
             .ThenByDescending(candidate => candidate.LastPreparedAtUtc)
             .FirstOrDefault();
 
@@ -2710,10 +2719,12 @@ public partial class MainViewModel : ObservableObject
         SuggestionUsedKnowledgeCache = profile.Confidence == CatalogProfileConfidence.Verified;
 
         _activeCatalogSelectionContext = new CatalogSelectionContext(
+            profile.CanonicalPackageKey,
             profile.Source,
             profile.SourceChannel,
             profile.PackageId,
             profile.Version,
+            profile.InstallerVariantKey,
             profile.InstallerSha256,
             profile.InstallerPath);
 
@@ -2734,7 +2745,9 @@ public partial class MainViewModel : ObservableObject
             _activeCatalogSelectionContext.SourceChannel,
             _activeCatalogSelectionContext.PackageId,
             _activeCatalogSelectionContext.Version,
-            _activeCatalogSelectionContext.InstallerSha256);
+            _activeCatalogSelectionContext.InstallerSha256,
+            _activeCatalogSelectionContext.CanonicalPackageKey,
+            _activeCatalogSelectionContext.InstallerVariantKey);
 
         await ReloadCatalogProfilesAsync();
         RefreshCatalogEntriesFromProfiles();
@@ -2754,6 +2767,82 @@ public partial class MainViewModel : ObservableObject
         }
 
         return left.Equals(right, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCatalogProfileCanonicalMatch(CatalogPackageProfile profile, PackageCatalogEntry entry)
+    {
+        return !string.IsNullOrWhiteSpace(profile.CanonicalPackageKey) &&
+               !string.IsNullOrWhiteSpace(entry.CanonicalPackageKey) &&
+               profile.CanonicalPackageKey.Equals(entry.CanonicalPackageKey, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCatalogProfileMatchEntry(CatalogPackageProfile profile, PackageCatalogEntry entry)
+    {
+        if (profile is null || entry is null)
+        {
+            return false;
+        }
+
+        if (IsCatalogProfileCanonicalMatch(profile, entry))
+        {
+            return true;
+        }
+
+        return profile.Source == entry.Source &&
+               IsCatalogSourceChannelMatch(profile.SourceChannel, entry.SourceChannel) &&
+               profile.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCatalogSelectionContextMatch(PackageCatalogEntry entry, CatalogSelectionContext context)
+    {
+        if (!string.IsNullOrWhiteSpace(context.CanonicalPackageKey) &&
+            !string.IsNullOrWhiteSpace(entry.CanonicalPackageKey) &&
+            context.CanonicalPackageKey.Equals(entry.CanonicalPackageKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return entry.Source == context.Source &&
+               entry.PackageId.Equals(context.PackageId, StringComparison.OrdinalIgnoreCase) &&
+               IsCatalogSourceChannelMatch(entry.SourceChannel, context.SourceChannel);
+    }
+
+    private static CatalogInstallerVariant? ResolveCatalogVariant(
+        PackageCatalogEntry entry,
+        string installerSha256)
+    {
+        if (entry.InstallerVariants.Count == 0)
+        {
+            return null;
+        }
+
+        var normalizedSha = installerSha256 ?? string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(normalizedSha))
+        {
+            var bySha = entry.InstallerVariants.FirstOrDefault(variant =>
+                !string.IsNullOrWhiteSpace(variant.InstallerSha256) &&
+                variant.InstallerSha256.Equals(normalizedSha, StringComparison.OrdinalIgnoreCase));
+            if (bySha is not null)
+            {
+                return bySha;
+            }
+        }
+
+        var bySource = entry.InstallerVariants.FirstOrDefault(variant =>
+            variant.Source == entry.Source &&
+            variant.PackageId.Equals(entry.PackageId, StringComparison.OrdinalIgnoreCase) &&
+            IsCatalogSourceChannelMatch(variant.SourceChannel, entry.SourceChannel) &&
+            IsCatalogVersionMatch(variant.Version, entry.Version));
+        if (bySource is not null)
+        {
+            return bySource;
+        }
+
+        return entry.InstallerVariants
+            .OrderByDescending(variant => variant.ConfidenceScore)
+            .ThenByDescending(variant => !string.IsNullOrWhiteSpace(variant.InstallerDownloadUrl))
+            .FirstOrDefault();
     }
 
     private static string CoalescePath(string? left, string right)
@@ -3861,10 +3950,12 @@ public partial class MainViewModel : ObservableObject
     }
 
     private sealed record CatalogSelectionContext(
+        string CanonicalPackageKey,
         PackageCatalogSource Source,
         string SourceChannel,
         string PackageId,
         string Version,
+        string InstallerVariantKey,
         string InstallerSha256,
         string InstallerPath);
 
