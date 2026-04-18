@@ -334,63 +334,101 @@ public sealed class AppUpdateService : IAppUpdateService
             }
 
             var currentPid = Environment.ProcessId;
-            var currentProcessName = Process.GetCurrentProcess().ProcessName;
             var currentProcessPath = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(currentProcessPath))
             {
                 currentProcessPath = Process.GetCurrentProcess().MainModule?.FileName;
             }
 
-            var launchMarkerPath = Path.Combine(
-                Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory,
-                $"launch-update-{Guid.NewGuid():N}.started");
-            var launcherScriptPath = Path.Combine(
-                Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory,
-                $"launch-update-{Guid.NewGuid():N}.cmd");
-            var script = BuildDeferredInstallerBatch(
+            if (TryScheduleInstallerAfterCurrentProcessExitWithAppHost(
+                    currentPid,
+                    currentProcessPath,
+                    installerPath,
+                    installerArguments,
+                    out var appHostError))
+            {
+                return true;
+            }
+
+            errorMessage = appHostError;
+
+            var fallbackScheduled = TryScheduleInstallerAfterCurrentProcessExitWithPowerShell(
                 currentPid,
-                currentProcessName,
                 currentProcessPath,
                 installerPath,
                 installerArguments,
-                launchMarkerPath);
-            File.WriteAllText(launcherScriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-
-            var launcherStartInfo = new ProcessStartInfo
+                out var fallbackError);
+            if (fallbackScheduled)
             {
-                FileName = "cmd.exe",
-                Arguments = $"/c \"\"{launcherScriptPath}\"\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory
-            };
-
-            var launcherProcess = Process.Start(launcherStartInfo);
-            if (launcherProcess is null)
-            {
-                errorMessage = "Deferred launcher process could not be started.";
-                return TryScheduleInstallerAfterCurrentProcessExitWithPowerShell(
-                    currentPid,
-                    currentProcessPath,
-                    installerPath,
-                    installerArguments,
-                    out errorMessage);
+                return true;
             }
 
-            if (!WaitForDeferredLauncherSignal(launcherProcess, launchMarkerPath, TimeSpan.FromSeconds(3)))
-            {
-                var fallbackScheduled = TryScheduleInstallerAfterCurrentProcessExitWithPowerShell(
-                    currentPid,
-                    currentProcessPath,
-                    installerPath,
-                    installerArguments,
-                    out var fallbackError);
-                if (fallbackScheduled)
-                {
-                    return true;
-                }
+            errorMessage = $"Primary and fallback update scheduling failed. {appHostError} {fallbackError}".Trim();
+            return false;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            return false;
+        }
+    }
 
-                errorMessage = $"Deferred launcher failed to initialize. {fallbackError}";
+    private static bool TryScheduleInstallerAfterCurrentProcessExitWithAppHost(
+        int processId,
+        string? processPath,
+        string installerPath,
+        string installerArguments,
+        out string errorMessage)
+    {
+        errorMessage = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(processPath) || !File.Exists(processPath))
+        {
+            errorMessage = "Current application executable path could not be resolved for deferred host mode.";
+            return false;
+        }
+
+        try
+        {
+            var updatesDirectory = Path.GetDirectoryName(installerPath) ?? DataPathProvider.UpdatesDirectory;
+            Directory.CreateDirectory(updatesDirectory);
+
+            var launchMarkerPath = Path.Combine(updatesDirectory, $"launch-host-{Guid.NewGuid():N}.started");
+            var launchLogPath = Path.Combine(updatesDirectory, $"launch-host-{Guid.NewGuid():N}.log");
+            TryDeleteFile(launchMarkerPath);
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = processPath,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(processPath) ?? AppContext.BaseDirectory
+            };
+
+            startInfo.ArgumentList.Add("--deferred-update");
+            startInfo.ArgumentList.Add("--parent-pid");
+            startInfo.ArgumentList.Add(processId.ToString(CultureInfo.InvariantCulture));
+            startInfo.ArgumentList.Add("--target-exe-path");
+            startInfo.ArgumentList.Add(processPath);
+            startInfo.ArgumentList.Add("--installer-path");
+            startInfo.ArgumentList.Add(installerPath);
+            startInfo.ArgumentList.Add("--installer-arguments");
+            startInfo.ArgumentList.Add(installerArguments ?? string.Empty);
+            startInfo.ArgumentList.Add("--launch-marker-path");
+            startInfo.ArgumentList.Add(launchMarkerPath);
+            startInfo.ArgumentList.Add("--launch-log-path");
+            startInfo.ArgumentList.Add(launchLogPath);
+
+            var hostProcess = Process.Start(startInfo);
+            if (hostProcess is null)
+            {
+                errorMessage = "Deferred app-host process could not be started.";
+                return false;
+            }
+
+            if (!WaitForDeferredLauncherSignal(hostProcess, launchMarkerPath, TimeSpan.FromSeconds(5)))
+            {
+                errorMessage = $"Deferred app-host did not signal startup. Inspect log: {launchLogPath}";
                 return false;
             }
 
@@ -398,7 +436,7 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            errorMessage = ex.Message;
+            errorMessage = $"Deferred app-host launch failed: {ex.Message}";
             return false;
         }
     }
@@ -587,6 +625,21 @@ public sealed class AppUpdateService : IAppUpdateService
     private static string EscapePowerShellSingleQuotedString(string value)
     {
         return value.Replace("'", "''", StringComparison.Ordinal);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best effort cleanup.
+        }
     }
 
     private async Task<AppUpdateInfo?> TryCheckWithGhCliAsync(

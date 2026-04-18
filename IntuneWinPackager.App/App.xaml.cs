@@ -22,6 +22,12 @@ public partial class App : System.Windows.Application
 
         try
         {
+            if (DeferredUpdateHostService.TryHandleStartup(e.Args, out var deferredHostExitCode))
+            {
+                Shutdown(deferredHostExitCode);
+                return;
+            }
+
             _appMutex = new Mutex(initiallyOwned: true, name: AppMutexName, createdNew: out var createdNew);
             if (!createdNew)
             {

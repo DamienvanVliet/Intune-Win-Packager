@@ -263,6 +263,31 @@ public class AppUpdateServiceTests
         Assert.Contains("Start-Process -FilePath $installerPath", command, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void DeferredAppHostScheduling_ReturnsFalseWhenProcessPathIsInvalid()
+    {
+        var scheduleWithAppHostMethod = typeof(AppUpdateService).GetMethod(
+            "TryScheduleInstallerAfterCurrentProcessExitWithAppHost",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(scheduleWithAppHostMethod);
+
+        var parameters = new object?[]
+        {
+            1234,
+            @"C:\this\path\does-not-exist\IntuneWinPackager.App.exe",
+            @"C:\Temp\IntuneWinPackager-Setup-1.1.40.exe",
+            "/NORESTART /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS",
+            null
+        };
+
+        var scheduled = (bool?)scheduleWithAppHostMethod!.Invoke(null, parameters);
+        var error = parameters[4] as string;
+
+        Assert.False(scheduled);
+        Assert.Contains("executable path", error, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static AppUpdateService CreateService(string releasesPayload)
     {
         var handler = new StubHttpMessageHandler(releasesPayload);
