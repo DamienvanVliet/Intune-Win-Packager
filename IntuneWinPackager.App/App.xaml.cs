@@ -20,48 +20,65 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
 
-        _appMutex = new Mutex(initiallyOwned: true, name: AppMutexName, createdNew: out var createdNew);
-        if (!createdNew)
+        try
         {
-            _appMutex.Dispose();
-            _appMutex = null;
-            Shutdown();
-            return;
-        }
-
-        _host = Host.CreateDefaultBuilder()
-            .ConfigureServices(services =>
+            _appMutex = new Mutex(initiallyOwned: true, name: AppMutexName, createdNew: out var createdNew);
+            if (!createdNew)
             {
-                services.AddSingleton<IValidationService, PackagingValidationService>();
-                services.AddSingleton<IInstallerCommandService, InstallerCommandService>();
-                services.AddSingleton<IPackagingWorkflowService, PackagingWorkflowService>();
-                services.AddSingleton<IPreflightService, PreflightService>();
+                _appMutex.Dispose();
+                _appMutex = null;
+                System.Windows.MessageBox.Show(
+                    "Intune Win Packager is already running.\n\nIf no window is visible, end 'IntuneWinPackager.App.exe' in Task Manager and start it again.",
+                    "Intune Win Packager",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Information);
+                Shutdown();
+                return;
+            }
 
-                services.AddSingleton<IProcessRunner, ProcessRunnerService>();
-                services.AddSingleton<IMsiInspectorService, MsiInspectorService>();
-                services.AddSingleton<ISettingsService, SettingsService>();
-                services.AddSingleton<IProfileService, ProfileService>();
-                services.AddSingleton<IHistoryService, HistoryService>();
-                services.AddSingleton<IToolLocatorService, ToolLocatorService>();
-                services.AddSingleton<IToolInstallerService, ToolInstallerService>();
-                services.AddSingleton<IAppUpdateService, AppUpdateService>();
-                services.AddSingleton<IPackageCatalogService, PackageCatalogService>();
-                services.AddSingleton<IPackageProfileStoreService, PackageProfileStoreService>();
+            _host = Host.CreateDefaultBuilder()
+                .ConfigureServices(services =>
+                {
+                    services.AddSingleton<IValidationService, PackagingValidationService>();
+                    services.AddSingleton<IInstallerCommandService, InstallerCommandService>();
+                    services.AddSingleton<IPackagingWorkflowService, PackagingWorkflowService>();
+                    services.AddSingleton<IPreflightService, PreflightService>();
 
-                services.AddSingleton<IDialogService, SystemDialogService>();
-                services.AddSingleton<ILocalizationService, LocalizationService>();
-                services.AddSingleton<IThemeService, ThemeService>();
-                services.AddSingleton<IDensityService, DensityService>();
+                    services.AddSingleton<IProcessRunner, ProcessRunnerService>();
+                    services.AddSingleton<IMsiInspectorService, MsiInspectorService>();
+                    services.AddSingleton<ISettingsService, SettingsService>();
+                    services.AddSingleton<IProfileService, ProfileService>();
+                    services.AddSingleton<IHistoryService, HistoryService>();
+                    services.AddSingleton<IToolLocatorService, ToolLocatorService>();
+                    services.AddSingleton<IToolInstallerService, ToolInstallerService>();
+                    services.AddSingleton<IAppUpdateService, AppUpdateService>();
+                    services.AddSingleton<IPackageCatalogService, PackageCatalogService>();
+                    services.AddSingleton<IPackageProfileStoreService, PackageProfileStoreService>();
 
-                services.AddSingleton<MainViewModel>();
-                services.AddSingleton<MainWindow>();
-            })
-            .Build();
+                    services.AddSingleton<IDialogService, SystemDialogService>();
+                    services.AddSingleton<ILocalizationService, LocalizationService>();
+                    services.AddSingleton<IThemeService, ThemeService>();
+                    services.AddSingleton<IDensityService, DensityService>();
 
-        await _host.StartAsync();
+                    services.AddSingleton<MainViewModel>();
+                    services.AddSingleton<MainWindow>();
+                })
+                .Build();
 
-        var mainWindow = _host.Services.GetRequiredService<MainWindow>();
-        mainWindow.Show();
+            await _host.StartAsync();
+
+            var mainWindow = _host.Services.GetRequiredService<MainWindow>();
+            mainWindow.Show();
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(
+                $"Startup initialization failed:\n{ex.Message}",
+                "Intune Win Packager",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+            Shutdown();
+        }
     }
 
     protected override async void OnExit(System.Windows.ExitEventArgs e)

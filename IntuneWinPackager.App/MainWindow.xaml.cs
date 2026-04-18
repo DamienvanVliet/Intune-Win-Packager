@@ -21,7 +21,18 @@ public partial class MainWindow : System.Windows.Window
 
     private async void MainWindow_Loaded(object sender, System.Windows.RoutedEventArgs e)
     {
-        await _viewModel.InitializeAsync();
+        try
+        {
+            await _viewModel.InitializeAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(
+                $"Startup failed: {ex.Message}\n\nThe app will stay open in safe mode. Check the Packaging Logs panel for details.",
+                "Intune Win Packager",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+        }
     }
 
     private void DropZone_DragEnter(object sender, WpfDragEventArgs e)

@@ -744,14 +744,26 @@ public partial class MainViewModel : ObservableObject
 
         _isInitialized = true;
 
-        await LoadSettingsAsync();
-        await RefreshProfileListAsync();
-        await RefreshHistoryAsync();
-        await ReloadCatalogProfilesAsync();
+        await RunStartupStepAsync("LoadSettings", LoadSettingsAsync);
+        await RunStartupStepAsync("RefreshProfiles", RefreshProfileListAsync);
+        await RunStartupStepAsync("RefreshHistory", RefreshHistoryAsync);
+        await RunStartupStepAsync("ReloadCatalogProfiles", ReloadCatalogProfilesAsync);
 
         UpdateValidation();
 
         _ = CheckForUpdatesOnStartupAsync();
+    }
+
+    private async Task RunStartupStepAsync(string stepName, Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Startup step '{stepName}' failed: {ex.Message}");
+        }
     }
 
     public void SetDragOverState(bool dragOver)
