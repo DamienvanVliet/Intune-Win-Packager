@@ -1,5 +1,6 @@
-using IntuneWinPackager.Core.Interfaces;
+﻿using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Core.Services;
+using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
@@ -262,11 +263,63 @@ public class PreflightServiceTests
         var result = await sut.RunAsync(request);
 
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Checks, check => check.Key == "detection-script-last-resort" && !check.Passed);
+        Assert.Contains(result.Checks, check => check.Key == "detection-script-exe-deterministic" && !check.Passed);
 
         Directory.Delete(tempRoot, recursive: true);
     }
 
+
+    [Fact]
+    public async Task RunAsync_ReturnsReady_WhenExeUsesDeterministicExactRegistryScript()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "installer.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        var request = new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.Exe,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "\"installer.exe\" /S",
+                UninstallCommand = "\"installer.exe\" /S",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Script,
+                        Script = new ScriptDetectionRule
+                        {
+                            ScriptBody = DeterministicDetectionScript.BuildExactExeRegistryScript(
+                                "Contoso Agent",
+                                "Contoso Ltd",
+                                "5.4.3")
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PreflightService(new FakeProcessRunner(0));
+        var result = await sut.RunAsync(request);
+
+        Assert.False(result.HasErrors);
+        Assert.DoesNotContain(result.Checks, check => check.Key == "detection-script-exe-deterministic" && !check.Passed);
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
     [Fact]
     public async Task RunAsync_ReturnsError_WhenRequirementScriptContainsPlaceholder()
     {
@@ -350,3 +403,4 @@ public class PreflightServiceTests
         }
     }
 }
+

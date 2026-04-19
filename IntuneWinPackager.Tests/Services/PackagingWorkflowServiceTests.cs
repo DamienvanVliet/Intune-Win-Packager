@@ -63,6 +63,8 @@ public class PackagingWorkflowServiceTests
         Assert.Equal(expectedOutput, result.OutputPackagePath);
         Assert.False(string.IsNullOrWhiteSpace(result.OutputMetadataPath));
         Assert.True(File.Exists(result.OutputMetadataPath));
+        var metadataJson = await File.ReadAllTextAsync(result.OutputMetadataPath);
+        Assert.Contains("\"hardLinkedFileCount\"", metadataJson, StringComparison.OrdinalIgnoreCase);
         Assert.False(string.IsNullOrWhiteSpace(result.OutputChecklistPath));
         Assert.True(File.Exists(result.OutputChecklistPath));
         Assert.Contains("Manual Portal Steps", result.IntunePortalChecklist, StringComparison.Ordinal);

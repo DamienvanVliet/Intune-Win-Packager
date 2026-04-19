@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using IntuneWinPackager.Core.Interfaces;
+using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
@@ -3947,45 +3948,12 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
     private static string BuildExactRegistryDetectionScript(string displayName, string publisher, string version)
     {
-        var escapedDisplayName = EscapePowerShellDoubleQuoted(displayName);
-        var escapedPublisher = EscapePowerShellDoubleQuoted(publisher);
-        var escapedVersion = EscapePowerShellDoubleQuoted(version);
-
-        return string.Join(Environment.NewLine,
-        [
-            $"$displayName = \"{escapedDisplayName}\"",
-            $"$publisher = \"{escapedPublisher}\"",
-            $"$displayVersion = \"{escapedVersion}\"",
-            "$roots = @(",
-            "    'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
-            "    'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
-            "    'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'",
-            ")",
-            "$match = Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue | Where-Object {",
-            "    $_.DisplayName -eq $displayName -and",
-            "    $_.Publisher -eq $publisher -and",
-            "    $_.DisplayVersion -eq $displayVersion",
-            "} | Select-Object -First 1",
-            "if ($null -ne $match) { exit 0 }",
-            "exit 1"
-        ]);
+        return DeterministicDetectionScript.BuildExactExeRegistryScript(displayName, publisher, version);
     }
 
     private static string BuildExactAppxDetectionScript(string appxIdentity, string version)
     {
-        var escapedIdentity = EscapePowerShellDoubleQuoted(appxIdentity);
-        var escapedVersion = EscapePowerShellDoubleQuoted(version);
-
-        return string.Join(Environment.NewLine,
-        [
-            $"$packageName = \"{escapedIdentity}\"",
-            $"$expectedVersion = \"{escapedVersion}\"",
-            "$match = Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue | Where-Object {",
-            "    $_.Version.ToString() -eq $expectedVersion",
-            "} | Select-Object -First 1",
-            "if ($null -ne $match) { exit 0 }",
-            "exit 1"
-        ]);
+        return DeterministicDetectionScript.BuildExactAppxIdentityScript(appxIdentity, version);
     }
 
     private static int VariantPreferenceScore(CatalogInstallerVariant variant)
@@ -4367,17 +4335,6 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private static bool IsVersionEquivalent(string left, string right)
     {
         return NormalizeVersionSegment(left).Equals(NormalizeVersionSegment(right), StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string EscapePowerShellDoubleQuoted(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        return value.Replace("`", "``", StringComparison.Ordinal)
-            .Replace("\"", "`\"", StringComparison.Ordinal);
     }
 
     private static string CleanDisplayValue(string value)

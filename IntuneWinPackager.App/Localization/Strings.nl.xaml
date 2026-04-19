@@ -411,6 +411,7 @@
     <sys:String x:Key="Core.Validation.RegistryDetectionExeVersionRequired">Voor EXE-detectie is de DisplayVersion-waarde verplicht.</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionBodyRequired">Scriptdetectie vereist scriptinhoud.</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionHasPlaceholder">Scriptdetectie bevat nog placeholders. Vervang placeholders met productielogica.</sys:String>
+    <sys:String x:Key="Core.Validation.ScriptDetectionExeMustBeDeterministic">Voor EXE-installers moet scriptdetectie exacte registergelijkheid gebruiken (DisplayName, Publisher, DisplayVersion).</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionLastResortOnly">Scriptdetectie wordt alleen als laatste redmiddel aanbevolen. Gebruik MSI-, Registry- of bestandsdetectie voor dit installertype.</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionAppxMustCheckVersion">APPX/MSIX scriptdetectie moet exacte package-identiteit en versie controleren.</sys:String>
     <sys:String x:Key="Core.Validation.RequirementArchitectureRequired">Requirement-architectuur is vereist.</sys:String>
@@ -488,6 +489,7 @@
     <sys:String x:Key="Core.Preflight.Message.RegistryDetectionExeVersionRequired">Voor EXE-detectie is de DisplayVersion-waarde verplicht.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionBodyRequired">Scriptdetectie vereist scriptinhoud.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionPlaceholder">Scriptdetectie bevat nog placeholders.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.ScriptDetectionExeMustBeDeterministic">Voor EXE-installers moet scriptdetectie exacte registergelijkheid gebruiken (DisplayName, Publisher, DisplayVersion).</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionLastResortOnly">Scriptdetectie wordt alleen als laatste redmiddel aanbevolen. Gebruik MSI-, Registry- of bestandsdetectie voor dit installertype.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionAppxMustCheckVersion">APPX/MSIX scriptdetectie moet exacte package-identiteit en versie controleren.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.RequirementArchitectureRequired">Besturingssysteemarchitectuur is vereist.</sys:String>

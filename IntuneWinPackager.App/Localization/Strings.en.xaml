@@ -411,6 +411,7 @@
     <sys:String x:Key="Core.Validation.RegistryDetectionExeVersionRequired">For EXE detection, DisplayVersion value is required.</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionBodyRequired">Script detection requires script content.</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionHasPlaceholder">Script detection still contains placeholders. Replace placeholders with production detection logic.</sys:String>
+    <sys:String x:Key="Core.Validation.ScriptDetectionExeMustBeDeterministic">For EXE installers, script detection must use exact registry equality (DisplayName, Publisher, DisplayVersion).</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionLastResortOnly">Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionAppxMustCheckVersion">APPX/MSIX script detection must check exact package identity and version.</sys:String>
     <sys:String x:Key="Core.Validation.RequirementArchitectureRequired">Requirement architecture is required.</sys:String>
@@ -488,6 +489,7 @@
     <sys:String x:Key="Core.Preflight.Message.RegistryDetectionExeVersionRequired">For EXE detection, DisplayVersion value is required.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionBodyRequired">Script detection requires script content.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionPlaceholder">Script detection still contains placeholders.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.ScriptDetectionExeMustBeDeterministic">For EXE installers, script detection must use exact registry equality (DisplayName, Publisher, DisplayVersion).</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionLastResortOnly">Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionAppxMustCheckVersion">APPX/MSIX script detection must check exact package identity and version.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.RequirementArchitectureRequired">Operating system architecture is required.</sys:String>

@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.2.0] - 2026-04-19
+
+### Added
+- Major Packaging Update release.
+- Added shared deterministic detection script templates for EXE (exact registry equality) and APPX/MSIX (exact identity + version).
+- Added hardlink-first smart staging (with copy fallback) to speed source preparation for large packages.
+- Added detection script regression tests and extended packaging metadata checks.
+
+### Changed
+- EXE suggestion flow now generates deterministic script detection from installer metadata when no installed footprint is available.
+- Packaging metadata export now includes `hardLinkedFileCount` for staging diagnostics.
+- Package Store and packaging services now reuse the same deterministic detection script generator to avoid drift.
+
+### Fixed
+- Preflight and validation are now consistent with deterministic EXE script detection (no conflicting rule interpretation between Store, suggestion, and gate checks).
+- Localized new validation/preflight detection messages in English and Dutch.
+
 ## [2.1.0] - 2026-04-19
 
 ### Added

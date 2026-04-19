@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Text.RegularExpressions;
 using IntuneWinPackager.Core.Interfaces;
+using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 
@@ -10,7 +11,6 @@ public sealed class PackagingValidationService : IValidationService
 {
     private static readonly Regex ProductCodeRegex = new("^\\{[0-9A-Fa-f\\-]{36}\\}$", RegexOptions.Compiled);
     private static readonly Regex PlaceholderRegex = new("<[^>]+>", RegexOptions.Compiled);
-    private static readonly Regex AppxVersionCheckRegex = new(@"Version\s*\.ToString\(\)\s*-eq", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly HashSet<string> SupportedArchitectures = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -299,21 +299,30 @@ public sealed class PackagingValidationService : IValidationService
                         "Script detection still contains placeholders. Replace placeholders with production detection logic.");
                 }
 
-                if (installerType != InstallerType.AppxMsix && installerType != InstallerType.Script)
+                if (installerType == InstallerType.Exe &&
+                    !DeterministicDetectionScript.IsExactExeRegistryScript(detection.Script.ScriptBody))
                 {
                     AddIssue(
                         issues,
-                        "Core.Validation.ScriptDetectionLastResortOnly",
-                        "Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.");
+                        "Core.Validation.ScriptDetectionExeMustBeDeterministic",
+                        "For EXE installers, script detection must use exact registry equality (DisplayName, Publisher, DisplayVersion).");
                 }
-
-                if (installerType == InstallerType.AppxMsix &&
-                    !IsAppxDetectionScriptPrecise(detection.Script.ScriptBody))
+                else if (installerType == InstallerType.AppxMsix &&
+                         !DeterministicDetectionScript.IsExactAppxIdentityScript(detection.Script.ScriptBody))
                 {
                     AddIssue(
                         issues,
                         "Core.Validation.ScriptDetectionAppxMustCheckVersion",
                         "APPX/MSIX script detection must check exact package identity and version.");
+                }
+                else if (installerType != InstallerType.AppxMsix &&
+                         installerType != InstallerType.Script &&
+                         installerType != InstallerType.Exe)
+                {
+                    AddIssue(
+                        issues,
+                        "Core.Validation.ScriptDetectionLastResortOnly",
+                        "Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.");
                 }
                 break;
         }
@@ -406,18 +415,6 @@ public sealed class PackagingValidationService : IValidationService
         return GenericDetectionNames.Contains(value.Trim());
     }
 
-    private static bool IsAppxDetectionScriptPrecise(string? scriptBody)
-    {
-        if (string.IsNullOrWhiteSpace(scriptBody))
-        {
-            return false;
-        }
-
-        return scriptBody.Contains("Get-AppxPackage", StringComparison.OrdinalIgnoreCase) &&
-               scriptBody.Contains("-Name", StringComparison.OrdinalIgnoreCase) &&
-               AppxVersionCheckRegex.IsMatch(scriptBody);
-    }
-
     private static bool IsPathInsideFolder(string filePath, string folderPath)
     {
         var folderFullPath = Path.GetFullPath(folderPath)
@@ -429,3 +426,4 @@ public sealed class PackagingValidationService : IValidationService
         return fileFullPath.StartsWith(folderFullPath, StringComparison.OrdinalIgnoreCase);
     }
 }
+

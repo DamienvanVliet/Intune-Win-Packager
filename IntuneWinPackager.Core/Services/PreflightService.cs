@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Text.RegularExpressions;
 using IntuneWinPackager.Core.Interfaces;
+using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
@@ -13,7 +14,6 @@ public sealed class PreflightService : IPreflightService
     private const int ToolProbeTimeoutSeconds = 8;
     private static readonly Regex ProductCodeRegex = new("^\\{[0-9A-Fa-f\\-]{36}\\}$", RegexOptions.Compiled);
     private static readonly Regex PlaceholderRegex = new("<[^>]+>", RegexOptions.Compiled);
-    private static readonly Regex AppxVersionCheckRegex = new(@"Version\s*\.ToString\(\)\s*-eq", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly HashSet<string> SupportedArchitectures = new(StringComparer.OrdinalIgnoreCase)
     {
         "x64",
@@ -643,18 +643,18 @@ public sealed class PreflightService : IPreflightService
                     checks.Add(Pass("detection-script", "Script Detection", "Script detection content is configured."));
                 }
 
-                if (installerType != InstallerType.AppxMsix && installerType != InstallerType.Script)
+                if (installerType == InstallerType.Exe &&
+                    !DeterministicDetectionScript.IsExactExeRegistryScript(detection.Script.ScriptBody))
                 {
                     checks.Add(Error(
-                        "detection-script-last-resort",
+                        "detection-script-exe-deterministic",
                         "Script Detection",
-                        "Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.",
+                        "For EXE installers, script detection must use exact registry equality (DisplayName, Publisher, DisplayVersion).",
                         titleKey: "Core.Preflight.Title.ScriptDetection",
-                        messageKey: "Core.Preflight.Message.ScriptDetectionLastResortOnly"));
+                        messageKey: "Core.Preflight.Message.ScriptDetectionExeMustBeDeterministic"));
                 }
-
-                if (installerType == InstallerType.AppxMsix &&
-                    !IsAppxDetectionScriptPrecise(detection.Script.ScriptBody))
+                else if (installerType == InstallerType.AppxMsix &&
+                         !DeterministicDetectionScript.IsExactAppxIdentityScript(detection.Script.ScriptBody))
                 {
                     checks.Add(Error(
                         "detection-script-appx-precision",
@@ -662,6 +662,17 @@ public sealed class PreflightService : IPreflightService
                         "APPX/MSIX script detection must check exact package identity and version.",
                         titleKey: "Core.Preflight.Title.ScriptDetection",
                         messageKey: "Core.Preflight.Message.ScriptDetectionAppxMustCheckVersion"));
+                }
+                else if (installerType != InstallerType.AppxMsix &&
+                         installerType != InstallerType.Script &&
+                         installerType != InstallerType.Exe)
+                {
+                    checks.Add(Error(
+                        "detection-script-last-resort",
+                        "Script Detection",
+                        "Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.",
+                        titleKey: "Core.Preflight.Title.ScriptDetection",
+                        messageKey: "Core.Preflight.Message.ScriptDetectionLastResortOnly"));
                 }
                 break;
         }
@@ -884,18 +895,6 @@ public sealed class PreflightService : IPreflightService
         return GenericDetectionNames.Contains(value.Trim());
     }
 
-    private static bool IsAppxDetectionScriptPrecise(string? scriptBody)
-    {
-        if (string.IsNullOrWhiteSpace(scriptBody))
-        {
-            return false;
-        }
-
-        return scriptBody.Contains("Get-AppxPackage", StringComparison.OrdinalIgnoreCase) &&
-               scriptBody.Contains("-Name", StringComparison.OrdinalIgnoreCase) &&
-               AppxVersionCheckRegex.IsMatch(scriptBody);
-    }
-
     private static string FormatBytes(long bytes)
     {
         if (bytes < 0)
@@ -916,3 +915,4 @@ public sealed class PreflightService : IPreflightService
         return $"{value:0.#} {units[index]}";
     }
 }
+

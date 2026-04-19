@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using IntuneWinPackager.Core.Interfaces;
+using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using Microsoft.Win32;
@@ -470,6 +471,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
             RuleType = IntuneDetectionRuleType.None
         };
 
+        var metadataBasedDetection = false;
         if (installedEvidence is not null)
         {
             detectionRule = installedEvidence.DetectionRule;
@@ -477,6 +479,12 @@ public sealed class InstallerCommandService : IInstallerCommandService
             guidanceParts.Add(
                 $"Deterministic local footprint matched '{installedEvidence.DisplayName}' " +
                 $"(exact DisplayName/Publisher/DisplayVersion) and was used for registry detection + uninstall suggestion.");
+        }
+        else if (TryBuildDeterministicExeDetectionFromMetadata(setupFilePath, out var metadataDetectionRule, out var metadataDetectionSummary))
+        {
+            detectionRule = metadataDetectionRule;
+            metadataBasedDetection = true;
+            guidanceParts.Add(metadataDetectionSummary);
         }
         else
         {
@@ -486,14 +494,21 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
 
         var baseScore = Math.Max(template.BaseConfidenceScore, probe.ConfidenceScore);
-        var adjustedScore = installedEvidence is not null
-            ? Math.Min(99, baseScore + 8)
-            : baseScore;
+        var detectionBoost = installedEvidence is not null
+            ? 8
+            : metadataBasedDetection
+                ? 5
+                : 0;
+        var adjustedScore = Math.Min(99, baseScore + detectionBoost);
         var confidenceLevel = ToConfidenceLevel(adjustedScore);
 
-        var confidenceReason = confidenceLevel switch
+        var confidenceReason = installedEvidence is not null
+            ? "Installer behavior matched deterministic local evidence and verified switch hints."
+            : metadataBasedDetection
+                ? "Installer metadata produced deterministic EXE registry detection. Validate silent switches before production rollout."
+                : confidenceLevel switch
         {
-            SuggestionConfidenceLevel.High => "Installer behavior matched deterministic local evidence and verified switch hints.",
+            SuggestionConfidenceLevel.High => "Installer behavior was inferred with high confidence. Validate silent switches and detection once before rollout.",
             SuggestionConfidenceLevel.Medium => "Installer behavior was inferred. Verify switches and detection before production rollout.",
             _ => "Installer behavior remains uncertain. Manual production validation is required."
         };
@@ -1239,6 +1254,62 @@ public sealed class InstallerCommandService : IInstallerCommandService
         return trimmed;
     }
 
+    private static bool TryBuildDeterministicExeDetectionFromMetadata(
+        string setupFilePath,
+        out IntuneDetectionRule detectionRule,
+        out string summary)
+    {
+        detectionRule = new IntuneDetectionRule
+        {
+            RuleType = IntuneDetectionRuleType.None
+        };
+        summary = string.Empty;
+
+        var versionInfo = TryGetVersionInfo(setupFilePath);
+        var displayName = FirstNonEmpty(
+            versionInfo?.ProductName,
+            versionInfo?.FileDescription,
+            Path.GetFileNameWithoutExtension(setupFilePath));
+        var publisher = FirstNonEmpty(versionInfo?.CompanyName);
+        var displayVersion = NormalizeVersion(versionInfo?.ProductVersion ?? versionInfo?.FileVersion);
+
+        if (string.IsNullOrWhiteSpace(displayName) ||
+            string.IsNullOrWhiteSpace(publisher) ||
+            string.IsNullOrWhiteSpace(displayVersion))
+        {
+            return false;
+        }
+
+        detectionRule = new IntuneDetectionRule
+        {
+            RuleType = IntuneDetectionRuleType.Script,
+            Script = new ScriptDetectionRule
+            {
+                ScriptBody = DeterministicDetectionScript.BuildExactExeRegistryScript(displayName, publisher, displayVersion),
+                RunAs32BitOn64System = false,
+                EnforceSignatureCheck = false
+            }
+        };
+
+        summary =
+            "No local installed footprint was found. Generated deterministic EXE detection script from installer metadata " +
+            $"(DisplayName='{displayName}', Publisher='{publisher}', DisplayVersion='{displayVersion}').";
+        return true;
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return string.Empty;
+    }
+
     private static string Normalize(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1294,25 +1365,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
     private static string BuildAppxDetectionScript(AppxIdentity identity)
     {
-        var escapedName = identity.Name.Replace("\"", "`\"", StringComparison.Ordinal);
-        var escapedVersion = identity.Version.Replace("\"", "`\"", StringComparison.Ordinal);
-        var escapedPublisher = identity.Publisher.Replace("\"", "`\"", StringComparison.Ordinal);
-
-        var publisherFilter = string.IsNullOrWhiteSpace(escapedPublisher)
-            ? string.Empty
-            : $" -and $_.Publisher -eq \"{escapedPublisher}\"";
-
-        return string.Join(Environment.NewLine,
-        [
-            "$package = Get-AppxPackage -Name \"" + escapedName + "\" -ErrorAction SilentlyContinue | Where-Object {",
-            "    $_.Version.ToString() -eq \"" + escapedVersion + "\"" + publisherFilter,
-            "} | Select-Object -First 1",
-            "if ($null -ne $package) {",
-            "    Write-Output \"Detected\"",
-            "    exit 0",
-            "}",
-            "exit 1"
-        ]);
+        return DeterministicDetectionScript.BuildExactAppxIdentityScript(
+            identity.Name,
+            identity.Version,
+            identity.Publisher);
     }
 
     private static string BuildPlaceholderDetectionScript(string reason)

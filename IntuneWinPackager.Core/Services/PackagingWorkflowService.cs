@@ -1,5 +1,6 @@
 using System.IO;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -239,18 +240,30 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
 
         var copiedFileCount = 0;
         long copiedBytes = 0;
+        var hardLinkedFileCount = 0;
         var copyParallelism = DetermineStagingCopyParallelism(request.UseLowImpactMode);
+        var preferHardLinks = CanUseHardLinkStaging(sourceFolder, stagingSource);
+
+        if (preferHardLinks)
+        {
+            logProgress?.Report("Smart staging optimization: using hard links where possible for faster source preparation.");
+        }
 
         CopyDirectoryTree(
             sourceFolder,
             stagingSource,
             outputInsideSource ? outputFolder : null,
+            preferHardLinks,
             copyParallelism,
             ref copiedFileCount,
+            ref hardLinkedFileCount,
             ref copiedBytes,
             cancellationToken);
 
-        logProgress?.Report($"Staged {copiedFileCount} file(s), {FormatBytes(copiedBytes)} copied to isolated source (parallelism: {copyParallelism}).");
+        var copiedFileOnlyCount = Math.Max(0, copiedFileCount - hardLinkedFileCount);
+        logProgress?.Report(
+            $"Staged {copiedFileCount} file(s), {FormatBytes(copiedBytes)} prepared for isolated source " +
+            $"(hard-linked: {hardLinkedFileCount}, copied: {copiedFileOnlyCount}, parallelism: {copyParallelism}).");
 
         return new PreparedSourceContext
         {
@@ -258,6 +271,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             SetupRelativePath = setupRelativePath,
             StagingRootFolder = stagingRoot,
             StagedFileCount = copiedFileCount,
+            HardLinkedFileCount = hardLinkedFileCount,
             StagedBytes = copiedBytes
         };
     }
@@ -282,8 +296,10 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         string sourceFolder,
         string destinationFolder,
         string? excludedOutputFolder,
+        bool preferHardLinks,
         int copyParallelism,
         ref int copiedFileCount,
+        ref int hardLinkedFileCount,
         ref long copiedBytes,
         CancellationToken cancellationToken)
     {
@@ -331,9 +347,13 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                     cancellationToken.ThrowIfCancellationRequested();
 
                     var destinationFile = Path.Combine(current.Destination, Path.GetFileName(file));
-                    File.Copy(file, destinationFile, overwrite: true);
-
+                    var stagedWithHardLink = TryStageFile(file, destinationFile, preferHardLinks);
                     copiedFileCount++;
+                    if (stagedWithHardLink)
+                    {
+                        hardLinkedFileCount++;
+                    }
+
                     copiedBytes += new FileInfo(file).Length;
                 }
 
@@ -341,6 +361,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             }
 
             var copiedInDirectory = 0;
+            var hardLinkedInDirectory = 0;
             long copiedBytesInDirectory = 0;
             Parallel.ForEach(
                 filesToCopy,
@@ -352,13 +373,19 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                 file =>
                 {
                     var destinationFile = Path.Combine(current.Destination, Path.GetFileName(file));
-                    File.Copy(file, destinationFile, overwrite: true);
+                    var stagedWithHardLink = TryStageFile(file, destinationFile, preferHardLinks);
 
                     Interlocked.Increment(ref copiedInDirectory);
+                    if (stagedWithHardLink)
+                    {
+                        Interlocked.Increment(ref hardLinkedInDirectory);
+                    }
+
                     Interlocked.Add(ref copiedBytesInDirectory, new FileInfo(file).Length);
                 });
 
             copiedFileCount += copiedInDirectory;
+            hardLinkedFileCount += hardLinkedInDirectory;
             copiedBytes += copiedBytesInDirectory;
         }
     }
@@ -390,6 +417,63 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                Path.GetFileName(filePath).EndsWith(".intune-checklist.md", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool CanUseHardLinkStaging(string sourceFolder, string destinationFolder)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            return IsSameVolume(sourceFolder, destinationFolder);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryStageFile(string sourceFile, string destinationFile, bool preferHardLinks)
+    {
+        if (preferHardLinks && TryCreateHardLink(destinationFile, sourceFile))
+        {
+            return true;
+        }
+
+        File.Copy(sourceFile, destinationFile, overwrite: true);
+        return false;
+    }
+
+    private static bool IsSameVolume(string leftPath, string rightPath)
+    {
+        var leftRoot = Path.GetPathRoot(Path.GetFullPath(leftPath));
+        var rightRoot = Path.GetPathRoot(Path.GetFullPath(rightPath));
+        return !string.IsNullOrWhiteSpace(leftRoot) &&
+               !string.IsNullOrWhiteSpace(rightRoot) &&
+               leftRoot.Equals(rightRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryCreateHardLink(string linkPath, string existingPath)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            return CreateHardLinkNative(linkPath, existingPath, IntPtr.Zero);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateHardLinkNative(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
+
     private static async Task<string?> WriteMetadataFileAsync(
         PackagingRequest request,
         PreparedSourceContext preparedSource,
@@ -416,6 +500,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                 request.Configuration.UseSmartSourceStaging,
                 usedIsolatedStaging = preparedSource.StagingRootFolder is not null,
                 stagedFileCount = preparedSource.StagedFileCount,
+                hardLinkedFileCount = preparedSource.HardLinkedFileCount,
                 stagedBytes = preparedSource.StagedBytes
             }
         };
@@ -704,6 +789,8 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         public string? StagingRootFolder { get; init; }
 
         public int StagedFileCount { get; init; }
+
+        public int HardLinkedFileCount { get; init; }
 
         public long StagedBytes { get; init; }
     }
