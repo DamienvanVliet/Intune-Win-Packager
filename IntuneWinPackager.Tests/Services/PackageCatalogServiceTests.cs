@@ -398,7 +398,7 @@ public sealed class PackageCatalogServiceTests
         Assert.Equal(IntuneDetectionRuleType.Script, variant.DetectionRule.RuleType);
         Assert.True(variant.IsDeterministicDetection);
         Assert.Contains("DisplayName -eq", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
-        Assert.Contains("DisplayVersion -eq", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+        Assert.Contains("Test-IwpVersionMatch", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
     }
 
     [Fact]

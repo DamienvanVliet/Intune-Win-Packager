@@ -4,6 +4,7 @@ using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
 using Microsoft.Win32;
+using System.Text.RegularExpressions;
 
 namespace IntuneWinPackager.Tests.Services;
 
@@ -112,6 +113,30 @@ public sealed class DetectionTestServiceTests
         }
     }
 
+    [Fact]
+    public async Task ProveAsync_PassiveMode_ReturnsSuccessfulTwoPhaseProof()
+    {
+        var sut = new DetectionTestService(new ScriptAwareProcessRunner());
+
+        var proof = await sut.ProveAsync(new DetectionProofRequest
+        {
+            InstallerType = InstallerType.Exe,
+            Mode = DetectionProofMode.PassiveRuleControl,
+            DetectionRule = new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Script,
+                Script = new ScriptDetectionRule
+                {
+                    ScriptBody = "Write-Output 'detected:1.0.0'; exit 0"
+                }
+            }
+        });
+
+        Assert.True(proof.Success);
+        Assert.True(proof.NegativePhase.Success);
+        Assert.True(proof.PositivePhase.Success);
+    }
+
     private sealed class FakeProcessRunner : IProcessRunner
     {
         private readonly ProcessRunResult _result;
@@ -134,6 +159,49 @@ public sealed class DetectionTestServiceTests
             }
 
             return Task.FromResult(_result);
+        }
+    }
+
+    private sealed class ScriptAwareProcessRunner : IProcessRunner
+    {
+        private static readonly Regex FileArgumentRegex = new("-File\\s+(?:\"(?<pathq>[^\"]+)\"|(?<pathu>[^\\s]+))", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        public Task<ProcessRunResult> RunAsync(
+            ProcessRunRequest request,
+            IProgress<ProcessOutputLine>? outputProgress = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (!request.FileName.Contains("powershell", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new ProcessRunResult { ExitCode = 0, TimedOut = false });
+            }
+
+            var match = FileArgumentRegex.Match(request.Arguments ?? string.Empty);
+            if (!match.Success)
+            {
+                return Task.FromResult(new ProcessRunResult { ExitCode = 1, TimedOut = false });
+            }
+
+            var path = match.Groups["pathq"].Success
+                ? match.Groups["pathq"].Value
+                : match.Groups["pathu"].Value;
+            var scriptBody = File.Exists(path) ? File.ReadAllText(path) : string.Empty;
+            if (scriptBody.Contains("exit 1", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new ProcessRunResult { ExitCode = 1, TimedOut = false });
+            }
+
+            if (scriptBody.Contains("Write-Output", StringComparison.OrdinalIgnoreCase))
+            {
+                outputProgress?.Report(new ProcessOutputLine
+                {
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    Severity = LogSeverity.Info,
+                    Text = "detected:1.0.0"
+                });
+            }
+
+            return Task.FromResult(new ProcessRunResult { ExitCode = 0, TimedOut = false });
         }
     }
 }

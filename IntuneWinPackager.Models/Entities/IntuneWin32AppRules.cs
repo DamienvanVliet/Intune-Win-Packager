@@ -21,4 +21,24 @@ public sealed record IntuneWin32AppRules
     public IntuneRequirementRules Requirements { get; init; } = new();
 
     public IntuneDetectionRule DetectionRule { get; init; } = new();
+
+    public DetectionDeploymentIntent DetectionIntent { get; init; } = DetectionDeploymentIntent.Install;
+
+    public IReadOnlyList<IntuneDetectionRule> AdditionalDetectionRules { get; init; } = [];
+
+    public IReadOnlyList<DetectionFieldProvenance> DetectionProvenance { get; init; } = [];
+
+    public bool StrictDetectionProvenanceMode { get; init; }
+
+    public bool ExeIdentityLockEnabled { get; init; } = true;
+
+    public bool ExeFallbackApproved { get; init; }
+
+    public bool EnforceStrictScriptPolicy { get; init; } = true;
+
+    public string SourceChannelHint { get; init; } = string.Empty;
+
+    public string InstallerArchitectureHint { get; init; } = string.Empty;
+
+    public string InstallerSignerThumbprintHint { get; init; } = string.Empty;
 }

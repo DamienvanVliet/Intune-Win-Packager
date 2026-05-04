@@ -66,6 +66,16 @@ public partial class MainViewModel : ObservableObject
     private CancellationTokenSource? _catalogDetailsCancellation;
     private List<CatalogPackageProfile> _catalogProfiles = [];
     private CatalogSelectionContext? _activeCatalogSelectionContext;
+    private IReadOnlyList<IntuneDetectionRule> _additionalDetectionRules = [];
+    private IReadOnlyList<DetectionFieldProvenance> _detectionProvenance = [];
+    private DetectionDeploymentIntent _detectionIntent = DetectionDeploymentIntent.Install;
+    private bool _strictDetectionProvenanceMode;
+    private bool _exeIdentityLockEnabled = true;
+    private bool _exeFallbackApproved;
+    private bool _enforceStrictScriptPolicy = true;
+    private string _sourceChannelHint = string.Empty;
+    private string _installerArchitectureHint = string.Empty;
+    private string _installerSignerThumbprintHint = string.Empty;
 
     [ObservableProperty]
     private string sourceFolder = string.Empty;
@@ -1151,6 +1161,9 @@ public partial class MainViewModel : ObservableObject
             !string.Equals(_activeCatalogSelectionContext.InstallerPath, value, StringComparison.OrdinalIgnoreCase))
         {
             _activeCatalogSelectionContext = null;
+            _sourceChannelHint = string.Empty;
+            _installerArchitectureHint = string.Empty;
+            _installerSignerThumbprintHint = string.Empty;
         }
 
         if (_suppressSetupRefresh)
@@ -1675,7 +1688,10 @@ public partial class MainViewModel : ObservableObject
         var suggestion = _installerCommandService.CreateSuggestion(
             SetupFilePath,
             InstallerType.Exe,
-            preset: SelectedPreset);
+            preset: SelectedPreset,
+            detectionIntent: _detectionIntent,
+            sourceChannelHint: _sourceChannelHint,
+            installerArchitectureHint: _installerArchitectureHint);
         ApplySuggestion(suggestion);
 
         SetStatus(
@@ -1868,7 +1884,10 @@ public partial class MainViewModel : ObservableObject
                     var suggestion = _installerCommandService.CreateSuggestion(
                         SetupFilePath,
                         InstallerType,
-                        metadata);
+                        metadata,
+                        detectionIntent: _detectionIntent,
+                        sourceChannelHint: _sourceChannelHint,
+                        installerArchitectureHint: _installerArchitectureHint);
                     ApplySuggestion(
                         suggestion,
                         overwriteCommands: installNeedsRefresh || uninstallNeedsRefresh,
@@ -2022,7 +2041,33 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            var result = await _detectionTestService.TestAsync(InstallerType, BuildDetectionRule());
+            var detectionRule = BuildDetectionRule();
+            var proof = await _detectionTestService.ProveAsync(new DetectionProofRequest
+            {
+                InstallerType = InstallerType,
+                DetectionRule = detectionRule,
+                Mode = DetectionProofMode.PassiveRuleControl,
+                InstallCommand = InstallCommand,
+                UninstallCommand = UninstallCommand,
+                WorkingDirectory = string.IsNullOrWhiteSpace(SetupFilePath)
+                    ? Environment.CurrentDirectory
+                    : Path.GetDirectoryName(SetupFilePath) ?? Environment.CurrentDirectory
+            });
+
+            AppendLog($"Detection proof summary: {proof.Summary}");
+            AppendLog($"{proof.NegativePhase.PhaseName}: {proof.NegativePhase.Summary}");
+            if (!string.IsNullOrWhiteSpace(proof.NegativePhase.Details))
+            {
+                AppendLog($"{proof.NegativePhase.PhaseName} details: {proof.NegativePhase.Details}");
+            }
+
+            AppendLog($"{proof.PositivePhase.PhaseName}: {proof.PositivePhase.Summary}");
+            if (!string.IsNullOrWhiteSpace(proof.PositivePhase.Details))
+            {
+                AppendLog($"{proof.PositivePhase.PhaseName} details: {proof.PositivePhase.Details}");
+            }
+
+            var result = await _detectionTestService.TestAsync(InstallerType, detectionRule);
 
             if (!string.IsNullOrWhiteSpace(result.StandardOutput))
             {
@@ -2036,7 +2081,7 @@ public partial class MainViewModel : ObservableObject
 
             AppendLog($"Detection test summary: {result.Summary}");
 
-            if (result.Success)
+            if (result.Success && proof.Success)
             {
                 DetectionTestStatus = T("Vm.Detection.TestStatus.Passed");
                 if (InstallerType == InstallerType.Exe)
@@ -2059,7 +2104,7 @@ public partial class MainViewModel : ObservableObject
                 SetStatus(
                     OperationState.Error,
                     T("Vm.Status.DetectionTestFailedTitle"),
-                    result.Details);
+                    proof.Success ? result.Details : proof.Summary);
             }
         }
         catch (Exception ex)
@@ -2528,6 +2573,8 @@ public partial class MainViewModel : ObservableObject
             SelectedCatalogEntry = refreshedEntry;
             CatalogEntryDetails = refreshedEntry;
             var selectedVariant = ResolveCatalogVariant(refreshedEntry, downloadResult.InstallerSha256);
+            _sourceChannelHint = refreshedEntry.SourceChannel;
+            _installerArchitectureHint = selectedVariant?.Architecture ?? _installerArchitectureHint;
             _activeCatalogSelectionContext = new CatalogSelectionContext(
                 refreshedEntry.CanonicalPackageKey,
                 refreshedEntry.Source,
@@ -2763,7 +2810,10 @@ public partial class MainViewModel : ObservableObject
                     var fallbackSuggestion = _installerCommandService.CreateSuggestion(
                         SetupFilePath,
                         InstallerType.Exe,
-                        preset: fallbackPreset);
+                        preset: fallbackPreset,
+                        detectionIntent: _detectionIntent,
+                        sourceChannelHint: _sourceChannelHint,
+                        installerArchitectureHint: _installerArchitectureHint);
 
                     if (installHasPlaceholder && !ContainsCatalogTemplatePlaceholder(fallbackSuggestion.InstallCommand))
                     {
@@ -3851,6 +3901,16 @@ public partial class MainViewModel : ObservableObject
             DetectionScriptBody = string.Empty;
             DetectionScriptRunAs32BitOn64System = false;
             DetectionScriptEnforceSignatureCheck = false;
+            _detectionIntent = DetectionDeploymentIntent.Install;
+            _additionalDetectionRules = [];
+            _detectionProvenance = [];
+            _strictDetectionProvenanceMode = false;
+            _exeIdentityLockEnabled = true;
+            _exeFallbackApproved = false;
+            _enforceStrictScriptPolicy = true;
+            _sourceChannelHint = string.Empty;
+            _installerArchitectureHint = string.Empty;
+            _installerSignerThumbprintHint = string.Empty;
             RequirementOperatingSystemArchitecture = "x64";
             RequirementMinimumOperatingSystem = "Windows 10 1607";
             RequirementMinimumFreeDiskSpaceMb = 0;
@@ -3971,14 +4031,25 @@ public partial class MainViewModel : ObservableObject
             await RefreshMsiMetadataSummaryAsync(filePath);
 
             var metadata = await _msiInspectorService.InspectAsync(filePath);
-            var suggestion = _installerCommandService.CreateSuggestion(filePath, InstallerType.Msi, metadata);
+            var suggestion = _installerCommandService.CreateSuggestion(
+                filePath,
+                InstallerType.Msi,
+                metadata,
+                detectionIntent: _detectionIntent,
+                sourceChannelHint: _sourceChannelHint,
+                installerArchitectureHint: _installerArchitectureHint);
             ApplySuggestion(suggestion);
         }
         else if (InstallerType != InstallerType.Unknown)
         {
             MsiMetadataSummary = string.Empty;
 
-            var suggestion = _installerCommandService.CreateSuggestion(filePath, InstallerType);
+            var suggestion = _installerCommandService.CreateSuggestion(
+                filePath,
+                InstallerType,
+                detectionIntent: _detectionIntent,
+                sourceChannelHint: _sourceChannelHint,
+                installerArchitectureHint: _installerArchitectureHint);
             ApplySuggestion(suggestion);
         }
         else
@@ -4108,7 +4179,17 @@ public partial class MainViewModel : ObservableObject
             AppliedTemplateName = AppliedTemplateName,
             TemplateGuidance = TemplateGuidance,
             Requirements = BuildRequirementRules(),
-            DetectionRule = BuildDetectionRule()
+            DetectionRule = BuildDetectionRule(),
+            DetectionIntent = _detectionIntent,
+            AdditionalDetectionRules = _additionalDetectionRules,
+            DetectionProvenance = _detectionProvenance,
+            StrictDetectionProvenanceMode = _strictDetectionProvenanceMode,
+            ExeIdentityLockEnabled = _exeIdentityLockEnabled,
+            ExeFallbackApproved = _exeFallbackApproved,
+            EnforceStrictScriptPolicy = _enforceStrictScriptPolicy,
+            SourceChannelHint = _sourceChannelHint,
+            InstallerArchitectureHint = _installerArchitectureHint,
+            InstallerSignerThumbprintHint = _installerSignerThumbprintHint
         };
     }
 
@@ -4136,7 +4217,10 @@ public partial class MainViewModel : ObservableObject
             Msi = new MsiDetectionRule
             {
                 ProductCode = DetectionMsiProductCode,
-                ProductVersion = DetectionMsiProductVersion
+                ProductVersion = DetectionMsiProductVersion,
+                ProductVersionOperator = _detectionIntent == DetectionDeploymentIntent.Update
+                    ? IntuneDetectionOperator.GreaterThanOrEqual
+                    : IntuneDetectionOperator.Equals
             },
             File = new FileDetectionRule
             {
@@ -4195,6 +4279,16 @@ public partial class MainViewModel : ObservableObject
         SilentSwitchesVerified = rules.RequireSilentSwitchReview ? rules.SilentSwitchesVerified : true;
         AppliedTemplateName = rules.AppliedTemplateName;
         TemplateGuidance = rules.TemplateGuidance;
+        _detectionIntent = rules.DetectionIntent;
+        _additionalDetectionRules = rules.AdditionalDetectionRules ?? [];
+        _detectionProvenance = rules.DetectionProvenance ?? [];
+        _strictDetectionProvenanceMode = rules.StrictDetectionProvenanceMode;
+        _exeIdentityLockEnabled = rules.ExeIdentityLockEnabled;
+        _exeFallbackApproved = rules.ExeFallbackApproved;
+        _enforceStrictScriptPolicy = rules.EnforceStrictScriptPolicy;
+        _sourceChannelHint = rules.SourceChannelHint;
+        _installerArchitectureHint = rules.InstallerArchitectureHint;
+        _installerSignerThumbprintHint = rules.InstallerSignerThumbprintHint;
         ApplyRequirementRules(rules.Requirements);
         ApplyDetectionRule(rules.DetectionRule);
     }
@@ -4302,7 +4396,9 @@ public partial class MainViewModel : ObservableObject
                 InstallerType,
                 InstallCommand,
                 UninstallCommand,
-                rules);
+                rules,
+                sourceChannelHint: _sourceChannelHint,
+                installerArchitectureHint: _installerArchitectureHint);
         }
         catch
         {

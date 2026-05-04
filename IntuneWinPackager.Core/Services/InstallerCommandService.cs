@@ -206,7 +206,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
         string setupFilePath,
         InstallerType installerType,
         MsiMetadata? msiMetadata = null,
-        SilentInstallPreset? preset = null)
+        SilentInstallPreset? preset = null,
+        DetectionDeploymentIntent detectionIntent = DetectionDeploymentIntent.Install,
+        string sourceChannelHint = "",
+        string installerArchitectureHint = "")
     {
         var setupFileName = Path.GetFileName(setupFilePath);
         if (string.IsNullOrWhiteSpace(setupFileName))
@@ -214,7 +217,11 @@ public sealed class InstallerCommandService : IInstallerCommandService
             return new CommandSuggestion();
         }
 
-        var lookupContext = BuildKnowledgeLookupContext(setupFilePath, installerType);
+        var lookupContext = BuildKnowledgeLookupContext(
+            setupFilePath,
+            installerType,
+            sourceChannelHint,
+            installerArchitectureHint);
         if (lookupContext is not null && TryGetKnowledgeEntry(lookupContext, out var cachedEntry))
         {
             var cachedRules = NormalizeVerifiedCacheRules(installerType, cachedEntry.IntuneRules);
@@ -241,9 +248,28 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
         return installerType switch
         {
-            InstallerType.Msi => CreateMsiSuggestion(setupFileName, msiMetadata),
-            InstallerType.Exe => CreateExeSuggestion(setupFilePath, setupFileName, preset),
-            InstallerType.AppxMsix => CreateAppxMsixSuggestion(setupFilePath, setupFileName),
+            InstallerType.Msi => CreateMsiSuggestion(
+                setupFileName,
+                msiMetadata,
+                detectionIntent,
+                sourceChannelHint,
+                installerArchitectureHint,
+                lookupContext?.SignerThumbprint ?? string.Empty),
+            InstallerType.Exe => CreateExeSuggestion(
+                setupFilePath,
+                setupFileName,
+                preset,
+                detectionIntent,
+                sourceChannelHint,
+                installerArchitectureHint,
+                lookupContext?.SignerThumbprint ?? string.Empty),
+            InstallerType.AppxMsix => CreateAppxMsixSuggestion(
+                setupFilePath,
+                setupFileName,
+                detectionIntent,
+                sourceChannelHint,
+                installerArchitectureHint,
+                lookupContext?.SignerThumbprint ?? string.Empty),
             InstallerType.Script => CreateScriptSuggestion(setupFileName),
             _ => new CommandSuggestion
             {
@@ -274,7 +300,9 @@ public sealed class InstallerCommandService : IInstallerCommandService
         InstallerType installerType,
         string installCommand,
         string uninstallCommand,
-        IntuneWin32AppRules intuneRules)
+        IntuneWin32AppRules intuneRules,
+        string sourceChannelHint = "",
+        string installerArchitectureHint = "")
     {
         if (string.IsNullOrWhiteSpace(setupFilePath) ||
             !File.Exists(setupFilePath) ||
@@ -303,7 +331,11 @@ public sealed class InstallerCommandService : IInstallerCommandService
             return;
         }
 
-        var lookupContext = BuildKnowledgeLookupContext(setupFilePath, installerType);
+        var lookupContext = BuildKnowledgeLookupContext(
+            setupFilePath,
+            installerType,
+            sourceChannelHint,
+            installerArchitectureHint);
         if (lookupContext is null)
         {
             return;
@@ -322,7 +354,19 @@ public sealed class InstallerCommandService : IInstallerCommandService
             var existing = _knowledgeStore.Entries.FirstOrDefault(entry =>
                 entry.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase) &&
                 entry.ProductVersion.Equals(lookupContext.ProductVersion, StringComparison.OrdinalIgnoreCase) &&
+                entry.SignerThumbprint.Equals(lookupContext.SignerThumbprint, StringComparison.OrdinalIgnoreCase) &&
+                entry.SourceChannel.Equals(lookupContext.SourceChannel, StringComparison.OrdinalIgnoreCase) &&
+                entry.InstallerArchitecture.Equals(lookupContext.InstallerArchitecture, StringComparison.OrdinalIgnoreCase) &&
                 entry.InstallerType == installerType);
+
+            if (existing is null)
+            {
+                existing = _knowledgeStore.Entries.FirstOrDefault(entry =>
+                    entry.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase) &&
+                    entry.ProductVersion.Equals(lookupContext.ProductVersion, StringComparison.OrdinalIgnoreCase) &&
+                    IsLegacyKnowledgeKey(entry) &&
+                    entry.InstallerType == installerType);
+            }
 
             if (existing is not null)
             {
@@ -333,6 +377,9 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 existing.UseCount++;
                 existing.TemplateGuidance = persistedRules.TemplateGuidance;
                 existing.FingerprintEngine = fingerprint?.Framework.ToString() ?? installerType.ToString();
+                existing.SignerThumbprint = lookupContext.SignerThumbprint;
+                existing.SourceChannel = lookupContext.SourceChannel;
+                existing.InstallerArchitecture = lookupContext.InstallerArchitecture;
             }
             else
             {
@@ -349,7 +396,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
                     LastVerifiedAtUtc = now,
                     UseCount = 1,
                     TemplateGuidance = persistedRules.TemplateGuidance,
-                    FingerprintEngine = fingerprint?.Framework.ToString() ?? installerType.ToString()
+                    FingerprintEngine = fingerprint?.Framework.ToString() ?? installerType.ToString(),
+                    SignerThumbprint = lookupContext.SignerThumbprint,
+                    SourceChannel = lookupContext.SourceChannel,
+                    InstallerArchitecture = lookupContext.InstallerArchitecture
                 });
             }
 
@@ -365,7 +415,13 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
     }
 
-    private static CommandSuggestion CreateMsiSuggestion(string setupFileName, MsiMetadata? msiMetadata)
+    private static CommandSuggestion CreateMsiSuggestion(
+        string setupFileName,
+        MsiMetadata? msiMetadata,
+        DetectionDeploymentIntent detectionIntent,
+        string sourceChannelHint,
+        string installerArchitectureHint,
+        string signerThumbprint)
     {
         var installCommand = $"msiexec /i \"{setupFileName}\" /quiet";
         var uninstallTarget = string.IsNullOrWhiteSpace(msiMetadata?.ProductCode)
@@ -383,7 +439,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 Msi = new MsiDetectionRule
                 {
                     ProductCode = msiMetadata.ProductCode,
-                    ProductVersion = msiMetadata.ProductVersion
+                    ProductVersion = msiMetadata.ProductVersion,
+                    ProductVersionOperator = detectionIntent == DetectionDeploymentIntent.Update
+                        ? IntuneDetectionOperator.GreaterThanOrEqual
+                        : IntuneDetectionOperator.Equals
                 }
             };
 
@@ -412,12 +471,23 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 SilentSwitchesVerified = true,
                 AppliedTemplateName = "MSI Standard (msiexec)",
                 TemplateGuidance = guidance,
+                DetectionIntent = detectionIntent,
+                SourceChannelHint = NormalizeSourceChannel(sourceChannelHint),
+                InstallerArchitectureHint = NormalizeArchitectureHint(installerArchitectureHint),
+                InstallerSignerThumbprintHint = signerThumbprint,
                 DetectionRule = detectionRule
             }
         };
     }
 
-    private CommandSuggestion CreateExeSuggestion(string setupFilePath, string setupFileName, SilentInstallPreset? preset)
+    private CommandSuggestion CreateExeSuggestion(
+        string setupFilePath,
+        string setupFileName,
+        SilentInstallPreset? preset,
+        DetectionDeploymentIntent detectionIntent,
+        string sourceChannelHint,
+        string installerArchitectureHint,
+        string signerThumbprint)
     {
         var setupFileExists = File.Exists(setupFilePath);
         var template = preset is null
@@ -468,24 +538,33 @@ public sealed class InstallerCommandService : IInstallerCommandService
             guidanceParts.Add($"Parameter probe detected switches from local help output ({string.Join(", ", probe.HelpSwitchesTried)}).");
         }
 
-        var detectionRule = new IntuneDetectionRule
-        {
-            RuleType = IntuneDetectionRuleType.None
-        };
+        var detectionRule = new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None };
+        var additionalDetectionRules = new List<IntuneDetectionRule>();
+        var provenance = new List<DetectionFieldProvenance>();
+        var fallbackApproved = false;
 
         var metadataBasedDetection = false;
         if (installedEvidence is not null)
         {
-            detectionRule = installedEvidence.DetectionRule;
+            detectionRule = BuildPrimaryExeRegistryRule(installedEvidence, detectionIntent);
+            additionalDetectionRules.AddRange(BuildCompositeExeRegistryRules(installedEvidence, detectionIntent));
             uninstallCommand = installedEvidence.UninstallCommand;
+            provenance.AddRange(BuildExeInstalledEvidenceProvenance(installedEvidence));
             guidanceParts.Add(
                 $"Deterministic local footprint matched '{installedEvidence.DisplayName}' " +
                 $"(exact DisplayName/Publisher/DisplayVersion) and was used for registry detection + uninstall suggestion.");
         }
-        else if (TryBuildDeterministicExeDetectionFromMetadata(setupFilePath, out var metadataDetectionRule, out var metadataDetectionSummary))
+        else if (TryBuildDeterministicExeDetectionFromMetadata(
+                     setupFilePath,
+                     detectionIntent,
+                     out var metadataDetectionRule,
+                     out var metadataDetectionSummary,
+                     out var metadataProvenance))
         {
             detectionRule = metadataDetectionRule;
             metadataBasedDetection = true;
+            provenance.AddRange(metadataProvenance);
+            fallbackApproved = true;
             guidanceParts.Add(metadataDetectionSummary);
         }
         else
@@ -538,12 +617,28 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 SilentSwitchesVerified = !requireSilentSwitchReview,
                 AppliedTemplateName = template.Name,
                 TemplateGuidance = string.Join(" ", guidanceParts) + $" Confidence: {confidenceLevel} ({adjustedScore}/100).",
-                DetectionRule = detectionRule
+                DetectionIntent = detectionIntent,
+                SourceChannelHint = NormalizeSourceChannel(sourceChannelHint),
+                InstallerArchitectureHint = NormalizeArchitectureHint(installerArchitectureHint),
+                InstallerSignerThumbprintHint = signerThumbprint,
+                DetectionRule = detectionRule,
+                AdditionalDetectionRules = additionalDetectionRules,
+                DetectionProvenance = provenance,
+                ExeIdentityLockEnabled = true,
+                ExeFallbackApproved = fallbackApproved,
+                StrictDetectionProvenanceMode = false,
+                EnforceStrictScriptPolicy = true
             }
         };
     }
 
-    private static CommandSuggestion CreateAppxMsixSuggestion(string setupFilePath, string setupFileName)
+    private static CommandSuggestion CreateAppxMsixSuggestion(
+        string setupFilePath,
+        string setupFileName,
+        DetectionDeploymentIntent detectionIntent,
+        string sourceChannelHint,
+        string installerArchitectureHint,
+        string signerThumbprint)
     {
         var packageIdentity = TryReadAppxIdentity(setupFilePath);
         var quotedSetup = $"\"{setupFileName}\"";
@@ -556,16 +651,16 @@ public sealed class InstallerCommandService : IInstallerCommandService
             : $"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Get-AppxPackage -Name '{packageIdentity.Name}' | Remove-AppxPackage\"";
 
         var detectionRule = packageIdentity is null
-            ? new IntuneDetectionRule
+                ? new IntuneDetectionRule
             {
                 RuleType = IntuneDetectionRuleType.None
             }
             : new IntuneDetectionRule
         {
             RuleType = IntuneDetectionRuleType.Script,
-            Script = new ScriptDetectionRule
+                Script = new ScriptDetectionRule
             {
-                ScriptBody = BuildAppxDetectionScript(packageIdentity),
+                ScriptBody = BuildAppxDetectionScript(packageIdentity, detectionIntent),
                 RunAs32BitOn64System = false,
                 EnforceSignatureCheck = false
             }
@@ -597,6 +692,14 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 SilentSwitchesVerified = true,
                 AppliedTemplateName = "APPX/MSIX (PowerShell Add-AppxPackage)",
                 TemplateGuidance = guidance,
+                DetectionIntent = detectionIntent,
+                SourceChannelHint = NormalizeSourceChannel(sourceChannelHint),
+                InstallerArchitectureHint = NormalizeArchitectureHint(installerArchitectureHint),
+                InstallerSignerThumbprintHint = signerThumbprint,
+                DetectionProvenance = packageIdentity is null
+                    ? []
+                    : BuildAppxIdentityProvenance(packageIdentity),
+                EnforceStrictScriptPolicy = true,
                 DetectionRule = detectionRule
             }
         };
@@ -745,7 +848,11 @@ public sealed class InstallerCommandService : IInstallerCommandService
         return SuggestionConfidenceLevel.Low;
     }
 
-    private KnowledgeLookupContext? BuildKnowledgeLookupContext(string setupFilePath, InstallerType installerType)
+    private KnowledgeLookupContext? BuildKnowledgeLookupContext(
+        string setupFilePath,
+        InstallerType installerType,
+        string sourceChannelHint,
+        string installerArchitectureHint)
     {
         if (string.IsNullOrWhiteSpace(setupFilePath) || !File.Exists(setupFilePath))
         {
@@ -770,7 +877,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
             InstallerType = installerType,
             Sha256 = sha,
             ProductVersion = productVersion,
-            ProductName = versionInfo?.ProductName ?? Path.GetFileNameWithoutExtension(setupFilePath) ?? string.Empty
+            ProductName = versionInfo?.ProductName ?? Path.GetFileNameWithoutExtension(setupFilePath) ?? string.Empty,
+            SignerThumbprint = TryGetSignerThumbprint(setupFilePath),
+            SourceChannel = NormalizeSourceChannel(sourceChannelHint),
+            InstallerArchitecture = NormalizeArchitectureHint(installerArchitectureHint)
         };
     }
 
@@ -783,10 +893,19 @@ public sealed class InstallerCommandService : IInstallerCommandService
             entry = _knowledgeStore.Entries.FirstOrDefault(candidate =>
                 candidate.InstallerType == lookupContext.InstallerType &&
                 candidate.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase) &&
-                candidate.ProductVersion.Equals(lookupContext.ProductVersion, StringComparison.OrdinalIgnoreCase))
+                candidate.ProductVersion.Equals(lookupContext.ProductVersion, StringComparison.OrdinalIgnoreCase) &&
+                candidate.SignerThumbprint.Equals(lookupContext.SignerThumbprint, StringComparison.OrdinalIgnoreCase) &&
+                candidate.SourceChannel.Equals(lookupContext.SourceChannel, StringComparison.OrdinalIgnoreCase) &&
+                candidate.InstallerArchitecture.Equals(lookupContext.InstallerArchitecture, StringComparison.OrdinalIgnoreCase))
                 ?? _knowledgeStore.Entries.FirstOrDefault(candidate =>
                     candidate.InstallerType == lookupContext.InstallerType &&
-                    candidate.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase))
+                    candidate.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase) &&
+                    candidate.ProductVersion.Equals(lookupContext.ProductVersion, StringComparison.OrdinalIgnoreCase) &&
+                    IsLegacyKnowledgeKey(candidate))
+                ?? _knowledgeStore.Entries.FirstOrDefault(candidate =>
+                    candidate.InstallerType == lookupContext.InstallerType &&
+                    candidate.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase) &&
+                    IsLegacyKnowledgeKey(candidate))
                 ?? new InstallerKnowledgeEntry();
 
             if (string.IsNullOrWhiteSpace(entry.InstallerSha256))
@@ -1073,6 +1192,69 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
     }
 
+    private static string TryGetSignerThumbprint(string setupFilePath)
+    {
+        try
+        {
+            var certificate = X509Certificate.CreateFromSignedFile(setupFilePath);
+            if (certificate is null)
+            {
+                return "unsigned";
+            }
+
+            using var certificate2 = new X509Certificate2(certificate);
+            var thumbprint = certificate2.Thumbprint ?? string.Empty;
+            return string.IsNullOrWhiteSpace(thumbprint)
+                ? "unsigned"
+                : thumbprint.Trim().ToUpperInvariant();
+        }
+        catch
+        {
+            return "unsigned";
+        }
+    }
+
+    private static string NormalizeSourceChannel(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "unknown";
+        }
+
+        return value.Trim().ToLowerInvariant();
+    }
+
+    private static string NormalizeArchitectureHint(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "unknown";
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "x64" or "amd64" => "x64",
+            "x86" or "win32" => "x86",
+            "arm64" => "arm64",
+            "arm" => "arm",
+            "neutral" or "any" or "both" => "neutral",
+            _ => normalized
+        };
+    }
+
+    private static bool IsLegacyKnowledgeKey(InstallerKnowledgeEntry entry)
+    {
+        var signer = (entry.SignerThumbprint ?? string.Empty).Trim();
+        var source = (entry.SourceChannel ?? string.Empty).Trim();
+        var architecture = (entry.InstallerArchitecture ?? string.Empty).Trim();
+
+        var signerLegacy = string.IsNullOrWhiteSpace(signer) || signer.Equals("unsigned", StringComparison.OrdinalIgnoreCase);
+        var sourceLegacy = string.IsNullOrWhiteSpace(source) || source.Equals("unknown", StringComparison.OrdinalIgnoreCase);
+        var architectureLegacy = string.IsNullOrWhiteSpace(architecture) || architecture.Equals("unknown", StringComparison.OrdinalIgnoreCase);
+        return signerLegacy && sourceLegacy && architectureLegacy;
+    }
+
     private static string ReadBinaryMarkerText(string setupFilePath)
     {
         try
@@ -1159,20 +1341,12 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
         return new InstalledAppEvidence
         {
+            HiveName = match.HiveName,
+            KeyPath = match.KeyPath,
             DisplayName = match.DisplayName,
-            DetectionRule = new IntuneDetectionRule
-            {
-                RuleType = IntuneDetectionRuleType.Registry,
-                Registry = new RegistryDetectionRule
-                {
-                    Hive = match.HiveName,
-                    KeyPath = match.KeyPath,
-                    ValueName = "DisplayVersion",
-                    Check32BitOn64System = match.Check32BitOn64System,
-                    Operator = IntuneDetectionOperator.Equals,
-                    Value = match.DisplayVersion
-                }
-            },
+            Publisher = match.Publisher,
+            DisplayVersion = match.DisplayVersion,
+            Check32BitOn64System = match.Check32BitOn64System,
             UninstallCommand = NormalizeUninstallCommand(match.UninstallString)
         };
     }
@@ -1273,49 +1447,273 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
     private static bool TryBuildDeterministicExeDetectionFromMetadata(
         string setupFilePath,
+        DetectionDeploymentIntent detectionIntent,
         out IntuneDetectionRule detectionRule,
-        out string summary)
+        out string summary,
+        out IReadOnlyList<DetectionFieldProvenance> provenance)
     {
         detectionRule = new IntuneDetectionRule
         {
             RuleType = IntuneDetectionRuleType.None
         };
         summary = string.Empty;
+        provenance = [];
 
         var versionInfo = TryGetVersionInfo(setupFilePath);
-        var displayName = FirstNonEmpty(
-            versionInfo?.ProductName,
-            versionInfo?.FileDescription,
-            Path.GetFileNameWithoutExtension(setupFilePath));
-        var publisher = FirstNonEmpty(versionInfo?.CompanyName);
-        var displayVersion = NormalizeVersion(versionInfo?.ProductVersion ?? versionInfo?.FileVersion);
+        var fieldProvenance = new List<DetectionFieldProvenance>();
+        var displayName = ResolveMetadataField(
+            "DisplayName",
+            [
+                (versionInfo?.ProductName, DetectionProvenanceSource.InstallerMetadata, true, "ProductName"),
+                (versionInfo?.FileDescription, DetectionProvenanceSource.InstallerMetadata, true, "FileDescription"),
+                (Path.GetFileNameWithoutExtension(setupFilePath), DetectionProvenanceSource.HeuristicFallback, false, "Filename fallback")
+            ],
+            fieldProvenance);
+        var publisher = ResolveMetadataField(
+            "Publisher",
+            [
+                (versionInfo?.CompanyName, DetectionProvenanceSource.InstallerMetadata, true, "CompanyName")
+            ],
+            fieldProvenance);
+        var displayVersion = NormalizeVersion(ResolveMetadataField(
+            "DisplayVersion",
+            [
+                (versionInfo?.ProductVersion, DetectionProvenanceSource.InstallerMetadata, true, "ProductVersion"),
+                (versionInfo?.FileVersion, DetectionProvenanceSource.InstallerMetadata, true, "FileVersion")
+            ],
+            fieldProvenance));
         var signer = TryGetSignerSubject(setupFilePath);
 
         if (string.IsNullOrWhiteSpace(displayName) ||
             string.IsNullOrWhiteSpace(publisher) ||
             string.IsNullOrWhiteSpace(displayVersion))
         {
+            provenance = fieldProvenance;
             return false;
         }
 
+        var versionOperator = detectionIntent == DetectionDeploymentIntent.Update
+            ? IntuneDetectionOperator.GreaterThanOrEqual
+            : IntuneDetectionOperator.Equals;
         detectionRule = new IntuneDetectionRule
         {
             RuleType = IntuneDetectionRuleType.Script,
             Script = new ScriptDetectionRule
             {
-                ScriptBody = DeterministicDetectionScript.BuildExactExeRegistryScript(displayName, publisher, displayVersion),
+                ScriptBody = DeterministicDetectionScript.BuildExactExeRegistryScript(
+                    displayName,
+                    publisher,
+                    displayVersion,
+                    versionOperator),
                 RunAs32BitOn64System = false,
                 EnforceSignatureCheck = false
             }
         };
+        provenance = fieldProvenance;
 
         summary =
             "No local installed footprint was found. Generated deterministic EXE detection script from installer metadata " +
-            $"(DisplayName='{displayName}', Publisher='{publisher}', DisplayVersion='{displayVersion}')." +
+            $"(DisplayName='{displayName}', Publisher='{publisher}', DisplayVersion='{displayVersion}', Operator='{versionOperator}')." +
             (string.IsNullOrWhiteSpace(signer)
                 ? string.Empty
                 : $" Signer: '{signer}'.");
         return true;
+    }
+
+    private static string ResolveMetadataField(
+        string fieldName,
+        IReadOnlyList<(string? Value, DetectionProvenanceSource Source, bool IsStrong, string Note)> candidates,
+        ICollection<DetectionFieldProvenance> provenance)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate.Value))
+            {
+                continue;
+            }
+
+            var value = candidate.Value.Trim();
+            provenance.Add(new DetectionFieldProvenance
+            {
+                FieldName = fieldName,
+                FieldValue = value,
+                Source = candidate.Source,
+                IsStrongEvidence = candidate.IsStrong,
+                Notes = candidate.Note
+            });
+            return value;
+        }
+
+        provenance.Add(new DetectionFieldProvenance
+        {
+            FieldName = fieldName,
+            FieldValue = string.Empty,
+            Source = DetectionProvenanceSource.Unknown,
+            IsStrongEvidence = false,
+            Notes = "No metadata value resolved."
+        });
+        return string.Empty;
+    }
+
+    private static IntuneDetectionRule BuildPrimaryExeRegistryRule(
+        InstalledAppEvidence evidence,
+        DetectionDeploymentIntent detectionIntent)
+    {
+        var versionOperator = detectionIntent == DetectionDeploymentIntent.Update
+            ? IntuneDetectionOperator.GreaterThanOrEqual
+            : IntuneDetectionOperator.Equals;
+
+        return new IntuneDetectionRule
+        {
+            RuleType = IntuneDetectionRuleType.Registry,
+            Registry = new RegistryDetectionRule
+            {
+                Hive = evidence.HiveName,
+                KeyPath = evidence.KeyPath,
+                ValueName = "DisplayVersion",
+                Check32BitOn64System = evidence.Check32BitOn64System,
+                Operator = versionOperator,
+                Value = evidence.DisplayVersion
+            }
+        };
+    }
+
+    private static IReadOnlyList<IntuneDetectionRule> BuildCompositeExeRegistryRules(
+        InstalledAppEvidence evidence,
+        DetectionDeploymentIntent detectionIntent)
+    {
+        if (string.IsNullOrWhiteSpace(evidence.HiveName) ||
+            string.IsNullOrWhiteSpace(evidence.KeyPath))
+        {
+            return [];
+        }
+
+        var rules = new List<IntuneDetectionRule>();
+        if (!string.IsNullOrWhiteSpace(evidence.DisplayName))
+        {
+            rules.Add(new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Registry,
+                Registry = new RegistryDetectionRule
+                {
+                    Hive = evidence.HiveName,
+                    KeyPath = evidence.KeyPath,
+                    ValueName = "DisplayName",
+                    Check32BitOn64System = evidence.Check32BitOn64System,
+                    Operator = IntuneDetectionOperator.Equals,
+                    Value = evidence.DisplayName
+                }
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(evidence.Publisher))
+        {
+            rules.Add(new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Registry,
+                Registry = new RegistryDetectionRule
+                {
+                    Hive = evidence.HiveName,
+                    KeyPath = evidence.KeyPath,
+                    ValueName = "Publisher",
+                    Check32BitOn64System = evidence.Check32BitOn64System,
+                    Operator = IntuneDetectionOperator.Equals,
+                    Value = evidence.Publisher
+                }
+            });
+        }
+
+        if (detectionIntent == DetectionDeploymentIntent.Install &&
+            !string.IsNullOrWhiteSpace(evidence.DisplayVersion))
+        {
+            rules.Add(new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Registry,
+                Registry = new RegistryDetectionRule
+                {
+                    Hive = evidence.HiveName,
+                    KeyPath = evidence.KeyPath,
+                    ValueName = "DisplayVersion",
+                    Check32BitOn64System = evidence.Check32BitOn64System,
+                    Operator = IntuneDetectionOperator.Equals,
+                    Value = evidence.DisplayVersion
+                }
+            });
+        }
+
+        return rules;
+    }
+
+    private static IReadOnlyList<DetectionFieldProvenance> BuildExeInstalledEvidenceProvenance(InstalledAppEvidence evidence)
+    {
+        var values = new List<DetectionFieldProvenance>
+        {
+            new()
+            {
+                FieldName = "RegistryKeyPath",
+                FieldValue = evidence.KeyPath,
+                Source = DetectionProvenanceSource.LocalUninstallRegistry,
+                IsStrongEvidence = true,
+                Notes = "Resolved from installed uninstall entry."
+            },
+            new()
+            {
+                FieldName = "DisplayName",
+                FieldValue = evidence.DisplayName,
+                Source = DetectionProvenanceSource.LocalUninstallRegistry,
+                IsStrongEvidence = !string.IsNullOrWhiteSpace(evidence.DisplayName),
+                Notes = "Exact uninstall DisplayName."
+            },
+            new()
+            {
+                FieldName = "Publisher",
+                FieldValue = evidence.Publisher,
+                Source = DetectionProvenanceSource.LocalUninstallRegistry,
+                IsStrongEvidence = !string.IsNullOrWhiteSpace(evidence.Publisher),
+                Notes = "Exact uninstall Publisher."
+            },
+            new()
+            {
+                FieldName = "DisplayVersion",
+                FieldValue = evidence.DisplayVersion,
+                Source = DetectionProvenanceSource.LocalUninstallRegistry,
+                IsStrongEvidence = !string.IsNullOrWhiteSpace(evidence.DisplayVersion),
+                Notes = "Exact uninstall DisplayVersion."
+            }
+        };
+
+        return values;
+    }
+
+    private static IReadOnlyList<DetectionFieldProvenance> BuildAppxIdentityProvenance(AppxIdentity identity)
+    {
+        return
+        [
+            new DetectionFieldProvenance
+            {
+                FieldName = "PackageIdentity",
+                FieldValue = identity.Name,
+                Source = DetectionProvenanceSource.InstallerMetadata,
+                IsStrongEvidence = !string.IsNullOrWhiteSpace(identity.Name),
+                Notes = "Extracted from AppxManifest Identity Name."
+            },
+            new DetectionFieldProvenance
+            {
+                FieldName = "PackagePublisher",
+                FieldValue = identity.Publisher,
+                Source = DetectionProvenanceSource.InstallerMetadata,
+                IsStrongEvidence = !string.IsNullOrWhiteSpace(identity.Publisher),
+                Notes = "Extracted from AppxManifest Identity Publisher."
+            },
+            new DetectionFieldProvenance
+            {
+                FieldName = "PackageVersion",
+                FieldValue = identity.Version,
+                Source = DetectionProvenanceSource.InstallerMetadata,
+                IsStrongEvidence = !string.IsNullOrWhiteSpace(identity.Version),
+                Notes = "Extracted from AppxManifest Identity Version."
+            }
+        ];
     }
 
     private static IntuneWin32AppRules NormalizeVerifiedCacheRules(InstallerType installerType, IntuneWin32AppRules rules)
@@ -1398,12 +1796,17 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
     }
 
-    private static string BuildAppxDetectionScript(AppxIdentity identity)
+    private static string BuildAppxDetectionScript(AppxIdentity identity, DetectionDeploymentIntent detectionIntent)
     {
+        var versionOperator = detectionIntent == DetectionDeploymentIntent.Update
+            ? IntuneDetectionOperator.GreaterThanOrEqual
+            : IntuneDetectionOperator.Equals;
+
         return DeterministicDetectionScript.BuildExactAppxIdentityScript(
             identity.Name,
             identity.Version,
-            identity.Publisher);
+            identity.Publisher,
+            versionOperator);
     }
 
     private static string BuildPlaceholderDetectionScript(string reason)
@@ -1473,6 +1876,12 @@ public sealed class InstallerCommandService : IInstallerCommandService
         public string TemplateGuidance { get; set; } = string.Empty;
 
         public string FingerprintEngine { get; set; } = string.Empty;
+
+        public string SignerThumbprint { get; set; } = "unsigned";
+
+        public string SourceChannel { get; set; } = "unknown";
+
+        public string InstallerArchitecture { get; set; } = "unknown";
     }
 
     private sealed record KnowledgeLookupContext
@@ -1484,6 +1893,12 @@ public sealed class InstallerCommandService : IInstallerCommandService
         public string ProductVersion { get; init; } = "unknown";
 
         public string ProductName { get; init; } = string.Empty;
+
+        public string SignerThumbprint { get; init; } = "unsigned";
+
+        public string SourceChannel { get; init; } = "unknown";
+
+        public string InstallerArchitecture { get; init; } = "unknown";
     }
 
     private sealed record ParameterProbeResult
@@ -1522,9 +1937,17 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
     private sealed record InstalledAppEvidence
     {
+        public string HiveName { get; init; } = "HKEY_LOCAL_MACHINE";
+
+        public string KeyPath { get; init; } = string.Empty;
+
         public string DisplayName { get; init; } = string.Empty;
 
-        public IntuneDetectionRule DetectionRule { get; init; } = new();
+        public string Publisher { get; init; } = string.Empty;
+
+        public string DisplayVersion { get; init; } = string.Empty;
+
+        public bool Check32BitOn64System { get; init; }
 
         public string UninstallCommand { get; init; } = string.Empty;
     }

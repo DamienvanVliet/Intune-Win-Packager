@@ -540,5 +540,173 @@ public class PackagingValidationServiceTests
 
         Directory.Delete(tempRoot, recursive: true);
     }
+
+    [Fact]
+    public void Validate_ReturnsError_WhenStrictDetectionProvenanceIsEnabledWithWeakEvidence()
+    {
+        var request = BuildBaseExeRequest();
+        request = request with
+        {
+            Configuration = request.Configuration with
+            {
+                IntuneRules = request.Configuration.IntuneRules with
+                {
+                    StrictDetectionProvenanceMode = true,
+                    DetectionProvenance =
+                    [
+                        new DetectionFieldProvenance
+                        {
+                            FieldName = "DisplayName",
+                            FieldValue = "Contoso App",
+                            Source = DetectionProvenanceSource.HeuristicFallback,
+                            IsStrongEvidence = false
+                        }
+                    ]
+                }
+            }
+        };
+
+        var sut = new PackagingValidationService();
+        var result = sut.Validate(request);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Contains("Strict detection mode", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Validate_ReturnsError_WhenExeIdentityLockHasNoApproval()
+    {
+        var request = BuildBaseExeRequest();
+        request = request with
+        {
+            Configuration = request.Configuration with
+            {
+                IntuneRules = request.Configuration.IntuneRules with
+                {
+                    ExeIdentityLockEnabled = true,
+                    ExeFallbackApproved = false,
+                    DetectionProvenance =
+                    [
+                        new DetectionFieldProvenance
+                        {
+                            FieldName = "DisplayName",
+                            FieldValue = "Contoso App",
+                            Source = DetectionProvenanceSource.HeuristicFallback,
+                            IsStrongEvidence = false
+                        }
+                    ]
+                }
+            }
+        };
+
+        var sut = new PackagingValidationService();
+        var result = sut.Validate(request);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Contains("fallback approval", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Validate_ReturnsError_WhenSystemContextUsesHkcuRegistryDetection()
+    {
+        var request = BuildBaseExeRequest();
+        request = request with
+        {
+            Configuration = request.Configuration with
+            {
+                IntuneRules = request.Configuration.IntuneRules with
+                {
+                    InstallContext = IntuneInstallContext.System,
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Registry,
+                        Registry = new RegistryDetectionRule
+                        {
+                            Hive = "HKEY_CURRENT_USER",
+                            KeyPath = @"SOFTWARE\Contoso\App",
+                            ValueName = "DisplayVersion",
+                            Operator = IntuneDetectionOperator.Equals,
+                            Value = "1.0.0"
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PackagingValidationService();
+        var result = sut.Validate(request);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Contains("HKCU", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Validate_ReturnsError_WhenStrictScriptPolicyFails()
+    {
+        var request = BuildBaseExeRequest();
+        request = request with
+        {
+            Configuration = request.Configuration with
+            {
+                IntuneRules = request.Configuration.IntuneRules with
+                {
+                    EnforceStrictScriptPolicy = true,
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Script,
+                        Script = new ScriptDetectionRule
+                        {
+                            ScriptBody = "Write-Output 'ok'; exit 0; exit 1"
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PackagingValidationService();
+        var result = sut.Validate(request);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Contains("Strict script policy", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static PackagingRequest BuildBaseExeRequest()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "app.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        return new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.Exe,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "\"app.exe\" /S",
+                UninstallCommand = "\"app.exe\" /S",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Registry,
+                        Registry = new RegistryDetectionRule
+                        {
+                            Hive = "HKEY_LOCAL_MACHINE",
+                            KeyPath = @"SOFTWARE\Contoso\App",
+                            ValueName = "DisplayVersion",
+                            Operator = IntuneDetectionOperator.Equals,
+                            Value = "1.0.0"
+                        }
+                    }
+                }
+            }
+        };
+    }
 }
 

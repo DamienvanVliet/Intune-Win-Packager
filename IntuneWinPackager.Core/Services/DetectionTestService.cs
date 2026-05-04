@@ -5,12 +5,14 @@ using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
 using Microsoft.Win32;
 using System.Runtime.Versioning;
+using System.Text.RegularExpressions;
 
 namespace IntuneWinPackager.Core.Services;
 
 public sealed class DetectionTestService : IDetectionTestService
 {
     private static readonly TimeSpan ScriptTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan CommandTimeout = TimeSpan.FromMinutes(8);
 
     private readonly IProcessRunner _processRunner;
 
@@ -40,6 +42,151 @@ public sealed class DetectionTestService : IDetectionTestService
             IntuneDetectionRuleType.File => TestFileDetection(detectionRule.File),
             IntuneDetectionRuleType.Script => await TestScriptDetectionAsync(installerType, detectionRule.Script, cancellationToken),
             _ => Failed($"Detection rule type '{detectionRule.RuleType}' is not supported in local tests.")
+        };
+    }
+
+    public async Task<DetectionProofResult> ProveAsync(
+        DetectionProofRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request is null || request.DetectionRule.RuleType == IntuneDetectionRuleType.None)
+        {
+            return new DetectionProofResult
+            {
+                Success = false,
+                Mode = request?.Mode ?? DetectionProofMode.PassiveRuleControl,
+                Summary = "Detection proof requires a configured detection rule.",
+                NegativePhase = new DetectionProofPhaseResult
+                {
+                    PhaseName = "Phase A",
+                    Success = false,
+                    Summary = "Missing detection rule.",
+                    Details = "No detection rule was provided."
+                },
+                PositivePhase = new DetectionProofPhaseResult
+                {
+                    PhaseName = "Phase B",
+                    Success = false,
+                    Summary = "Missing detection rule.",
+                    Details = "No detection rule was provided."
+                }
+            };
+        }
+
+        return request.Mode == DetectionProofMode.ActiveInstallFlow
+            ? await ProveWithActiveInstallFlowAsync(request, cancellationToken)
+            : await ProveWithPassiveRuleControlAsync(request, cancellationToken);
+    }
+
+    private async Task<DetectionProofResult> ProveWithPassiveRuleControlAsync(
+        DetectionProofRequest request,
+        CancellationToken cancellationToken)
+    {
+        var negativeRule = BuildNegativeControlRule(request.DetectionRule);
+        var negative = await TestAsync(request.InstallerType, negativeRule, cancellationToken);
+        var positive = await TestAsync(request.InstallerType, request.DetectionRule, cancellationToken);
+
+        var negativeOk = !negative.Success;
+        var positiveOk = positive.Success;
+        var success = negativeOk && positiveOk;
+
+        return new DetectionProofResult
+        {
+            Success = success,
+            Mode = DetectionProofMode.PassiveRuleControl,
+            Summary = success
+                ? "Two-phase detection proof passed (negative control failed, positive rule passed)."
+                : "Two-phase detection proof failed. Review both phases.",
+            NegativePhase = new DetectionProofPhaseResult
+            {
+                PhaseName = "Phase A (negative control)",
+                Success = negativeOk,
+                Summary = negativeOk
+                    ? "Negative control correctly failed."
+                    : "Negative control unexpectedly passed (possible false-positive rule).",
+                Details = negative.Details
+            },
+            PositivePhase = new DetectionProofPhaseResult
+            {
+                PhaseName = "Phase B (positive rule)",
+                Success = positiveOk,
+                Summary = positiveOk
+                    ? "Positive rule passed."
+                    : "Positive rule failed (app may not be installed or rule is incorrect).",
+                Details = positive.Details
+            }
+        };
+    }
+
+    private async Task<DetectionProofResult> ProveWithActiveInstallFlowAsync(
+        DetectionProofRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.InstallCommand))
+        {
+            return await ProveWithPassiveRuleControlAsync(request with
+            {
+                Mode = DetectionProofMode.PassiveRuleControl
+            }, cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.UninstallCommand))
+        {
+            await ExecuteCommandAsync(request.UninstallCommand, request.WorkingDirectory, cancellationToken);
+        }
+
+        var phaseA = await TestAsync(request.InstallerType, request.DetectionRule, cancellationToken);
+        var phaseAOk = !phaseA.Success;
+
+        var installResult = await ExecuteCommandAsync(request.InstallCommand, request.WorkingDirectory, cancellationToken);
+        if (installResult.ExitCode != 0 || installResult.TimedOut)
+        {
+            return new DetectionProofResult
+            {
+                Success = false,
+                Mode = DetectionProofMode.ActiveInstallFlow,
+                Summary = $"Install phase failed (exit code {installResult.ExitCode}).",
+                NegativePhase = new DetectionProofPhaseResult
+                {
+                    PhaseName = "Phase A (pre-install)",
+                    Success = phaseAOk,
+                    Summary = phaseAOk ? "Pre-install detection correctly failed." : "Pre-install detection unexpectedly passed.",
+                    Details = phaseA.Details
+                },
+                PositivePhase = new DetectionProofPhaseResult
+                {
+                    PhaseName = "Phase B (post-install)",
+                    Success = false,
+                    Summary = "Install command failed before post-install detection.",
+                    Details = $"Install command exited with {installResult.ExitCode}."
+                }
+            };
+        }
+
+        var phaseB = await TestAsync(request.InstallerType, request.DetectionRule, cancellationToken);
+        var phaseBOk = phaseB.Success;
+
+        return new DetectionProofResult
+        {
+            Success = phaseAOk && phaseBOk,
+            Mode = DetectionProofMode.ActiveInstallFlow,
+            Summary = phaseAOk && phaseBOk
+                ? "Two-phase active detection proof passed."
+                : "Two-phase active detection proof failed.",
+            NegativePhase = new DetectionProofPhaseResult
+            {
+                PhaseName = "Phase A (pre-install)",
+                Success = phaseAOk,
+                Summary = phaseAOk ? "Pre-install detection correctly failed." : "Pre-install detection unexpectedly passed.",
+                Details = phaseA.Details
+            },
+            PositivePhase = new DetectionProofPhaseResult
+            {
+                PhaseName = "Phase B (post-install)",
+                Success = phaseBOk,
+                Summary = phaseBOk ? "Post-install detection passed." : "Post-install detection failed.",
+                Details = phaseB.Details
+            }
         };
     }
 
@@ -76,10 +223,11 @@ public sealed class DetectionTestService : IDetectionTestService
                 {
                     var expected = NormalizeVersion(rule.ProductVersion);
                     var actual = NormalizeVersion(detectedVersion);
-                    if (!actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+                    if (!EvaluateOperator(actual, expected, rule.ProductVersionOperator))
                     {
                         return Failed(
-                            $"MSI ProductCode was found, but version mismatch. Expected '{rule.ProductVersion}', found '{detectedVersion}'.");
+                            $"MSI ProductCode was found, but version comparison failed. " +
+                            $"Operator '{rule.ProductVersionOperator}', expected '{rule.ProductVersion}', found '{detectedVersion}'.");
                     }
                 }
 
@@ -309,6 +457,117 @@ public sealed class DetectionTestService : IDetectionTestService
                 // best effort cleanup
             }
         }
+    }
+
+    private async Task<ProcessRunResult> ExecuteCommandAsync(
+        string command,
+        string workingDirectory,
+        CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(CommandTimeout);
+
+        return await _processRunner.RunAsync(
+            new ProcessRunRequest
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c {command}",
+                WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
+                    ? Environment.CurrentDirectory
+                    : workingDirectory
+            },
+            cancellationToken: timeoutCts.Token);
+    }
+
+    private static IntuneDetectionRule BuildNegativeControlRule(IntuneDetectionRule original)
+    {
+        if (original.RuleType == IntuneDetectionRuleType.MsiProductCode)
+        {
+            return original with
+            {
+                Msi = original.Msi with
+                {
+                    ProductCode = $"{{{Guid.NewGuid():D}}}",
+                    ProductVersion = string.IsNullOrWhiteSpace(original.Msi.ProductVersion)
+                        ? string.Empty
+                        : original.Msi.ProductVersion + ".negative"
+                }
+            };
+        }
+
+        if (original.RuleType == IntuneDetectionRuleType.File)
+        {
+            return original with
+            {
+                File = original.File with
+                {
+                    FileOrFolderName = original.File.FileOrFolderName + ".iwp-negative-proof",
+                    Value = string.IsNullOrWhiteSpace(original.File.Value)
+                        ? original.File.Value
+                        : original.File.Value + ".iwp-negative-proof"
+                }
+            };
+        }
+
+        if (original.RuleType == IntuneDetectionRuleType.Registry)
+        {
+            var registry = original.Registry;
+            if (registry.Operator == IntuneDetectionOperator.Exists)
+            {
+                if (!string.IsNullOrWhiteSpace(registry.ValueName))
+                {
+                    return original with
+                    {
+                        Registry = registry with
+                        {
+                            ValueName = registry.ValueName + "_iwp_negative_proof"
+                        }
+                    };
+                }
+
+                return original with
+                {
+                    Registry = registry with
+                    {
+                        KeyPath = registry.KeyPath + "\\_iwp_negative_proof"
+                    }
+                };
+            }
+
+            return original with
+            {
+                Registry = registry with
+                {
+                    Value = string.IsNullOrWhiteSpace(registry.Value)
+                        ? "__iwp_negative_proof__"
+                        : registry.Value + "__iwp_negative_proof__"
+                }
+            };
+        }
+
+        if (original.RuleType == IntuneDetectionRuleType.Script)
+        {
+            var scriptBody = original.Script.ScriptBody;
+            scriptBody = new Regex(@"(?im)(\$displayVersion\s*=\s*"")([^""]+)("")")
+                .Replace(scriptBody, "$1$2.iwp-negative-proof$3", 1);
+            scriptBody = new Regex(@"(?im)(\$expectedVersion\s*=\s*"")([^""]+)("")")
+                .Replace(scriptBody, "$1$2.iwp-negative-proof$3", 1);
+
+            if (scriptBody.Equals(original.Script.ScriptBody, StringComparison.Ordinal))
+            {
+                scriptBody = "exit 1";
+            }
+
+            return original with
+            {
+                Script = original.Script with
+                {
+                    ScriptBody = scriptBody
+                }
+            };
+        }
+
+        return original;
     }
 
     [SupportedOSPlatform("windows")]

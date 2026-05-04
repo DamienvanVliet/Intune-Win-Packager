@@ -546,7 +546,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
     {
         var rules = request.Configuration.IntuneRules;
         var requirements = rules.Requirements;
-        var detectionSummary = BuildDetectionSummary(rules.DetectionRule);
+        var detectionSummary = BuildDetectionSummary(rules.DetectionRule, rules.AdditionalDetectionRules);
 
         var builder = new StringBuilder();
         builder.AppendLine("# Intune Win32 App - Manual Portal Steps");
@@ -611,12 +611,14 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         return value > 0 ? value.ToString() : "Not configured";
     }
 
-    private static string BuildDetectionSummary(IntuneDetectionRule detectionRule)
+    private static string BuildDetectionSummary(
+        IntuneDetectionRule detectionRule,
+        IReadOnlyList<IntuneDetectionRule> additionalDetectionRules)
     {
-        return detectionRule.RuleType switch
+        var primary = detectionRule.RuleType switch
         {
             IntuneDetectionRuleType.MsiProductCode =>
-                $"- Type: `MSI`\n- Product code: `{detectionRule.Msi.ProductCode}`\n- Product version: `{(string.IsNullOrWhiteSpace(detectionRule.Msi.ProductVersion) ? "Not configured" : detectionRule.Msi.ProductVersion)}`",
+                $"- Type: `MSI`\n- Product code: `{detectionRule.Msi.ProductCode}`\n- Product version: `{(string.IsNullOrWhiteSpace(detectionRule.Msi.ProductVersion) ? "Not configured" : detectionRule.Msi.ProductVersion)}`\n- Version operator: `{detectionRule.Msi.ProductVersionOperator}`",
 
             IntuneDetectionRuleType.File =>
                 $"- Type: `File`\n- Path: `{detectionRule.File.Path}`\n- File/Folder: `{detectionRule.File.FileOrFolderName}`\n- Operator: `{detectionRule.File.Operator}`\n- Value: `{(string.IsNullOrWhiteSpace(detectionRule.File.Value) ? "Not configured" : detectionRule.File.Value)}`\n- 32-bit on 64-bit: `{detectionRule.File.Check32BitOn64System}`",
@@ -632,6 +634,39 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                 $"- Signature check: `{detectionRule.Script.EnforceSignatureCheck}`",
 
             _ => "- Type: `Not configured`"
+        };
+
+        if (additionalDetectionRules is null || additionalDetectionRules.Count == 0)
+        {
+            return primary;
+        }
+
+        var builder = new StringBuilder(primary);
+        builder.AppendLine();
+        builder.AppendLine();
+        builder.AppendLine("- Additional detection rules (configure all in Intune):");
+        for (var index = 0; index < additionalDetectionRules.Count; index++)
+        {
+            var rule = additionalDetectionRules[index];
+            builder.AppendLine($"  - Rule {index + 1}: {SummarizeInlineRule(rule)}");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string SummarizeInlineRule(IntuneDetectionRule detectionRule)
+    {
+        return detectionRule.RuleType switch
+        {
+            IntuneDetectionRuleType.MsiProductCode =>
+                $"MSI ProductCode={detectionRule.Msi.ProductCode}, Version={detectionRule.Msi.ProductVersion}, Operator={detectionRule.Msi.ProductVersionOperator}",
+            IntuneDetectionRuleType.File =>
+                $"File Path={detectionRule.File.Path}, Name={detectionRule.File.FileOrFolderName}, Operator={detectionRule.File.Operator}, Value={detectionRule.File.Value}",
+            IntuneDetectionRuleType.Registry =>
+                $"Registry {detectionRule.Registry.Hive}\\{detectionRule.Registry.KeyPath} | {detectionRule.Registry.ValueName} {detectionRule.Registry.Operator} {detectionRule.Registry.Value}",
+            IntuneDetectionRuleType.Script =>
+                "Script detection rule (see metadata JSON for full script body).",
+            _ => "Not configured"
         };
     }
 

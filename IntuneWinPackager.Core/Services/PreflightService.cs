@@ -463,6 +463,8 @@ public sealed class PreflightService : IPreflightService
         }
 
         checks.Add(Pass("detection-type", "Detection Rule", $"Detection type '{detection.RuleType}' configured."));
+        AddDetectionProvenanceChecks(installerType, rules, checks);
+        AddContextCorrectnessChecks(installerType, rules, detection, checks);
 
         switch (detection.RuleType)
         {
@@ -498,6 +500,27 @@ public sealed class PreflightService : IPreflightService
                 else
                 {
                     checks.Add(Pass("detection-msi-code", "MSI Detection", "MSI product code is configured."));
+                }
+
+                if (!string.IsNullOrWhiteSpace(detection.Msi.ProductVersion))
+                {
+                    if (rules.DetectionIntent == DetectionDeploymentIntent.Install &&
+                        detection.Msi.ProductVersionOperator != IntuneDetectionOperator.Equals)
+                    {
+                        checks.Add(Error(
+                            "detection-msi-intent-install",
+                            "MSI Detection",
+                            "Install intent should use MSI ProductVersion operator Equals."));
+                    }
+
+                    if (rules.DetectionIntent == DetectionDeploymentIntent.Update &&
+                        detection.Msi.ProductVersionOperator != IntuneDetectionOperator.GreaterThanOrEqual)
+                    {
+                        checks.Add(Error(
+                            "detection-msi-intent-update",
+                            "MSI Detection",
+                            "Update intent should use MSI ProductVersion operator GreaterThanOrEqual."));
+                    }
                 }
                 break;
 
@@ -684,8 +707,170 @@ public sealed class PreflightService : IPreflightService
                         titleKey: "Core.Preflight.Title.ScriptDetection",
                         messageKey: "Core.Preflight.Message.ScriptDetectionLastResortOnly"));
                 }
+
+                if (rules.EnforceStrictScriptPolicy &&
+                    !DeterministicDetectionScript.IsStrictIntuneScriptPolicyCompliant(detection.Script.ScriptBody))
+                {
+                    checks.Add(Error(
+                        "detection-script-strict-policy",
+                        "Script Detection",
+                        "Strict script policy failed. Script must be UTF-8 BOM, use exit 0 + STDOUT on success, include exit 1, and avoid STDERR noise commands."));
+                }
                 break;
         }
+
+        if (installerType == InstallerType.Exe &&
+            rules.ExeIdentityLockEnabled &&
+            detection.RuleType == IntuneDetectionRuleType.Registry &&
+            HasStrongExeIdentityEvidence(rules.DetectionProvenance) &&
+            !HasCompositeExeIdentityRules(rules, detection))
+        {
+            checks.Add(Error(
+                "detection-exe-composite-required",
+                "EXE Detection",
+                "EXE detection must include composite strict checks for DisplayVersion, DisplayName, and Publisher."));
+        }
+    }
+
+    private static void AddDetectionProvenanceChecks(
+        InstallerType installerType,
+        IntuneWin32AppRules rules,
+        ICollection<PreflightCheck> checks)
+    {
+        if (!rules.StrictDetectionProvenanceMode)
+        {
+            checks.Add(Pass("detection-provenance", "Detection Provenance", "Strict provenance mode is disabled."));
+            return;
+        }
+
+        if (rules.DetectionProvenance.Count == 0)
+        {
+            checks.Add(Error(
+                "detection-provenance",
+                "Detection Provenance",
+                "Strict detection mode is enabled, but no detection provenance was provided."));
+            return;
+        }
+
+        checks.Add(Pass("detection-provenance", "Detection Provenance", "Detection provenance entries are present."));
+
+        if (!rules.DetectionProvenance.Any(item => item.IsStrongEvidence))
+        {
+            checks.Add(Error(
+                "detection-provenance-strong",
+                "Detection Provenance",
+                "Strict detection mode requires at least one strong evidence source."));
+        }
+
+        if (installerType == InstallerType.Exe && !HasStrongExeIdentityEvidence(rules.DetectionProvenance))
+        {
+            checks.Add(Error(
+                "detection-provenance-exe-identity",
+                "Detection Provenance",
+                "Strict EXE detection requires strong DisplayName, Publisher, and DisplayVersion provenance."));
+        }
+    }
+
+    private static void AddContextCorrectnessChecks(
+        InstallerType installerType,
+        IntuneWin32AppRules rules,
+        IntuneDetectionRule detection,
+        ICollection<PreflightCheck> checks)
+    {
+        if (rules.InstallContext == IntuneInstallContext.System)
+        {
+            if (detection.RuleType == IntuneDetectionRuleType.Registry &&
+                detection.Registry.Hive.StartsWith("HKEY_CURRENT_USER", StringComparison.OrdinalIgnoreCase))
+            {
+                checks.Add(Error(
+                    "context-system-hkcu",
+                    "Context Validation",
+                    "System install context cannot use HKCU registry detection reliably."));
+            }
+
+            if (detection.RuleType == IntuneDetectionRuleType.File &&
+                IsUserScopedPath(detection.File.Path))
+            {
+                checks.Add(Error(
+                    "context-system-userpath",
+                    "Context Validation",
+                    "System install context should not use user-scoped file detection paths."));
+            }
+
+            if (detection.RuleType == IntuneDetectionRuleType.Script &&
+                ContainsUserScopedScriptMarkers(detection.Script.ScriptBody))
+            {
+                checks.Add(Error(
+                    "context-system-script-userscope",
+                    "Context Validation",
+                    "System install context script detection references user-scoped registry/path markers."));
+            }
+        }
+
+        if (detection.RuleType == IntuneDetectionRuleType.Registry &&
+            detection.Registry.Check32BitOn64System &&
+            detection.Registry.KeyPath.Contains("WOW6432Node", StringComparison.OrdinalIgnoreCase))
+        {
+            checks.Add(Error(
+                "context-registry-wow6432node",
+                "Context Validation",
+                "Registry detection is using 32-bit view while key path already points to WOW6432Node."));
+        }
+
+        if (installerType == InstallerType.Exe &&
+            rules.ExeIdentityLockEnabled &&
+            rules.DetectionProvenance.Count > 0 &&
+            !HasStrongExeIdentityEvidence(rules.DetectionProvenance) &&
+            !rules.ExeFallbackApproved)
+        {
+            checks.Add(Error(
+                "context-exe-identity-lock",
+                "EXE Identity Lock",
+                "EXE identity lock requires explicit fallback approval when exact uninstall identity evidence is unavailable."));
+        }
+    }
+
+    private static bool HasStrongExeIdentityEvidence(IReadOnlyList<DetectionFieldProvenance> provenance)
+    {
+        var requiredFields = new[] { "DisplayName", "Publisher", "DisplayVersion" };
+        foreach (var field in requiredFields)
+        {
+            if (!provenance.Any(item =>
+                    item.IsStrongEvidence &&
+                    item.FieldName.Equals(field, StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(item.FieldValue)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasCompositeExeIdentityRules(IntuneWin32AppRules rules, IntuneDetectionRule primaryDetection)
+    {
+        var allRules = new List<IntuneDetectionRule> { primaryDetection };
+        allRules.AddRange(rules.AdditionalDetectionRules);
+
+        var hasDisplayVersion = allRules.Any(rule =>
+            rule.RuleType == IntuneDetectionRuleType.Registry &&
+            rule.Registry.ValueName.Equals("DisplayVersion", StringComparison.OrdinalIgnoreCase) &&
+            rule.Registry.Operator is IntuneDetectionOperator.Equals or IntuneDetectionOperator.GreaterThanOrEqual &&
+            !string.IsNullOrWhiteSpace(rule.Registry.Value));
+
+        var hasDisplayName = allRules.Any(rule =>
+            rule.RuleType == IntuneDetectionRuleType.Registry &&
+            rule.Registry.ValueName.Equals("DisplayName", StringComparison.OrdinalIgnoreCase) &&
+            rule.Registry.Operator == IntuneDetectionOperator.Equals &&
+            !string.IsNullOrWhiteSpace(rule.Registry.Value));
+
+        var hasPublisher = allRules.Any(rule =>
+            rule.RuleType == IntuneDetectionRuleType.Registry &&
+            rule.Registry.ValueName.Equals("Publisher", StringComparison.OrdinalIgnoreCase) &&
+            rule.Registry.Operator == IntuneDetectionOperator.Equals &&
+            !string.IsNullOrWhiteSpace(rule.Registry.Value));
+
+        return hasDisplayVersion && hasDisplayName && hasPublisher;
     }
 
     private static void AddRequirementChecks(
@@ -893,6 +1078,37 @@ public sealed class PreflightService : IPreflightService
                normalized.Equals(@"C:\Program Files", StringComparison.OrdinalIgnoreCase) ||
                normalized.Equals(@"C:\Program Files (x86)", StringComparison.OrdinalIgnoreCase) ||
                normalized.Equals(@"C:\Windows", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUserScopedPath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim().Replace('/', '\\');
+        return normalized.Contains("%LOCALAPPDATA%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("%APPDATA%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains(@"\Users\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsUserScopedScriptMarkers(string? scriptBody)
+    {
+        if (string.IsNullOrWhiteSpace(scriptBody))
+        {
+            return false;
+        }
+
+        var hasUserScope = scriptBody.Contains("HKCU:\\", StringComparison.OrdinalIgnoreCase) ||
+                           scriptBody.Contains("HKEY_CURRENT_USER", StringComparison.OrdinalIgnoreCase) ||
+                           scriptBody.Contains("$env:LOCALAPPDATA", StringComparison.OrdinalIgnoreCase) ||
+                           scriptBody.Contains("$env:APPDATA", StringComparison.OrdinalIgnoreCase);
+        var hasMachineScope = scriptBody.Contains("HKLM:\\", StringComparison.OrdinalIgnoreCase) ||
+                              scriptBody.Contains("HKEY_LOCAL_MACHINE", StringComparison.OrdinalIgnoreCase) ||
+                              scriptBody.Contains("%ProgramFiles%", StringComparison.OrdinalIgnoreCase) ||
+                              scriptBody.Contains("C:\\Program Files", StringComparison.OrdinalIgnoreCase);
+        return hasUserScope && !hasMachineScope;
     }
 
     private static bool IsGenericDetectionName(string? value)

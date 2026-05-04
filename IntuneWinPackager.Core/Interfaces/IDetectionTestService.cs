@@ -9,4 +9,8 @@ public interface IDetectionTestService
         InstallerType installerType,
         IntuneDetectionRule detectionRule,
         CancellationToken cancellationToken = default);
+
+    Task<DetectionProofResult> ProveAsync(
+        DetectionProofRequest request,
+        CancellationToken cancellationToken = default);
 }

@@ -14,7 +14,8 @@ public sealed class DeterministicDetectionScriptTests
 
         Assert.Contains(DeterministicDetectionScript.ExeRegistryExactMarker, script, StringComparison.Ordinal);
         Assert.Contains("DisplayName -eq $displayName", script, StringComparison.Ordinal);
-        Assert.Contains("DisplayVersion -eq $displayVersion", script, StringComparison.Ordinal);
+        Assert.Contains("Test-IwpVersionMatch", script, StringComparison.Ordinal);
+        Assert.StartsWith(DeterministicDetectionScript.Utf8Bom, script, StringComparison.Ordinal);
         Assert.Contains("Write-Output", script, StringComparison.Ordinal);
         Assert.True(DeterministicDetectionScript.IsExactExeRegistryScript(script));
         Assert.True(DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(script));
@@ -30,7 +31,8 @@ public sealed class DeterministicDetectionScriptTests
 
         Assert.Contains(DeterministicDetectionScript.AppxIdentityExactMarker, script, StringComparison.Ordinal);
         Assert.Contains("Get-AppxPackage", script, StringComparison.Ordinal);
-        Assert.Contains("Version.ToString() -eq $expectedVersion", script, StringComparison.Ordinal);
+        Assert.Contains("Test-IwpVersionMatch", script, StringComparison.Ordinal);
+        Assert.StartsWith(DeterministicDetectionScript.Utf8Bom, script, StringComparison.Ordinal);
         Assert.Contains("Write-Output", script, StringComparison.Ordinal);
         Assert.True(DeterministicDetectionScript.IsExactAppxIdentityScript(script));
         Assert.True(DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(script));
