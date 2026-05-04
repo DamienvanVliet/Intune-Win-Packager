@@ -15,7 +15,9 @@ public sealed class DeterministicDetectionScriptTests
         Assert.Contains(DeterministicDetectionScript.ExeRegistryExactMarker, script, StringComparison.Ordinal);
         Assert.Contains("DisplayName -eq $displayName", script, StringComparison.Ordinal);
         Assert.Contains("DisplayVersion -eq $displayVersion", script, StringComparison.Ordinal);
+        Assert.Contains("Write-Output", script, StringComparison.Ordinal);
         Assert.True(DeterministicDetectionScript.IsExactExeRegistryScript(script));
+        Assert.True(DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(script));
     }
 
     [Fact]
@@ -29,7 +31,9 @@ public sealed class DeterministicDetectionScriptTests
         Assert.Contains(DeterministicDetectionScript.AppxIdentityExactMarker, script, StringComparison.Ordinal);
         Assert.Contains("Get-AppxPackage", script, StringComparison.Ordinal);
         Assert.Contains("Version.ToString() -eq $expectedVersion", script, StringComparison.Ordinal);
+        Assert.Contains("Write-Output", script, StringComparison.Ordinal);
         Assert.True(DeterministicDetectionScript.IsExactAppxIdentityScript(script));
+        Assert.True(DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(script));
     }
 
     [Fact]
@@ -37,5 +41,6 @@ public sealed class DeterministicDetectionScriptTests
     {
         const string genericScript = "if (Test-Path 'C:\\Program Files\\Contoso') { exit 0 } exit 1";
         Assert.False(DeterministicDetectionScript.IsExactExeRegistryScript(genericScript));
+        Assert.False(DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(genericScript));
     }
 }

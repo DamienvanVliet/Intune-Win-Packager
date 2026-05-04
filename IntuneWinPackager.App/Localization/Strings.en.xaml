@@ -71,6 +71,7 @@
     <sys:String x:Key="Ui.EnforceSignature">Enforce signature check</sys:String>
 
     <sys:String x:Key="Ui.StartPackaging">Start Packaging</sys:String>
+    <sys:String x:Key="Ui.TestDetection">Test Detection</sys:String>
     <sys:String x:Key="Ui.FixForMe">Fix For Me</sys:String>
     <sys:String x:Key="Ui.Reset">Reset</sys:String>
     <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
@@ -343,10 +344,18 @@
     <sys:String x:Key="Vm.Status.CatalogQueueImportPartialMessage">Imported {0} package(s), but {1} package(s) failed.</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressTitle">Packaging In Progress</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressMessage">Running IntuneWinAppUtil.exe...</sys:String>
+    <sys:String x:Key="Vm.Status.DetectionTestRunningTitle">Detection Test Running</sys:String>
+    <sys:String x:Key="Vm.Status.DetectionTestRunningMessage">Running the current detection rule on this device...</sys:String>
+    <sys:String x:Key="Vm.Status.DetectionTestPassedTitle">Detection Test Passed</sys:String>
+    <sys:String x:Key="Vm.Status.DetectionTestFailedTitle">Detection Test Failed</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Resolve preflight errors before starting package creation.</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedTitle">Package Created</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedMessage">Created: {0}</sys:String>
     <sys:String x:Key="Vm.Status.PackagingFailedTitle">Packaging Failed</sys:String>
+    <sys:String x:Key="Vm.Detection.TestStatus.Idle">Detection test has not been run yet.</sys:String>
+    <sys:String x:Key="Vm.Detection.TestStatus.Running">Running detection test...</sys:String>
+    <sys:String x:Key="Vm.Detection.TestStatus.Passed">Detection test passed for this device.</sys:String>
+    <sys:String x:Key="Vm.Detection.TestStatus.Failed">Detection test failed. Review output and rule settings.</sys:String>
     <sys:String x:Key="Vm.Status.UnexpectedErrorTitle">Unexpected Error</sys:String>
     <sys:String x:Key="Vm.Status.ProfileNameRequiredTitle">Profile Name Required</sys:String>
     <sys:String x:Key="Vm.Status.ProfileNameRequiredMessage">Provide a profile name before saving.</sys:String>
@@ -414,6 +423,7 @@
     <sys:String x:Key="Core.Validation.ScriptDetectionExeMustBeDeterministic">For EXE installers, script detection must use exact registry equality (DisplayName, Publisher, DisplayVersion).</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionLastResortOnly">Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionAppxMustCheckVersion">APPX/MSIX script detection must check exact package identity and version.</sys:String>
+    <sys:String x:Key="Core.Validation.ScriptDetectionIntuneSuccessSignalRequired">Script detection must write STDOUT content and exit with code 0 on success.</sys:String>
     <sys:String x:Key="Core.Validation.RequirementArchitectureRequired">Requirement architecture is required.</sys:String>
     <sys:String x:Key="Core.Validation.RequirementArchitectureInvalid">Requirement architecture is invalid. Use x64, x86, or Both.</sys:String>
     <sys:String x:Key="Core.Validation.RequirementMinimumOsRequired">Minimum operating system requirement is required.</sys:String>
@@ -489,6 +499,7 @@
     <sys:String x:Key="Core.Preflight.Message.RegistryDetectionExeVersionRequired">For EXE detection, DisplayVersion value is required.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionBodyRequired">Script detection requires script content.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionPlaceholder">Script detection still contains placeholders.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.ScriptDetectionSuccessSignal">Script detection success path must write STDOUT and exit with code 0.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionExeMustBeDeterministic">For EXE installers, script detection must use exact registry equality (DisplayName, Publisher, DisplayVersion).</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionLastResortOnly">Script detection is only recommended as a last resort. Use MSI, Registry, or File detection for this installer type.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionAppxMustCheckVersion">APPX/MSIX script detection must check exact package identity and version.</sys:String>

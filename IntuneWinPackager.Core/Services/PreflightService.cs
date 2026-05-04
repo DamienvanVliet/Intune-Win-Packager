@@ -643,6 +643,16 @@ public sealed class PreflightService : IPreflightService
                     checks.Add(Pass("detection-script", "Script Detection", "Script detection content is configured."));
                 }
 
+                if (!DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(detection.Script.ScriptBody))
+                {
+                    checks.Add(Error(
+                        "detection-script-stdout",
+                        "Script Detection",
+                        "Script detection success path must write STDOUT and exit with code 0.",
+                        titleKey: "Core.Preflight.Title.ScriptDetection",
+                        messageKey: "Core.Preflight.Message.ScriptDetectionSuccessSignal"));
+                }
+
                 if (installerType == InstallerType.Exe &&
                     !DeterministicDetectionScript.IsExactExeRegistryScript(detection.Script.ScriptBody))
                 {

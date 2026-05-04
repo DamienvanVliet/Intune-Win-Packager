@@ -41,6 +41,7 @@ public partial class App : System.Windows.Application
                 {
                     services.AddSingleton<IValidationService, PackagingValidationService>();
                     services.AddSingleton<IInstallerCommandService, InstallerCommandService>();
+                    services.AddSingleton<IDetectionTestService, DetectionTestService>();
                     services.AddSingleton<IPackagingWorkflowService, PackagingWorkflowService>();
                     services.AddSingleton<IPreflightService, PreflightService>();
 

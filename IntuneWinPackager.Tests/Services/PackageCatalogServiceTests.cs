@@ -402,6 +402,216 @@ public sealed class PackageCatalogServiceTests
     }
 
     [Fact]
+    public async Task SearchAsync_WingetMsiVariant_PrefersMsiProductCodeDetection()
+    {
+        const string productCode = "{12345678-1234-1234-1234-123456789ABC}";
+        var processRunner = new RoutingProcessRunner(request =>
+        {
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("source list", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name    Argument                                      Explicit",
+                    "---------------------------------------------------------------",
+                    "winget  https://cdn.winget.microsoft.com/cache        false"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("search ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name        Id                  Version Match",
+                    "------------------------------------------------",
+                    "ContosoApp  Contoso.App.Agent   5.6.7   Tag"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("show ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Found ContosoApp [Contoso.App.Agent]",
+                    "Version: 5.6.7",
+                    "Publisher: Contoso Ltd",
+                    "Installer Type: msi",
+                    $"Product Code: {productCode}",
+                    "Installer Url: https://download.contoso.example/contosoapp-5.6.7.msi"
+                ]);
+            }
+
+            return new StubProcessResult(1, []);
+        });
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.NotFound)));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = $"contoso-msi-{Guid.NewGuid():N}",
+            IncludeWinget = true,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = false,
+            IncludeScoop = false,
+            IncludeNuGet = false
+        });
+
+        var entry = Assert.Single(results);
+        var variant = Assert.Single(entry.InstallerVariants);
+        Assert.Equal(InstallerType.Msi, variant.InstallerType);
+        Assert.Equal(IntuneDetectionRuleType.MsiProductCode, variant.DetectionRule.RuleType);
+        Assert.Equal(productCode, variant.DetectionRule.Msi.ProductCode);
+        Assert.Equal("5.6.7", variant.DetectionRule.Msi.ProductVersion);
+        Assert.True(variant.IsDeterministicDetection);
+    }
+
+    [Fact]
+    public async Task SearchAsync_WingetExeVariant_WithExactUninstallKey_UsesRegistryEqualityDetection()
+    {
+        const string uninstallKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Contoso Agent";
+        var processRunner = new RoutingProcessRunner(request =>
+        {
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("source list", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name    Argument                                      Explicit",
+                    "---------------------------------------------------------------",
+                    "winget  https://cdn.winget.microsoft.com/cache        false"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("search ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name          Id                   Version Match",
+                    "--------------------------------------------------",
+                    "ContosoAgent  Contoso.Agent.Setup  9.1.0   Tag"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("show ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Found ContosoAgent [Contoso.Agent.Setup]",
+                    "Version: 9.1.0",
+                    "Publisher: Contoso Ltd",
+                    "Installer Type: exe",
+                    $"Uninstall Registry Key: {uninstallKeyPath}",
+                    "Display Name: Contoso Agent",
+                    "AppsAndFeaturesEntries.Publisher: Contoso Ltd",
+                    "Display Version: 9.1.0",
+                    "Installer Url: https://download.contoso.example/contosoagent-9.1.0.exe"
+                ]);
+            }
+
+            return new StubProcessResult(1, []);
+        });
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.NotFound)));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = $"contoso-exe-{Guid.NewGuid():N}",
+            IncludeWinget = true,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = false,
+            IncludeScoop = false,
+            IncludeNuGet = false
+        });
+
+        var entry = Assert.Single(results);
+        var variant = Assert.Single(entry.InstallerVariants);
+        Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Equal(IntuneDetectionRuleType.Registry, variant.DetectionRule.RuleType);
+        Assert.Equal("HKEY_LOCAL_MACHINE", variant.DetectionRule.Registry.Hive);
+        Assert.Equal(uninstallKeyPath, variant.DetectionRule.Registry.KeyPath);
+        Assert.Equal("DisplayVersion", variant.DetectionRule.Registry.ValueName);
+        Assert.Equal(IntuneDetectionOperator.Equals, variant.DetectionRule.Registry.Operator);
+        Assert.Equal("9.1.0", variant.DetectionRule.Registry.Value);
+        Assert.True(variant.IsDeterministicDetection);
+    }
+
+    [Fact]
+    public async Task SearchAsync_WingetAppxVariant_UsesExactIdentityAndVersionScriptDetection()
+    {
+        var processRunner = new RoutingProcessRunner(request =>
+        {
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("source list", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name    Argument                                      Explicit",
+                    "---------------------------------------------------------------",
+                    "winget  https://cdn.winget.microsoft.com/cache        false"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("search ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name        Id                    Version Match",
+                    "--------------------------------------------------",
+                    "ContosoApp  Contoso.App.Package   2.4.0.0 Tag"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("show ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Found ContosoApp [Contoso.App.Package]",
+                    "Version: 2.4.0.0",
+                    "Publisher: CN=Contoso",
+                    "Installer Type: msix",
+                    "Package Family Name: Contoso.App",
+                    "Installer Url: https://download.contoso.example/contosoapp-2.4.0.0.msix"
+                ]);
+            }
+
+            return new StubProcessResult(1, []);
+        });
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.NotFound)));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = $"contoso-appx-{Guid.NewGuid():N}",
+            IncludeWinget = true,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = false,
+            IncludeScoop = false,
+            IncludeNuGet = false
+        });
+
+        var entry = Assert.Single(results);
+        var variant = Assert.Single(entry.InstallerVariants);
+        Assert.Equal(InstallerType.AppxMsix, variant.InstallerType);
+        Assert.Equal(IntuneDetectionRuleType.Script, variant.DetectionRule.RuleType);
+        Assert.Contains("Contoso.App", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+        Assert.Contains("2.4.0.0", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+        Assert.Contains("Write-Output", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+        Assert.True(variant.IsDeterministicDetection);
+    }
+
+    [Fact]
     public async Task SearchAsync_GitHubRelease_WithMultipleAssets_BuildsMultipleVariants()
     {
         var processRunner = new StubProcessRunner([]);

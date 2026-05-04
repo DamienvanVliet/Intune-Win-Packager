@@ -217,6 +217,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
         var lookupContext = BuildKnowledgeLookupContext(setupFilePath, installerType);
         if (lookupContext is not null && TryGetKnowledgeEntry(lookupContext, out var cachedEntry))
         {
+            var cachedRules = NormalizeVerifiedCacheRules(installerType, cachedEntry.IntuneRules);
             var cacheGuidance = string.IsNullOrWhiteSpace(cachedEntry.TemplateGuidance)
                 ? "Known-good commands reused from local knowledge cache for this installer hash + version."
                 : cachedEntry.TemplateGuidance + " Known-good commands reused from local knowledge cache.";
@@ -225,7 +226,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
             {
                 InstallCommand = cachedEntry.InstallCommand,
                 UninstallCommand = cachedEntry.UninstallCommand,
-                SuggestedRules = cachedEntry.IntuneRules with
+                SuggestedRules = cachedRules with
                 {
                     TemplateGuidance = cacheGuidance
                 },
@@ -311,6 +312,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
         var fingerprint = installerType == InstallerType.Exe
             ? DetectExeFrameworkTemplate(setupFilePath)
             : null;
+        var persistedRules = NormalizeVerifiedCacheRules(installerType, intuneRules);
 
         var now = DateTimeOffset.UtcNow;
         lock (_knowledgeLock)
@@ -326,10 +328,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
             {
                 existing.InstallCommand = installCommand;
                 existing.UninstallCommand = uninstallCommand;
-                existing.IntuneRules = intuneRules;
+                existing.IntuneRules = persistedRules;
                 existing.LastVerifiedAtUtc = now;
                 existing.UseCount++;
-                existing.TemplateGuidance = intuneRules.TemplateGuidance;
+                existing.TemplateGuidance = persistedRules.TemplateGuidance;
                 existing.FingerprintEngine = fingerprint?.Framework.ToString() ?? installerType.ToString();
             }
             else
@@ -343,10 +345,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
                     InstallerType = installerType,
                     InstallCommand = installCommand,
                     UninstallCommand = uninstallCommand,
-                    IntuneRules = intuneRules,
+                    IntuneRules = persistedRules,
                     LastVerifiedAtUtc = now,
                     UseCount = 1,
-                    TemplateGuidance = intuneRules.TemplateGuidance,
+                    TemplateGuidance = persistedRules.TemplateGuidance,
                     FingerprintEngine = fingerprint?.Framework.ToString() ?? installerType.ToString()
                 });
             }
@@ -513,6 +515,11 @@ public sealed class InstallerCommandService : IInstallerCommandService
             _ => "Installer behavior remains uncertain. Manual production validation is required."
         };
 
+        var requireSilentSwitchReview = ShouldRequireSilentSwitchReview(
+            installCommand,
+            uninstallCommand,
+            adjustedScore);
+
         return new CommandSuggestion
         {
             InstallCommand = installCommand,
@@ -527,8 +534,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 InstallContext = IntuneInstallContext.System,
                 RestartBehavior = IntuneRestartBehavior.DetermineBehaviorBasedOnReturnCodes,
                 MaxRunTimeMinutes = 60,
-                RequireSilentSwitchReview = true,
-                SilentSwitchesVerified = false,
+                RequireSilentSwitchReview = requireSilentSwitchReview,
+                SilentSwitchesVerified = !requireSilentSwitchReview,
                 AppliedTemplateName = template.Name,
                 TemplateGuidance = string.Join(" ", guidanceParts) + $" Confidence: {confidenceLevel} ({adjustedScore}/100).",
                 DetectionRule = detectionRule
@@ -711,6 +718,16 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
 
         return value.Contains('<') && value.Contains('>');
+    }
+
+    private static bool ShouldRequireSilentSwitchReview(string installCommand, string uninstallCommand, int confidenceScore)
+    {
+        if (ContainsPlaceholderArguments(installCommand) || ContainsPlaceholderArguments(uninstallCommand))
+        {
+            return true;
+        }
+
+        return confidenceScore < SuggestionConfidenceMediumThreshold;
     }
 
     private static SuggestionConfidenceLevel ToConfidenceLevel(int score)
@@ -1272,6 +1289,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
             Path.GetFileNameWithoutExtension(setupFilePath));
         var publisher = FirstNonEmpty(versionInfo?.CompanyName);
         var displayVersion = NormalizeVersion(versionInfo?.ProductVersion ?? versionInfo?.FileVersion);
+        var signer = TryGetSignerSubject(setupFilePath);
 
         if (string.IsNullOrWhiteSpace(displayName) ||
             string.IsNullOrWhiteSpace(publisher) ||
@@ -1293,8 +1311,25 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
         summary =
             "No local installed footprint was found. Generated deterministic EXE detection script from installer metadata " +
-            $"(DisplayName='{displayName}', Publisher='{publisher}', DisplayVersion='{displayVersion}').";
+            $"(DisplayName='{displayName}', Publisher='{publisher}', DisplayVersion='{displayVersion}')." +
+            (string.IsNullOrWhiteSpace(signer)
+                ? string.Empty
+                : $" Signer: '{signer}'.");
         return true;
+    }
+
+    private static IntuneWin32AppRules NormalizeVerifiedCacheRules(InstallerType installerType, IntuneWin32AppRules rules)
+    {
+        if (installerType == InstallerType.Exe && rules.SilentSwitchesVerified)
+        {
+            return rules with
+            {
+                RequireSilentSwitchReview = false,
+                SilentSwitchesVerified = true
+            };
+        }
+
+        return rules;
     }
 
     private static string FirstNonEmpty(params string?[] values)

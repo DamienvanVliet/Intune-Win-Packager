@@ -35,6 +35,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IAppUpdateService _appUpdateService;
     private readonly IPackageCatalogService _packageCatalogService;
     private readonly IPackageProfileStoreService _packageProfileStoreService;
+    private readonly IDetectionTestService _detectionTestService;
     private readonly IDialogService _dialogService;
     private readonly ILocalizationService _localizationService;
     private readonly IThemeService _themeService;
@@ -345,6 +346,9 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool installerParameterProbeDetected;
 
+    [ObservableProperty]
+    private string detectionTestStatus = string.Empty;
+
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
         IValidationService validationService,
@@ -359,6 +363,7 @@ public partial class MainViewModel : ObservableObject
         IAppUpdateService appUpdateService,
         IPackageCatalogService packageCatalogService,
         IPackageProfileStoreService packageProfileStoreService,
+        IDetectionTestService detectionTestService,
         IDialogService dialogService,
         ILocalizationService localizationService,
         IThemeService themeService,
@@ -377,6 +382,7 @@ public partial class MainViewModel : ObservableObject
         _appUpdateService = appUpdateService;
         _packageCatalogService = packageCatalogService;
         _packageProfileStoreService = packageProfileStoreService;
+        _detectionTestService = detectionTestService;
         _dialogService = dialogService;
         _localizationService = localizationService;
         _themeService = themeService;
@@ -463,6 +469,7 @@ public partial class MainViewModel : ObservableObject
         ApplyPresetCommand = new RelayCommand(ApplySelectedPreset);
         PackageCommand = new AsyncRelayCommand(PackageAsync, CanPackage);
         RunPreflightCommand = new AsyncRelayCommand(RunPreflightAsync, () => !IsBusy);
+        TestDetectionCommand = new AsyncRelayCommand(TestDetectionAsync, CanTestDetection);
         QuickFixCommand = new AsyncRelayCommand(ApplyQuickFixesAsync, () => !IsBusy);
         ResetCommand = new RelayCommand(ResetConfiguration, () => !IsBusy);
         OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder, CanOpenOutputFolder);
@@ -493,6 +500,7 @@ public partial class MainViewModel : ObservableObject
         PackagingProgressStep = T("Vm.Progress.ReadyStep");
         PackagingProgressDetail = T("Vm.Progress.ReadyDetail");
         PackageCatalogStatus = T("Vm.Store.Ready");
+        DetectionTestStatus = T("Vm.Detection.TestStatus.Idle");
         RefreshSwitchVerificationStatus();
     }
 
@@ -763,6 +771,8 @@ public partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand PackageCommand { get; }
 
     public IAsyncRelayCommand RunPreflightCommand { get; }
+
+    public IAsyncRelayCommand TestDetectionCommand { get; }
 
     public IAsyncRelayCommand QuickFixCommand { get; }
 
@@ -1300,6 +1310,7 @@ public partial class MainViewModel : ObservableObject
     {
         PackageCommand.NotifyCanExecuteChanged();
         RunPreflightCommand.NotifyCanExecuteChanged();
+        TestDetectionCommand.NotifyCanExecuteChanged();
         InstallToolCommand.NotifyCanExecuteChanged();
         QuickFixCommand.NotifyCanExecuteChanged();
         ResetCommand.NotifyCanExecuteChanged();
@@ -1981,6 +1992,88 @@ public partial class MainViewModel : ObservableObject
             IsBusy = false;
             _isCheckingForUpdates = false;
             _lastUpdateCheckCompletedAtUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    private bool CanTestDetection()
+    {
+        return !IsBusy &&
+               InstallerType != InstallerType.Unknown &&
+               DetectionRuleType != IntuneDetectionRuleType.None &&
+               !string.IsNullOrWhiteSpace(SetupFilePath) &&
+               File.Exists(SetupFilePath);
+    }
+
+    private async Task TestDetectionAsync()
+    {
+        if (!CanTestDetection())
+        {
+            return;
+        }
+
+        IsBusy = true;
+        DetectionTestStatus = T("Vm.Detection.TestStatus.Running");
+        AppendLog("Running local detection test...");
+
+        SetStatus(
+            OperationState.Running,
+            T("Vm.Status.DetectionTestRunningTitle"),
+            T("Vm.Status.DetectionTestRunningMessage"));
+
+        try
+        {
+            var result = await _detectionTestService.TestAsync(InstallerType, BuildDetectionRule());
+
+            if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+            {
+                AppendLog($"Detection test STDOUT: {result.StandardOutput}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.StandardError))
+            {
+                AppendLog($"Detection test STDERR: {result.StandardError}");
+            }
+
+            AppendLog($"Detection test summary: {result.Summary}");
+
+            if (result.Success)
+            {
+                DetectionTestStatus = T("Vm.Detection.TestStatus.Passed");
+                if (InstallerType == InstallerType.Exe)
+                {
+                    RequireSilentSwitchReview = false;
+                    SilentSwitchesVerified = true;
+                }
+
+                TrySaveVerifiedInstallerKnowledge();
+                await PromoteActiveCatalogProfileAsVerifiedAsync();
+
+                SetStatus(
+                    OperationState.Success,
+                    T("Vm.Status.DetectionTestPassedTitle"),
+                    result.Details);
+            }
+            else
+            {
+                DetectionTestStatus = T("Vm.Detection.TestStatus.Failed");
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.DetectionTestFailedTitle"),
+                    result.Details);
+            }
+        }
+        catch (Exception ex)
+        {
+            DetectionTestStatus = T("Vm.Detection.TestStatus.Failed");
+            AppendLog($"Detection test error: {ex.Message}");
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.DetectionTestFailedTitle"),
+                ex.Message);
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
@@ -4155,6 +4248,8 @@ public partial class MainViewModel : ObservableObject
         {
             ValidationErrors.Add(LocalizeWithFallback(issue.Key, issue.Message));
         }
+
+        TestDetectionCommand.NotifyCanExecuteChanged();
 
         NotifyReadinessChanged();
     }

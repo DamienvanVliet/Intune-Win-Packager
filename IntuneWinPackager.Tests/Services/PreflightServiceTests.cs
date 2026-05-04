@@ -202,7 +202,10 @@ public class PreflightServiceTests
                         RuleType = IntuneDetectionRuleType.Script,
                         Script = new ScriptDetectionRule
                         {
-                            ScriptBody = "$pkg = Get-AppxPackage -Name 'Contoso.App' -ErrorAction SilentlyContinue | Where-Object { $_.Version.ToString() -eq '1.2.3.4' }\nif ($null -ne $pkg) { exit 0 }\nexit 1"
+                            ScriptBody = DeterministicDetectionScript.BuildExactAppxIdentityScript(
+                                "Contoso.App",
+                                "1.2.3.4",
+                                "CN=Contoso")
                         }
                     }
                 }
@@ -264,6 +267,63 @@ public class PreflightServiceTests
 
         Assert.True(result.HasErrors);
         Assert.Contains(result.Checks, check => check.Key == "detection-script-exe-deterministic" && !check.Passed);
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReturnsError_WhenScriptDetectionHasNoIntuneSuccessSignal()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "installer.msix");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        var request = new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.AppxMsix,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "powershell.exe -ExecutionPolicy Bypass -Command \"Add-AppxPackage -Path \\\"installer.msix\\\"\"",
+                UninstallCommand = "powershell.exe -ExecutionPolicy Bypass -Command \"Get-AppxPackage -Name 'Contoso.App' | Remove-AppxPackage\"",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Script,
+                        Script = new ScriptDetectionRule
+                        {
+                            ScriptBody = """
+                                         $packageName = "Contoso.App"
+                                         $expectedVersion = "1.2.3.4"
+                                         $match = Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue | Where-Object {
+                                             $_.Version.ToString() -eq $expectedVersion
+                                         } | Select-Object -First 1
+                                         if ($null -ne $match) { exit 0 }
+                                         exit 1
+                                         """
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PreflightService(new FakeProcessRunner(0));
+        var result = await sut.RunAsync(request);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Checks, check => check.Key == "detection-script-stdout" && !check.Passed);
 
         Directory.Delete(tempRoot, recursive: true);
     }

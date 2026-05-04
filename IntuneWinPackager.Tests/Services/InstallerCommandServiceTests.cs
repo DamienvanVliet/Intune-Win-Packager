@@ -38,7 +38,8 @@ public class InstallerCommandServiceTests
 
         Assert.Equal("\"AcmeSetup.exe\" /S", suggestion.InstallCommand);
         Assert.Equal("\"AcmeSetup.exe\" /S", suggestion.UninstallCommand);
-        Assert.True(suggestion.SuggestedRules.RequireSilentSwitchReview);
+        Assert.False(suggestion.SuggestedRules.RequireSilentSwitchReview);
+        Assert.True(suggestion.SuggestedRules.SilentSwitchesVerified);
     }
 
     [Fact]
@@ -160,6 +161,8 @@ public class InstallerCommandServiceTests
             Assert.Equal("\"VendorSetup.exe\" /S", suggestion.InstallCommand);
             Assert.Equal("\"C:\\Program Files\\Vendor\\uninstall.exe\" /S", suggestion.UninstallCommand);
             Assert.Equal(IntuneDetectionRuleType.Registry, suggestion.SuggestedRules.DetectionRule.RuleType);
+            Assert.False(suggestion.SuggestedRules.RequireSilentSwitchReview);
+            Assert.True(suggestion.SuggestedRules.SilentSwitchesVerified);
         }
         finally
         {

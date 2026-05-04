@@ -1160,6 +1160,24 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var packageName = Coalesce(detailName, map.GetValueOrDefault("Package Name"), entry.Name);
         var publisher = Coalesce(map.GetValueOrDefault("Publisher"), entry.Publisher);
         var version = Coalesce(map.GetValueOrDefault("Version"), entry.Version, entry.BuildVersion);
+        var productName = Coalesce(
+            map.GetValueOrDefault("ProductName"),
+            map.GetValueOrDefault("Product Name"),
+            packageName);
+        var companyName = Coalesce(
+            map.GetValueOrDefault("CompanyName"),
+            map.GetValueOrDefault("Company Name"),
+            publisher);
+        var productVersion = Coalesce(
+            map.GetValueOrDefault("ProductVersion"),
+            map.GetValueOrDefault("Product Version"),
+            map.GetValueOrDefault("DisplayVersion"),
+            map.GetValueOrDefault("Display Version"),
+            version);
+        var signer = Coalesce(
+            map.GetValueOrDefault("Signer"),
+            map.GetValueOrDefault("Signer Subject"),
+            map.GetValueOrDefault("Signature"));
         var installerRaw = map.GetValueOrDefault("Installer Type", entry.InstallerTypeRaw);
         var installerType = InferInstallerType(installerRaw, map.GetValueOrDefault("Description"));
         var architecture = Coalesce(map.GetValueOrDefault("Architecture"), InferArchitecture(packageName, packageId, version, installerRaw));
@@ -1167,6 +1185,38 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var installerSha256 = NormalizeSha256(Coalesce(map.GetValueOrDefault("Installer SHA256")));
         var msiProductCode = NormalizeMsiProductCode(Coalesce(map.GetValueOrDefault("ProductCode"), map.GetValueOrDefault("Product Code")));
         var appxIdentity = Coalesce(map.GetValueOrDefault("Package Family Name"), map.GetValueOrDefault("Package Name"));
+        var uninstallRegistryKeyPath = Coalesce(
+            map.GetValueOrDefault("UninstallRegistryKey"),
+            map.GetValueOrDefault("Uninstall Registry Key"),
+            map.GetValueOrDefault("RegistryKey"),
+            map.GetValueOrDefault("Registry Key"));
+        var uninstallDisplayName = Coalesce(
+            map.GetValueOrDefault("DisplayName"),
+            map.GetValueOrDefault("Display Name"),
+            map.GetValueOrDefault("AppsAndFeaturesEntries.DisplayName"),
+            productName);
+        var uninstallPublisher = Coalesce(
+            map.GetValueOrDefault("AppsAndFeaturesEntries.Publisher"),
+            map.GetValueOrDefault("Publisher"),
+            companyName);
+        var uninstallDisplayVersion = Coalesce(
+            map.GetValueOrDefault("DisplayVersion"),
+            map.GetValueOrDefault("Display Version"),
+            map.GetValueOrDefault("AppsAndFeaturesEntries.DisplayVersion"),
+            productVersion);
+        var installLocation = Coalesce(
+            map.GetValueOrDefault("InstallLocation"),
+            map.GetValueOrDefault("Install Location"));
+        var displayIcon = Coalesce(
+            map.GetValueOrDefault("DisplayIcon"),
+            map.GetValueOrDefault("Display Icon"));
+        var fileDetectionPath = installLocation;
+        var fileDetectionName = string.Empty;
+        if (TryParseFileDetectionFromDisplayIcon(displayIcon, out var parsedIconPath, out var parsedIconName))
+        {
+            fileDetectionPath = parsedIconPath;
+            fileDetectionName = parsedIconName;
+        }
         var template = BuildTemplate(packageId, installerType, installerRaw);
         var installCommand = template.InstallCommand;
         var uninstallCommand = ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode, appxIdentity);
@@ -1177,7 +1227,15 @@ public sealed class PackageCatalogService : IPackageCatalogService
             publisher,
             version,
             msiProductCode,
-            appxIdentity);
+            appxIdentity,
+            uninstallRegistryKeyPath: uninstallRegistryKeyPath,
+            uninstallDisplayName: uninstallDisplayName,
+            uninstallPublisher: uninstallPublisher,
+            uninstallDisplayVersion: uninstallDisplayVersion,
+            fileDetectionPath: fileDetectionPath,
+            fileDetectionName: fileDetectionName,
+            fileDetectionVersion: uninstallDisplayVersion,
+            appxPublisher: publisher);
         var homepage = Coalesce(map.GetValueOrDefault("Homepage"), map.GetValueOrDefault("Publisher Url"), entry.HomepageUrl);
         var installerUrl = Coalesce(map.GetValueOrDefault("Installer Url"), entry.InstallerDownloadUrl);
         var variant = BuildInstallerVariant(
@@ -1229,7 +1287,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             ConfidenceScore = template.ConfidenceScore,
             MetadataNotes = string.IsNullOrWhiteSpace(map.GetValueOrDefault("Installer Url"))
                 ? $"Detailed metadata from WinGet source '{sourceName}'."
-                : $"Installer URL: {map["Installer Url"]}",
+                : $"Installer URL: {map["Installer Url"]}. Metadata: ProductName='{productName}', CompanyName='{companyName}', ProductVersion='{productVersion}'" +
+                  (string.IsNullOrWhiteSpace(signer) ? string.Empty : $", Signer='{signer}'."),
             PublishedAtUtc = releaseDate,
             HasDetailedMetadata = true,
             InstallerVariants = [variant]
@@ -1346,7 +1405,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 author,
                 version,
                 msiProductCode: string.Empty,
-                appxIdentity);
+                appxIdentity,
+                uninstallDisplayName: name,
+                uninstallPublisher: author,
+                uninstallDisplayVersion: version,
+                appxPublisher: author);
             var variant = BuildInstallerVariant(
                 PackageCatalogSource.Chocolatey,
                 BuildChocolateyDisplayName(sourceName),
@@ -1616,7 +1679,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 publisher,
                 version,
                 msiProductCode: string.Empty,
-                appxIdentity);
+                appxIdentity,
+                uninstallDisplayName: Coalesce(manifest?.Name, row.Name),
+                uninstallPublisher: publisher,
+                uninstallDisplayVersion: version,
+                appxPublisher: publisher);
             var uninstall = ResolveUninstallTemplate(
                 template.UninstallCommand,
                 installerType,
@@ -1698,7 +1765,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
             Coalesce(entry.Publisher, manifest.Publisher, "Scoop"),
             version,
             msiProductCode: string.Empty,
-            appxIdentity);
+            appxIdentity,
+            uninstallDisplayName: Coalesce(manifest.Name, entry.Name),
+            uninstallPublisher: Coalesce(entry.Publisher, manifest.Publisher, "Scoop"),
+            uninstallDisplayVersion: version,
+            appxPublisher: Coalesce(entry.Publisher, manifest.Publisher, "Scoop"));
         var uninstall = ResolveUninstallTemplate(
             template.UninstallCommand,
             installerType,
@@ -2325,7 +2396,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 publisher,
                 version,
                 msiProductCode: string.Empty,
-                appxIdentity);
+                appxIdentity,
+                uninstallDisplayName: id,
+                uninstallPublisher: publisher,
+                uninstallDisplayVersion: version,
+                appxPublisher: publisher);
             var uninstall = ResolveUninstallTemplate(
                 template.UninstallCommand,
                 installerType,
@@ -2418,7 +2493,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
             entry.Publisher,
             entry.Version,
             msiProductCode: string.Empty,
-            appxIdentity);
+            appxIdentity,
+            uninstallDisplayName: entry.Name,
+            uninstallPublisher: entry.Publisher,
+            uninstallDisplayVersion: entry.Version,
+            appxPublisher: entry.Publisher);
         var uninstall = ResolveUninstallTemplate(
             template.UninstallCommand,
             installerType,
@@ -3582,7 +3661,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 publisher,
                 version,
                 msiProductCode,
-                appxIdentity);
+                appxIdentity,
+                uninstallDisplayName: packageName,
+                uninstallPublisher: publisher,
+                uninstallDisplayVersion: version,
+                appxPublisher: publisher);
             var variant = BuildInstallerVariant(
                 entry.Source,
                 entry.SourceDisplayName,
@@ -3649,7 +3732,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 publisher,
                 resolvedVersion,
                 msiProductCode,
-                appxIdentity);
+                appxIdentity,
+                uninstallDisplayName: packageName,
+                uninstallPublisher: publisher,
+                uninstallDisplayVersion: resolvedVersion,
+                appxPublisher: publisher);
 
         var template = BuildTemplate(resolvedPackageId, resolvedInstallerType, variant.InstallerTypeRaw);
         var installCommand = Coalesce(variant.SuggestedInstallCommand, entry.SuggestedInstallCommand, template.InstallCommand);
@@ -3797,7 +3884,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 publisher,
                 version,
                 msiProductCode: string.Empty,
-                appxIdentity);
+                appxIdentity,
+                uninstallDisplayName: packageName,
+                uninstallPublisher: publisher,
+                uninstallDisplayVersion: version,
+                appxPublisher: publisher);
             var variantConfidence = installerType == InstallerType.Unknown
                 ? 44
                 : Math.Max(56, template.ConfidenceScore - 12);
@@ -3860,7 +3951,15 @@ public sealed class PackageCatalogService : IPackageCatalogService
         string publisher,
         string version,
         string msiProductCode,
-        string appxIdentity)
+        string appxIdentity,
+        string uninstallRegistryKeyPath = "",
+        string uninstallDisplayName = "",
+        string uninstallPublisher = "",
+        string uninstallDisplayVersion = "",
+        string fileDetectionPath = "",
+        string fileDetectionName = "",
+        string fileDetectionVersion = "",
+        string appxPublisher = "")
     {
         if (installerType == InstallerType.Msi)
         {
@@ -3889,9 +3988,35 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
         if (installerType == InstallerType.Exe)
         {
-            if (!string.IsNullOrWhiteSpace(packageName) &&
-                !string.IsNullOrWhiteSpace(publisher) &&
-                !string.IsNullOrWhiteSpace(version))
+            var exactDisplayName = Coalesce(uninstallDisplayName, packageName);
+            var exactPublisher = Coalesce(uninstallPublisher, publisher);
+            var exactVersion = Coalesce(uninstallDisplayVersion, version);
+
+            if (!string.IsNullOrWhiteSpace(uninstallRegistryKeyPath) &&
+                !string.IsNullOrWhiteSpace(exactDisplayName) &&
+                !string.IsNullOrWhiteSpace(exactPublisher) &&
+                !string.IsNullOrWhiteSpace(exactVersion))
+            {
+                return new DetectionStrategyPlan(
+                    new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Registry,
+                        Registry = new RegistryDetectionRule
+                        {
+                            Hive = "HKEY_LOCAL_MACHINE",
+                            KeyPath = uninstallRegistryKeyPath,
+                            ValueName = "DisplayVersion",
+                            Operator = IntuneDetectionOperator.Equals,
+                            Value = exactVersion
+                        }
+                    },
+                    "Deterministic: exact uninstall registry key with DisplayVersion equality (identity: DisplayName + Publisher + DisplayVersion).",
+                    true);
+            }
+
+            if (!string.IsNullOrWhiteSpace(exactDisplayName) &&
+                !string.IsNullOrWhiteSpace(exactPublisher) &&
+                !string.IsNullOrWhiteSpace(exactVersion))
             {
                 return new DetectionStrategyPlan(
                     new IntuneDetectionRule
@@ -3899,18 +4024,42 @@ public sealed class PackageCatalogService : IPackageCatalogService
                         RuleType = IntuneDetectionRuleType.Script,
                         Script = new ScriptDetectionRule
                         {
-                            ScriptBody = BuildExactRegistryDetectionScript(packageName, publisher, version),
+                            ScriptBody = BuildExactRegistryDetectionScript(exactDisplayName, exactPublisher, exactVersion),
                             RunAs32BitOn64System = false,
                             EnforceSignatureCheck = false
                         }
                     },
-                    "Deterministic: exact registry equality on DisplayName, Publisher, and DisplayVersion.",
+                    "Deterministic: exact registry equality script on DisplayName, Publisher, and DisplayVersion (native registry rule not possible without exact uninstall key path).",
+                    true);
+            }
+
+            var stableFilePath = fileDetectionPath;
+            var stableFileName = fileDetectionName;
+            var stableFileVersion = Coalesce(fileDetectionVersion, version);
+            if (!string.IsNullOrWhiteSpace(stableFilePath) &&
+                !string.IsNullOrWhiteSpace(stableFileName) &&
+                !string.IsNullOrWhiteSpace(stableFileVersion))
+            {
+                return new DetectionStrategyPlan(
+                    new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.File,
+                        File = new FileDetectionRule
+                        {
+                            Path = stableFilePath,
+                            FileOrFolderName = stableFileName,
+                            Check32BitOn64System = false,
+                            Operator = IntuneDetectionOperator.Equals,
+                            Value = stableFileVersion
+                        }
+                    },
+                    "Deterministic fallback: stable file version detection (registry identity metadata unavailable).",
                     true);
             }
 
             return new DetectionStrategyPlan(
                 new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None },
-                "EXE detected, but strict registry values are incomplete. Fill exact DisplayName/Publisher/Version.",
+                "EXE detected, but strict uninstall identity metadata is incomplete. Fill exact DisplayName/Publisher/DisplayVersion and uninstall key path.",
                 false);
         }
 
@@ -3925,7 +4074,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
                         RuleType = IntuneDetectionRuleType.Script,
                         Script = new ScriptDetectionRule
                         {
-                            ScriptBody = BuildExactAppxDetectionScript(identity, version),
+                            ScriptBody = BuildExactAppxDetectionScript(identity, version, appxPublisher),
                             RunAs32BitOn64System = false,
                             EnforceSignatureCheck = false
                         }
@@ -3951,9 +4100,9 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return DeterministicDetectionScript.BuildExactExeRegistryScript(displayName, publisher, version);
     }
 
-    private static string BuildExactAppxDetectionScript(string appxIdentity, string version)
+    private static string BuildExactAppxDetectionScript(string appxIdentity, string version, string publisher)
     {
-        return DeterministicDetectionScript.BuildExactAppxIdentityScript(appxIdentity, version);
+        return DeterministicDetectionScript.BuildExactAppxIdentityScript(appxIdentity, version, publisher);
     }
 
     private static int VariantPreferenceScore(CatalogInstallerVariant variant)
@@ -4070,6 +4219,48 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
 
         return $"{{{guid:D}}}".ToUpperInvariant();
+    }
+
+    private static bool TryParseFileDetectionFromDisplayIcon(string displayIcon, out string folderPath, out string fileName)
+    {
+        folderPath = string.Empty;
+        fileName = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(displayIcon))
+        {
+            return false;
+        }
+
+        var candidate = displayIcon.Trim().Trim('"');
+        var commaIndex = candidate.IndexOf(',');
+        if (commaIndex > 0)
+        {
+            candidate = candidate[..commaIndex].Trim().Trim('"');
+        }
+
+        if (!candidate.Contains('\\') && !candidate.Contains('/'))
+        {
+            return false;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(candidate);
+            var directory = Path.GetDirectoryName(fullPath);
+            var name = Path.GetFileName(fullPath);
+            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(name))
+            {
+                return false;
+            }
+
+            folderPath = directory;
+            fileName = name;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string InferArchitecture(string first, string second, string third, string fourth)

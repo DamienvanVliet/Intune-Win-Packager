@@ -774,6 +774,11 @@
                                                 MinWidth="130"
                                                 Command="{Binding PackageCommand}" />
                                         <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                Content="{DynamicResource Ui.TestDetection}"
+                                                MinWidth="130"
+                                                Margin="10,0,0,0"
+                                                Command="{Binding TestDetectionCommand}" />
+                                        <Button Style="{StaticResource SecondaryButtonStyle}"
                                                 Content="{DynamicResource Ui.FixForMe}"
                                                 MinWidth="120"
                                                 Margin="10,0,0,0"
@@ -789,6 +794,10 @@
                                                 Margin="10,0,0,0"
                                                 Command="{Binding OpenOutputFolderCommand}" />
                                     </WrapPanel>
+                                    <TextBlock Text="{Binding DetectionTestStatus}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,8,0,0"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>

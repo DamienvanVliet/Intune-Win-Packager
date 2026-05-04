@@ -34,7 +34,10 @@ public static class DeterministicDetectionScript
             "    $_.Publisher -eq $publisher -and",
             "    $_.DisplayVersion -eq $displayVersion",
             "} | Select-Object -First 1",
-            "if ($null -ne $match) { exit 0 }",
+            "if ($null -ne $match) {",
+            "    Write-Output (\"detected:{0}\" -f $match.DisplayVersion)",
+            "    exit 0",
+            "}",
             "exit 1"
         ]);
     }
@@ -63,7 +66,10 @@ public static class DeterministicDetectionScript
             "$match = Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue | Where-Object {",
             "    $_.Version.ToString() -eq $expectedVersion" + publisherPredicate,
             "} | Select-Object -First 1",
-            "if ($null -ne $match) { exit 0 }",
+            "if ($null -ne $match) {",
+            "    Write-Output (\"detected:{0}\" -f $match.Version.ToString())",
+            "    exit 0",
+            "}",
             "exit 1"
         ]);
     }
@@ -103,6 +109,25 @@ public static class DeterministicDetectionScript
         return normalized.Contains("get-appxpackage", StringComparison.Ordinal) &&
                normalized.Contains("-name", StringComparison.Ordinal) &&
                normalized.Contains("version.tostring()-eq", StringComparison.Ordinal);
+    }
+
+    public static bool IsIntuneCompliantSuccessSignalScript(string? scriptBody)
+    {
+        if (string.IsNullOrWhiteSpace(scriptBody))
+        {
+            return false;
+        }
+
+        var normalized = NormalizeScript(scriptBody);
+        if (!normalized.Contains("exit0", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return normalized.Contains("write-output", StringComparison.Ordinal) ||
+               normalized.Contains("echo", StringComparison.Ordinal) ||
+               normalized.Contains("write-host", StringComparison.Ordinal) ||
+               normalized.Contains("return", StringComparison.Ordinal);
     }
 
     private static string EscapePowerShellDoubleQuoted(string value)

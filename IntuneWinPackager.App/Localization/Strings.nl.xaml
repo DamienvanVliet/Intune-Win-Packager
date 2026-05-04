@@ -71,6 +71,7 @@
     <sys:String x:Key="Ui.EnforceSignature">Handtekeningcontrole afdwingen</sys:String>
 
     <sys:String x:Key="Ui.StartPackaging">Start Packaging</sys:String>
+    <sys:String x:Key="Ui.TestDetection">Test Detectie</sys:String>
     <sys:String x:Key="Ui.FixForMe">Los Op Voor Mij</sys:String>
     <sys:String x:Key="Ui.Reset">Reset</sys:String>
     <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
@@ -279,6 +280,10 @@
     <sys:String x:Key="Vm.Detection.OperatorHint.FileCompare">Vergelijkingsmodus: vul Waarde in met de verwachte bestandsproperty.</sys:String>
     <sys:String x:Key="Vm.Detection.OperatorHint.RegistryExists">Exists controleert alleen of sleutel/waarde bestaat. Gebruik voor EXE in productie bij voorkeur Equals op DisplayVersion.</sys:String>
     <sys:String x:Key="Vm.Detection.OperatorHint.RegistryCompare">Gebruik Equals met Waardenaam DisplayVersion en een exacte versiewaarde.</sys:String>
+    <sys:String x:Key="Vm.Detection.TestStatus.Idle">Detectietest is nog niet uitgevoerd.</sys:String>
+    <sys:String x:Key="Vm.Detection.TestStatus.Running">Detectietest wordt uitgevoerd...</sys:String>
+    <sys:String x:Key="Vm.Detection.TestStatus.Passed">Detectietest is geslaagd op dit apparaat.</sys:String>
+    <sys:String x:Key="Vm.Detection.TestStatus.Failed">Detectietest is mislukt. Controleer output en regelinstellingen.</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Klaar</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Wachten om te starten.</sys:String>
@@ -343,6 +348,10 @@
     <sys:String x:Key="Vm.Status.CatalogQueueImportPartialMessage">{0} package(s) gelukt, maar {1} package(s) zijn mislukt.</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressTitle">Packaging bezig</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressMessage">IntuneWinAppUtil.exe wordt uitgevoerd...</sys:String>
+    <sys:String x:Key="Vm.Status.DetectionTestRunningTitle">Detectietest wordt uitgevoerd</sys:String>
+    <sys:String x:Key="Vm.Status.DetectionTestRunningMessage">De huidige detectieregel wordt lokaal op dit apparaat getest...</sys:String>
+    <sys:String x:Key="Vm.Status.DetectionTestPassedTitle">Detectietest geslaagd</sys:String>
+    <sys:String x:Key="Vm.Status.DetectionTestFailedTitle">Detectietest mislukt</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Los preflight-fouten op voordat package-creatie start.</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedTitle">Package gemaakt</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedMessage">Gemaakt: {0}</sys:String>
@@ -414,6 +423,7 @@
     <sys:String x:Key="Core.Validation.ScriptDetectionExeMustBeDeterministic">Voor EXE-installers moet scriptdetectie exacte registergelijkheid gebruiken (DisplayName, Publisher, DisplayVersion).</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionLastResortOnly">Scriptdetectie wordt alleen als laatste redmiddel aanbevolen. Gebruik MSI-, Registry- of bestandsdetectie voor dit installertype.</sys:String>
     <sys:String x:Key="Core.Validation.ScriptDetectionAppxMustCheckVersion">APPX/MSIX scriptdetectie moet exacte package-identiteit en versie controleren.</sys:String>
+    <sys:String x:Key="Core.Validation.ScriptDetectionIntuneSuccessSignalRequired">Scriptdetectie moet bij succes output naar STDOUT schrijven en afsluiten met exit code 0.</sys:String>
     <sys:String x:Key="Core.Validation.RequirementArchitectureRequired">Requirement-architectuur is vereist.</sys:String>
     <sys:String x:Key="Core.Validation.RequirementArchitectureInvalid">Requirement-architectuur is ongeldig. Gebruik x64, x86, of Both.</sys:String>
     <sys:String x:Key="Core.Validation.RequirementMinimumOsRequired">Minimale besturingssysteem-requirement is vereist.</sys:String>
@@ -489,6 +499,7 @@
     <sys:String x:Key="Core.Preflight.Message.RegistryDetectionExeVersionRequired">Voor EXE-detectie is de DisplayVersion-waarde verplicht.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionBodyRequired">Scriptdetectie vereist scriptinhoud.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionPlaceholder">Scriptdetectie bevat nog placeholders.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.ScriptDetectionSuccessSignal">Scriptdetectie moet bij succes STDOUT schrijven en afsluiten met exit code 0.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionExeMustBeDeterministic">Voor EXE-installers moet scriptdetectie exacte registergelijkheid gebruiken (DisplayName, Publisher, DisplayVersion).</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionLastResortOnly">Scriptdetectie wordt alleen als laatste redmiddel aanbevolen. Gebruik MSI-, Registry- of bestandsdetectie voor dit installertype.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ScriptDetectionAppxMustCheckVersion">APPX/MSIX scriptdetectie moet exacte package-identiteit en versie controleren.</sys:String>

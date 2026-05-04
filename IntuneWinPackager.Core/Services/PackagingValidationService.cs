@@ -299,6 +299,14 @@ public sealed class PackagingValidationService : IValidationService
                         "Script detection still contains placeholders. Replace placeholders with production detection logic.");
                 }
 
+                if (!DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(detection.Script.ScriptBody))
+                {
+                    AddIssue(
+                        issues,
+                        "Core.Validation.ScriptDetectionIntuneSuccessSignalRequired",
+                        "Script detection must write output to STDOUT and exit with code 0 on success.");
+                }
+
                 if (installerType == InstallerType.Exe &&
                     !DeterministicDetectionScript.IsExactExeRegistryScript(detection.Script.ScriptBody))
                 {
