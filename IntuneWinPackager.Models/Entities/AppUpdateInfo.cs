@@ -4,6 +4,8 @@ public sealed record AppUpdateInfo
 {
     public bool IsUpdateAvailable { get; init; }
 
+    public bool IsInstallReady { get; init; }
+
     public bool CheckSucceeded { get; init; } = true;
 
     public string CurrentVersion { get; init; } = string.Empty;

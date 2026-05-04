@@ -170,6 +170,63 @@ public class AppUpdateServiceTests
     }
 
     [Fact]
+    public async Task CheckForUpdatesAsync_FlagsReleaseAsAvailable_WhenInstallerAssetMissing()
+    {
+        var payload = """
+                      [
+                        {
+                          "tag_name": "v1.1.40",
+                          "draft": false,
+                          "prerelease": false,
+                          "published_at": "2026-04-18T12:00:00Z",
+                          "assets": []
+                        }
+                      ]
+                      """;
+
+        var sut = CreateService(payload);
+
+        var result = await sut.CheckForUpdatesAsync("1.1.39");
+
+        Assert.True(result.CheckSucceeded);
+        Assert.True(result.IsUpdateAvailable);
+        Assert.False(result.IsInstallReady);
+        Assert.Equal("1.1.40", result.LatestVersion);
+        Assert.Contains("no installer asset", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckForUpdatesAsync_FlagsReleaseAsAvailable_WhenDigestMissing()
+    {
+        var payload = """
+                      [
+                        {
+                          "tag_name": "v1.1.41",
+                          "draft": false,
+                          "prerelease": false,
+                          "published_at": "2026-04-18T13:00:00Z",
+                          "assets": [
+                            {
+                              "name": "IntuneWinPackager-Setup-1.1.41.exe",
+                              "browser_download_url": "https://example.com/iwp-1.1.41.exe"
+                            }
+                          ]
+                        }
+                      ]
+                      """;
+
+        var sut = CreateService(payload);
+
+        var result = await sut.CheckForUpdatesAsync("1.1.40");
+
+        Assert.True(result.CheckSucceeded);
+        Assert.True(result.IsUpdateAvailable);
+        Assert.False(result.IsInstallReady);
+        Assert.Equal("1.1.41", result.LatestVersion);
+        Assert.Contains("UPD-HASH-MISSING", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task CheckForUpdatesAsync_NormalizesEscapedNewLinesInReleaseNotes()
     {
         var payload = """

@@ -89,6 +89,7 @@ public sealed class AppUpdateService : IAppUpdateService
                     {
                         CheckSucceeded = false,
                         IsUpdateAvailable = false,
+                        IsInstallReady = false,
                         CurrentVersion = currentNormalized,
                         LatestVersion = currentNormalized,
                         Message = WithCode("UPD-CHK-FEED", "No public release feed found. If this repository is private, auto-updates require GitHub CLI login on this machine.")
@@ -98,6 +99,7 @@ public sealed class AppUpdateService : IAppUpdateService
                 return new AppUpdateInfo
                 {
                     CheckSucceeded = false,
+                    IsInstallReady = false,
                     CurrentVersion = currentNormalized,
                     LatestVersion = currentNormalized,
                     Message = WithCode($"UPD-CHK-HTTP-{(int)response.StatusCode}", $"Update check failed (HTTP {(int)response.StatusCode}).")
@@ -135,6 +137,7 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateInfo
             {
                 CheckSucceeded = false,
+                IsInstallReady = false,
                 CurrentVersion = currentNormalized,
                 LatestVersion = currentNormalized,
                 Message = WithCode("UPD-CHK-EX", $"Update check failed: {ex.Message}")
@@ -881,8 +884,7 @@ public sealed class AppUpdateService : IAppUpdateService
                 var updateInfo = BuildUpdateInfoFromReleasePayload(release, currentNormalized, currentBuildTimestampUtc);
                 var isInstallableUpdate =
                     updateInfo.IsUpdateAvailable &&
-                    !string.IsNullOrWhiteSpace(updateInfo.InstallerDownloadUrl) &&
-                    IsValidSha256(updateInfo.InstallerSha256);
+                    updateInfo.IsInstallReady;
 
                 if (isInstallableUpdate &&
                     (bestInstallableUpdate is null || IsHigherPriorityUpdate(updateInfo, bestInstallableUpdate)))
@@ -976,6 +978,7 @@ public sealed class AppUpdateService : IAppUpdateService
             {
                 CheckSucceeded = true,
                 IsUpdateAvailable = false,
+                IsInstallReady = false,
                 CurrentVersion = currentNormalized,
                 LatestVersion = latestVersion,
                 ReleaseTag = tagName,
@@ -993,7 +996,8 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateInfo
             {
                 CheckSucceeded = true,
-                IsUpdateAvailable = false,
+                IsUpdateAvailable = true,
+                IsInstallReady = false,
                 CurrentVersion = currentNormalized,
                 LatestVersion = latestVersion,
                 ReleaseTag = tagName,
@@ -1001,7 +1005,7 @@ public sealed class AppUpdateService : IAppUpdateService
                 ReleaseNotes = releaseNotes,
                 InstallerSha256 = installerSha256,
                 PublishedAtUtc = publishedAt,
-                Message = "A newer release exists, but no installer asset was found."
+                Message = "A newer release exists, but no installer asset was found. Publish an installer asset to enable one-click update."
             };
         }
 
@@ -1010,7 +1014,8 @@ public sealed class AppUpdateService : IAppUpdateService
             return new AppUpdateInfo
             {
                 CheckSucceeded = true,
-                IsUpdateAvailable = false,
+                IsUpdateAvailable = true,
+                IsInstallReady = false,
                 CurrentVersion = currentNormalized,
                 LatestVersion = latestVersion,
                 ReleaseTag = tagName,
@@ -1029,6 +1034,7 @@ public sealed class AppUpdateService : IAppUpdateService
         {
             CheckSucceeded = true,
             IsUpdateAvailable = true,
+            IsInstallReady = true,
             CurrentVersion = currentNormalized,
             LatestVersion = latestVersion,
             ReleaseTag = tagName,

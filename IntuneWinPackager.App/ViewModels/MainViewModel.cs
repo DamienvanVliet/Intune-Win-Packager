@@ -282,6 +282,9 @@ public partial class MainViewModel : ObservableObject
     private bool isUpdateAvailable;
 
     [ObservableProperty]
+    private bool isUpdateInstallReady;
+
+    [ObservableProperty]
     private bool hasPackagingRun;
 
     [ObservableProperty]
@@ -1380,6 +1383,11 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsUpdateNotificationVisible));
     }
 
+    partial void OnIsUpdateInstallReadyChanged(bool value)
+    {
+        InstallUpdateCommand.NotifyCanExecuteChanged();
+    }
+
     partial void OnHasPreflightRunChanged(bool value)
     {
         OnPropertyChanged(nameof(IsPreflightReady));
@@ -1517,6 +1525,7 @@ public partial class MainViewModel : ObservableObject
         {
             LatestVersion = settings.LastKnownLatestVersion;
             IsUpdateAvailable = true;
+            IsUpdateInstallReady = false;
             UpdateStatus = TF("Vm.Update.NotificationFormat", LatestVersion, CurrentVersion);
         }
 
@@ -1923,7 +1932,7 @@ public partial class MainViewModel : ObservableObject
 
     private bool CanInstallUpdate()
     {
-        return !IsBusy && IsUpdateAvailable;
+        return !IsBusy && IsUpdateAvailable && IsUpdateInstallReady;
     }
 
     private bool CanDeleteProfile()
@@ -2003,6 +2012,7 @@ public partial class MainViewModel : ObservableObject
         {
             UpdateStatus = TF("Vm.Update.CheckFailedFormat", ex.Message);
             IsUpdateAvailable = false;
+            IsUpdateInstallReady = false;
             SetStatus(previousState, previousTitle, previousMessage);
             AppendLog($"Update check failed: {ex.Message}");
         }
@@ -2218,12 +2228,25 @@ public partial class MainViewModel : ObservableObject
             ? T("Vm.Update.NotChecked")
             : updateInfo.Message;
         IsUpdateAvailable = updateInfo.IsUpdateAvailable;
+        IsUpdateInstallReady = updateInfo.IsInstallReady;
     }
 
     private async Task InstallUpdateAsync()
     {
         if (!CanInstallUpdate())
         {
+            if (_latestUpdateInfo is not null &&
+                _latestUpdateInfo.IsUpdateAvailable &&
+                !_latestUpdateInfo.IsInstallReady)
+            {
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.UpdateInstallFailedTitle"),
+                    string.IsNullOrWhiteSpace(_latestUpdateInfo.Message)
+                        ? "A newer release exists, but one-click install is not available for this release."
+                        : _latestUpdateInfo.Message);
+            }
+
             return;
         }
 

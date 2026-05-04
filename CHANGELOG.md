@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1] - 2026-05-05
+
+### Fixed
+- Update notification now correctly reports when a newer release exists, even if one-click installer metadata is incomplete.
+- Update install action is now gated by installer readiness (asset + SHA-256), preventing false "no update" states.
+- Added regression coverage for releases missing installer assets or digest metadata to keep update signaling reliable.
+
 ## [2.2.0] - 2026-04-19
 
 ### Added
