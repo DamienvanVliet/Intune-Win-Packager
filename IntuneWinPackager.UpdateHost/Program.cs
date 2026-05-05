@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Globalization;
 
-const int ParentWaitTimeoutMs = 30_000;
+const int ParentWaitTimeoutMs = 180_000;
 const int ParentWaitPollMs = 200;
 const int PostExitGraceMs = 450;
+const int TargetUnlockTimeoutMs = 60_000;
+const int TargetUnlockPollMs = 250;
 
 var options = ParseOptions(args);
 if (options is null)
@@ -13,19 +15,28 @@ if (options is null)
 }
 
 TryWriteLog(options.LaunchLogPath, "Update host started.");
-TryCreateMarker(options.LaunchMarkerPath, options.LaunchLogPath);
-
-WaitForParentExit(options.ParentPid, options.LaunchLogPath);
-
-if (!string.IsNullOrWhiteSpace(options.TargetExePath))
-{
-    TryWriteLog(options.LaunchLogPath, $"Skipping explicit file-lock probing for faster handoff: {options.TargetExePath}");
-}
 
 if (!File.Exists(options.InstallerPath))
 {
     TryWriteLog(options.LaunchLogPath, $"Installer not found: {options.InstallerPath}");
     return 3;
+}
+
+TryCreateMarker(options.LaunchMarkerPath, options.LaunchLogPath);
+
+var parentExitedInTime = WaitForParentExit(options.ParentPid, options.LaunchLogPath);
+if (!parentExitedInTime)
+{
+    TryWriteLog(options.LaunchLogPath, $"Parent process did not exit within {ParentWaitTimeoutMs}ms. Continuing with best-effort launch.");
+}
+
+if (!string.IsNullOrWhiteSpace(options.TargetExePath))
+{
+    var unlocked = WaitForFileUnlock(options.TargetExePath, options.LaunchLogPath);
+    if (!unlocked)
+    {
+        TryWriteLog(options.LaunchLogPath, $"Target executable remained locked after {TargetUnlockTimeoutMs}ms: {options.TargetExePath}. Continuing with installer launch.");
+    }
 }
 
 try
@@ -54,11 +65,11 @@ catch (Exception ex)
     return 5;
 }
 
-static void WaitForParentExit(int parentPid, string launchLogPath)
+static bool WaitForParentExit(int parentPid, string launchLogPath)
 {
     if (parentPid <= 0)
     {
-        return;
+        return true;
     }
 
     var stopwatch = Stopwatch.StartNew();
@@ -68,13 +79,43 @@ static void WaitForParentExit(int parentPid, string launchLogPath)
         {
             TryWriteLog(launchLogPath, $"Parent process exited (PID={parentPid}).");
             Thread.Sleep(PostExitGraceMs);
-            return;
+            return true;
         }
 
         Thread.Sleep(ParentWaitPollMs);
     }
 
     TryWriteLog(launchLogPath, $"Parent process wait timeout reached (PID={parentPid}). Continuing.");
+    return false;
+}
+
+static bool WaitForFileUnlock(string targetPath, string launchLogPath)
+{
+    if (string.IsNullOrWhiteSpace(targetPath))
+    {
+        return true;
+    }
+
+    var stopwatch = Stopwatch.StartNew();
+    while (stopwatch.ElapsedMilliseconds < TargetUnlockTimeoutMs)
+    {
+        try
+        {
+            using var stream = new FileStream(targetPath, FileMode.Open, FileAccess.Read, FileShare.None);
+            TryWriteLog(launchLogPath, $"Target executable lock released: {targetPath}");
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return true;
+        }
+        catch
+        {
+            Thread.Sleep(TargetUnlockPollMs);
+        }
+    }
+
+    return false;
 }
 
 static bool IsProcessAlive(int processId)

@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.2.2] - 2026-05-05
+
+### Fixed
+- Hardened the updater handoff so the helper waits longer for shutdown, checks file unlocks, and reduces false code 32 / restart-required update failures.
+- Added timeouts to external catalog provider commands so the store cannot hang indefinitely on slow or stuck tooling.
+- Improved packaging guardrails with clearer runtime-script warnings and safer suspicious-package size checks.
+- Cleaned up cancellation token source disposal in the main view model to avoid resource leaks during repeated catalog and MSI operations.
+- Extended packaging workflow regression coverage for stale output detection, staged setup filename collisions, and runtime-variable script references.
+
 ## [2.2.1] - 2026-05-05
 
 ### Fixed

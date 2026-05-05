@@ -2405,6 +2405,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         _catalogSearchCancellation?.Cancel();
+        _catalogSearchCancellation?.Dispose();
         _catalogSearchCancellation = new CancellationTokenSource();
         var cancellationToken = _catalogSearchCancellation.Token;
 
@@ -2491,6 +2492,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         _catalogDetailsCancellation?.Cancel();
+        _catalogDetailsCancellation?.Dispose();
         _catalogDetailsCancellation = new CancellationTokenSource();
         var cancellationToken = _catalogDetailsCancellation.Token;
 
@@ -4089,6 +4091,7 @@ public partial class MainViewModel : ObservableObject
     private async Task RefreshMsiMetadataSummaryAsync(string msiPath)
     {
         _msiInspectionCancellation?.Cancel();
+        _msiInspectionCancellation?.Dispose();
         _msiInspectionCancellation = new CancellationTokenSource();
 
         try

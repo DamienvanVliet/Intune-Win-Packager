@@ -58,6 +58,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private static readonly TimeSpan RetryBaseDelay = TimeSpan.FromMilliseconds(280);
     private static readonly TimeSpan CacheFreshWindow = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan CacheExpirationWindow = TimeSpan.FromHours(6);
+    private static readonly TimeSpan ProcessCaptureTimeout = TimeSpan.FromSeconds(75);
 
     public PackageCatalogService(IProcessRunner processRunner, HttpClient? httpClient = null)
     {
@@ -3208,19 +3209,35 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
         try
         {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(ProcessCaptureTimeout);
+
             var result = await _processRunner.RunAsync(new ProcessRunRequest
             {
                 FileName = executable,
                 Arguments = arguments,
                 WorkingDirectory = Environment.CurrentDirectory,
                 PreferLowImpact = true
-            }, progress, cancellationToken);
+            }, progress, timeoutCts.Token);
+
+            if (result.TimedOut)
+            {
+                lines.Enqueue(
+                    $"{executable} command timed out after {ProcessCaptureTimeout.TotalSeconds:0} seconds.");
+                return (-1, lines.ToArray());
+            }
 
             return (result.ExitCode, lines.ToArray());
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException)
+        {
+            lines.Enqueue(
+                $"{executable} command timed out after {ProcessCaptureTimeout.TotalSeconds:0} seconds.");
+            return (-1, lines.ToArray());
         }
         catch (Exception ex)
         {

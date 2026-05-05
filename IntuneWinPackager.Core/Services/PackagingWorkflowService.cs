@@ -76,8 +76,51 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             };
         }
 
+        var selectedInstallerPath = Path.GetFullPath(request.Configuration.SetupFilePath);
+        if (!File.Exists(selectedInstallerPath))
+        {
+            ReportProgress(100, "Validation Failed", "Selected installer file was not found.");
+            return new PackagingResult
+            {
+                Success = false,
+                Message = $"Selected installer file was not found: {selectedInstallerPath}",
+                ExitCode = -1,
+                StartedAtUtc = startedAtUtc,
+                CompletedAtUtc = DateTimeOffset.UtcNow
+            };
+        }
+
+        var selectedInstallerSizeBytes = new FileInfo(selectedInstallerPath).Length;
+        if (selectedInstallerSizeBytes <= 0)
+        {
+            ReportProgress(100, "Validation Failed", "Selected installer file is empty.");
+            return new PackagingResult
+            {
+                Success = false,
+                Message = $"Selected installer file is empty (0 bytes): {selectedInstallerPath}",
+                ExitCode = -1,
+                StartedAtUtc = startedAtUtc,
+                CompletedAtUtc = DateTimeOffset.UtcNow
+            };
+        }
+
+        var sourceFolder = Path.GetFullPath(request.Configuration.SourceFolder);
+        var outputFolder = Path.GetFullPath(request.Configuration.OutputFolder);
+        if (IsPathInsideFolder(outputFolder, sourceFolder))
+        {
+            ReportProgress(100, "Validation Failed", "Output folder must be outside the source folder.");
+            return new PackagingResult
+            {
+                Success = false,
+                Message = $"Output folder cannot be inside source folder. Source: {sourceFolder} | Output: {outputFolder}",
+                ExitCode = -1,
+                StartedAtUtc = startedAtUtc,
+                CompletedAtUtc = DateTimeOffset.UtcNow
+            };
+        }
+
         ReportProgress(15, "Preparing Output", "Ensuring output folder exists.");
-        Directory.CreateDirectory(request.Configuration.OutputFolder);
+        Directory.CreateDirectory(outputFolder);
 
         if (request.UseLowImpactMode)
         {
@@ -96,7 +139,59 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
 
             logProgress?.Report($"Source preparation completed in {sourcePreparationStopwatch.Elapsed.TotalSeconds:0.00}s.");
 
-            var arguments = $"-c {Quote(preparedSource.PackagingSourceFolder)} -s {Quote(preparedSource.SetupRelativePath)} -o {Quote(request.Configuration.OutputFolder)} -q";
+            var stagedInstallerPath = Path.Combine(preparedSource.PackagingSourceFolder, preparedSource.SetupRelativePath);
+            if (!File.Exists(stagedInstallerPath))
+            {
+                ReportProgress(100, "Validation Failed", "Copied installer is missing from temporary package source.");
+                return new PackagingResult
+                {
+                    Success = false,
+                    Message = $"Copied installer is missing from package source folder: {stagedInstallerPath}",
+                    ExitCode = -1,
+                    StartedAtUtc = startedAtUtc,
+                    CompletedAtUtc = DateTimeOffset.UtcNow
+                };
+            }
+
+            var missingScriptReferences = FindMissingScriptReferences(
+                preparedSource.PackagingSourceFolder,
+                request.Configuration.InstallCommand,
+                request.Configuration.UninstallCommand);
+            if (missingScriptReferences.Count > 0)
+            {
+                var missingScriptsMessage =
+                    $"Referenced script file(s) are missing from package source folder: {string.Join(", ", missingScriptReferences)}";
+                ReportProgress(100, "Validation Failed", missingScriptsMessage);
+                return new PackagingResult
+                {
+                    Success = false,
+                    Message = missingScriptsMessage,
+                    ExitCode = -1,
+                    StartedAtUtc = startedAtUtc,
+                    CompletedAtUtc = DateTimeOffset.UtcNow
+                };
+            }
+
+            var unresolvedScriptReferences = FindUnresolvedScriptReferences(
+                request.Configuration.InstallCommand,
+                request.Configuration.UninstallCommand);
+            if (unresolvedScriptReferences.Count > 0)
+            {
+                logProgress?.Report(
+                    "Warning: one or more script references contain runtime-expanded paths and could not be " +
+                    $"validated before packaging: {string.Join(", ", unresolvedScriptReferences)}");
+            }
+
+            logProgress?.Report($"Selected installer path: {selectedInstallerPath}");
+            logProgress?.Report($"Selected installer size: {selectedInstallerSizeBytes} bytes ({FormatBytes(selectedInstallerSizeBytes)})");
+            logProgress?.Report(preparedSource.StagingRootFolder is null
+                ? $"Package source folder: {preparedSource.PackagingSourceFolder}"
+                : $"Temporary package source folder: {preparedSource.PackagingSourceFolder}");
+            logProgress?.Report($"Output folder: {outputFolder}");
+
+            var arguments = $"-c {Quote(preparedSource.PackagingSourceFolder)} -s {Quote(preparedSource.SetupRelativePath)} -o {Quote(outputFolder)} -q";
+            logProgress?.Report($"IntuneWinAppUtil arguments: {arguments}");
+            logProgress?.Report($"Package source contents: {BuildSourceContentsSnapshot(preparedSource.PackagingSourceFolder)}");
 
             ReportProgress(28, "Starting Packager", "Launching IntuneWinAppUtil.exe.");
             logProgress?.Report($"Starting packaging for {Path.GetFileName(preparedSource.SetupRelativePath)}");
@@ -126,13 +221,43 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
 
             ReportProgress(92, "Resolving Output", "Locating generated .intunewin package.");
             var outputPackagePath = ResolveOutputPackagePath(
-                request.Configuration.OutputFolder,
+                outputFolder,
                 Path.GetFileName(preparedSource.SetupRelativePath),
                 startedAtUtc);
 
             var completedAtUtc = DateTimeOffset.UtcNow;
             if (processResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(outputPackagePath))
             {
+                var outputPackageSizeBytes = new FileInfo(outputPackagePath).Length;
+                var ratioCheckEnabled = selectedInstallerSizeBytes >= 128 * 1024;
+                var suspiciousByRatio = ratioCheckEnabled && outputPackageSizeBytes < (selectedInstallerSizeBytes / 2);
+                var suspiciousByAbsoluteSize = outputPackageSizeBytes < 64 * 1024;
+                var tinyAbsoluteOutput = selectedInstallerSizeBytes >= 64 * 1024 &&
+                                         outputPackageSizeBytes < 8 * 1024;
+                if (tinyAbsoluteOutput || (suspiciousByRatio && suspiciousByAbsoluteSize))
+                {
+                    var tinyMessage =
+                        $"Generated package is suspiciously small ({FormatBytes(outputPackageSizeBytes)}). " +
+                        $"Expected at least 50% of installer size ({FormatBytes(selectedInstallerSizeBytes)}).";
+                    ReportProgress(100, "Failed", tinyMessage);
+                    return new PackagingResult
+                    {
+                        Success = false,
+                        Message = tinyMessage,
+                        OutputPackagePath = outputPackagePath,
+                        ExitCode = processResult.ExitCode,
+                        StartedAtUtc = startedAtUtc,
+                        CompletedAtUtc = completedAtUtc
+                    };
+                }
+                else if (suspiciousByRatio)
+                {
+                    logProgress?.Report(
+                        $"Warning: generated package is below 50% of installer size " +
+                        $"({FormatBytes(outputPackageSizeBytes)} vs {FormatBytes(selectedInstallerSizeBytes)}). " +
+                        "Review source contents to confirm this is expected.");
+                }
+
                 var metadataPath = await WriteMetadataFileAsync(
                     request,
                     preparedSource,
@@ -205,13 +330,17 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
 
         var outputFolder = Path.GetFullPath(request.Configuration.OutputFolder);
         var outputInsideSource = IsPathInsideFolder(outputFolder, sourceFolder);
+        if (outputInsideSource)
+        {
+            throw new InvalidOperationException("Output folder must be outside the selected source folder.");
+        }
+
         var sourceContainsPackages =
             request.Configuration.UseSmartSourceStaging &&
-            !outputInsideSource &&
             SourceContainsPackageArtifacts(sourceFolder);
-
-        var shouldStage = request.Configuration.UseSmartSourceStaging &&
-            (outputInsideSource || sourceContainsPackages);
+        var mustUseTemporarySourceForExe = request.InstallerType == InstallerType.Exe;
+        var shouldStage = mustUseTemporarySourceForExe ||
+            (request.Configuration.UseSmartSourceStaging && sourceContainsPackages);
 
         if (!shouldStage)
         {
@@ -234,9 +363,11 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         var stagingSource = Path.Combine(stagingRoot, "source");
         Directory.CreateDirectory(stagingSource);
 
-        logProgress?.Report(outputInsideSource
-            ? "Smart staging enabled: output folder is inside source."
-            : "Smart staging enabled: previous .intunewin artifacts detected in source.");
+        logProgress?.Report(mustUseTemporarySourceForExe
+            ? "Temporary package source enabled for EXE reliability."
+            : sourceContainsPackages
+                ? "Smart staging enabled: previous .intunewin artifacts detected in source."
+                : "Smart staging enabled: isolated temporary source will be used for packaging.");
 
         var copiedFileCount = 0;
         long copiedBytes = 0;
@@ -260,6 +391,28 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             ref copiedBytes,
             cancellationToken);
 
+        var stagedSetupPath = Path.Combine(stagingSource, setupRelativePath);
+        if (!File.Exists(stagedSetupPath))
+        {
+            throw new InvalidOperationException($"Copied installer is missing in staging source: {stagedSetupPath}");
+        }
+
+        var setupFileNameOnly = Path.GetFileName(setupFilePath);
+        var setupFileNameForPackaging = setupFileNameOnly;
+        var stagedSetupAtRootPath = Path.Combine(stagingSource, setupFileNameOnly);
+        if (!stagedSetupPath.Equals(stagedSetupAtRootPath, StringComparison.OrdinalIgnoreCase))
+        {
+            if (File.Exists(stagedSetupAtRootPath))
+            {
+                setupFileNameForPackaging = BuildUniqueSetupAlias(setupFileNameOnly);
+                stagedSetupAtRootPath = Path.Combine(stagingSource, setupFileNameForPackaging);
+                logProgress?.Report(
+                    $"Setup filename collision detected in staged root. Using '{setupFileNameForPackaging}' for IntuneWinAppUtil -s.");
+            }
+
+            File.Copy(stagedSetupPath, stagedSetupAtRootPath, overwrite: true);
+        }
+
         var copiedFileOnlyCount = Math.Max(0, copiedFileCount - hardLinkedFileCount);
         logProgress?.Report(
             $"Staged {copiedFileCount} file(s), {FormatBytes(copiedBytes)} prepared for isolated source " +
@@ -268,7 +421,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         return new PreparedSourceContext
         {
             PackagingSourceFolder = stagingSource,
-            SetupRelativePath = setupRelativePath,
+            SetupRelativePath = setupFileNameForPackaging,
             StagingRootFolder = stagingRoot,
             StagedFileCount = copiedFileCount,
             HardLinkedFileCount = hardLinkedFileCount,
@@ -753,7 +906,11 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         var expectedPath = Path.Combine(outputFolder, $"{Path.GetFileNameWithoutExtension(setupFileName)}.intunewin");
         if (File.Exists(expectedPath))
         {
-            return expectedPath;
+            var expectedFileInfo = new FileInfo(expectedPath);
+            if (expectedFileInfo.LastWriteTimeUtc >= startedAtUtc.UtcDateTime.AddMinutes(-1))
+            {
+                return expectedPath;
+            }
         }
 
         if (!Directory.Exists(outputFolder))
@@ -801,6 +958,55 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         return $"{value:0.#} {units[unitIndex]}";
     }
 
+    private static string BuildSourceContentsSnapshot(string sourceFolder)
+    {
+        const int maxEntriesToLog = 120;
+
+        try
+        {
+            if (!Directory.Exists(sourceFolder))
+            {
+                return "(source folder not found)";
+            }
+
+            var entries = new List<string>(maxEntriesToLog);
+            var isTruncated = false;
+
+            foreach (var path in Directory.EnumerateFileSystemEntries(sourceFolder, "*", SearchOption.AllDirectories))
+            {
+                if (entries.Count >= maxEntriesToLog)
+                {
+                    isTruncated = true;
+                    break;
+                }
+
+                var relative = Path.GetRelativePath(sourceFolder, path);
+                if (Directory.Exists(path))
+                {
+                    entries.Add($"[DIR] {relative}");
+                    continue;
+                }
+
+                var size = new FileInfo(path).Length;
+                entries.Add($"[FILE] {relative} ({size} bytes)");
+            }
+
+            if (entries.Count == 0)
+            {
+                return "(empty)";
+            }
+
+            var snapshot = string.Join("; ", entries);
+            return isTruncated
+                ? $"{snapshot}; ... (truncated after {maxEntriesToLog} entries)"
+                : snapshot;
+        }
+        catch (Exception ex)
+        {
+            return $"(failed to enumerate source contents: {ex.Message})";
+        }
+    }
+
     private static bool SourceContainsPackageArtifacts(string sourceFolder)
     {
         try
@@ -813,6 +1019,160 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         {
             return false;
         }
+    }
+
+    private static IReadOnlyList<string> FindMissingScriptReferences(
+        string packagingSourceFolder,
+        string installCommand,
+        string uninstallCommand)
+    {
+        var missing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var command in new[] { installCommand, uninstallCommand })
+        {
+            foreach (var scriptReference in ExtractScriptReferences(command))
+            {
+                if (string.IsNullOrWhiteSpace(scriptReference))
+                {
+                    continue;
+                }
+
+                if (!TryResolveScriptReferenceForValidation(packagingSourceFolder, scriptReference, out var resolvedScriptPath))
+                {
+                    // Runtime-expanded paths (for example %~dp0 or $PSScriptRoot) are not deterministically
+                    // resolvable here, so we don't block packaging on those patterns.
+                    continue;
+                }
+
+                if (!IsPathInsideFolder(resolvedScriptPath, packagingSourceFolder) || !File.Exists(resolvedScriptPath))
+                {
+                    missing.Add(scriptReference);
+                }
+            }
+        }
+
+        return missing.ToList();
+    }
+
+    private static IReadOnlyList<string> FindUnresolvedScriptReferences(
+        string installCommand,
+        string uninstallCommand)
+    {
+        var unresolved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var command in new[] { installCommand, uninstallCommand })
+        {
+            foreach (var scriptReference in ExtractScriptReferences(command))
+            {
+                if (string.IsNullOrWhiteSpace(scriptReference))
+                {
+                    continue;
+                }
+
+                if (!TryResolveScriptReferenceForValidation(
+                        packagingSourceFolder: string.Empty,
+                        scriptReference,
+                        out _))
+                {
+                    unresolved.Add(scriptReference);
+                }
+            }
+        }
+
+        return unresolved.ToList();
+    }
+
+    private static IReadOnlyList<string> ExtractScriptReferences(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return [];
+        }
+
+        var matches = Regex.Matches(
+            command,
+            "(?:\"(?<path>[^\"]+\\.(?:ps1|cmd|bat|vbs|wsf))\"|(?<path>[^\\s\"]+\\.(?:ps1|cmd|bat|vbs|wsf)))",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in matches)
+        {
+            var value = match.Groups["path"].Value?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                results.Add(value);
+            }
+        }
+
+        return results.ToList();
+    }
+
+    private static bool TryResolveScriptReferenceForValidation(
+        string packagingSourceFolder,
+        string scriptReference,
+        out string resolvedPath)
+    {
+        resolvedPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(scriptReference))
+        {
+            return false;
+        }
+
+        var normalizedReference = scriptReference
+            .Trim()
+            .Trim('"')
+            .Replace('/', Path.DirectorySeparatorChar)
+            .Replace('\\', Path.DirectorySeparatorChar);
+
+        if (normalizedReference.StartsWith($".{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+        {
+            normalizedReference = normalizedReference[2..];
+        }
+
+        if (normalizedReference.StartsWith("%~dp0", StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedReference = normalizedReference[5..].TrimStart(Path.DirectorySeparatorChar);
+        }
+        else if (normalizedReference.StartsWith("$PSScriptRoot", StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedReference = normalizedReference["$PSScriptRoot".Length..].TrimStart(Path.DirectorySeparatorChar);
+        }
+        else if (ContainsRuntimeVariableTokens(normalizedReference))
+        {
+            return false;
+        }
+
+        resolvedPath = Path.IsPathRooted(normalizedReference)
+            ? Path.GetFullPath(normalizedReference)
+            : Path.GetFullPath(Path.Combine(packagingSourceFolder, normalizedReference));
+        return true;
+    }
+
+    private static bool ContainsRuntimeVariableTokens(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (value.Contains("%", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (value.Contains("$", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string BuildUniqueSetupAlias(string setupFileName)
+    {
+        var extension = Path.GetExtension(setupFileName);
+        var baseName = Path.GetFileNameWithoutExtension(setupFileName);
+        return $"{baseName}__iwp__{Guid.NewGuid():N}{extension}";
     }
 
     private sealed record PreparedSourceContext
