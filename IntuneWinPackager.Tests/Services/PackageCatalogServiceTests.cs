@@ -399,6 +399,9 @@ public sealed class PackageCatalogServiceTests
         Assert.True(variant.IsDeterministicDetection);
         Assert.Contains("DisplayName -eq", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
         Assert.Contains("Test-IwpVersionMatch", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+        Assert.Contains("Registry rejected", variant.DetectionGuidance, StringComparison.Ordinal);
+        Assert.Contains("File rejected", variant.DetectionGuidance, StringComparison.Ordinal);
+        Assert.Contains("Script selected as the last resort", variant.DetectionGuidance, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -541,6 +544,80 @@ public sealed class PackageCatalogServiceTests
         Assert.Equal(IntuneDetectionOperator.Equals, variant.DetectionRule.Registry.Operator);
         Assert.Equal("9.1.0", variant.DetectionRule.Registry.Value);
         Assert.True(variant.IsDeterministicDetection);
+    }
+
+    [Fact]
+    public async Task SearchAsync_WingetExeVariant_WithoutUninstallKey_PrefersStableFileDetectionOverScript()
+    {
+        var processRunner = new RoutingProcessRunner(request =>
+        {
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("source list", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name    Argument                                      Explicit",
+                    "---------------------------------------------------------------",
+                    "winget  https://cdn.winget.microsoft.com/cache        false"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("search ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Name          Id                   Version Match",
+                    "--------------------------------------------------",
+                    "ContosoAgent  Contoso.Agent.Setup  9.1.0   Tag"
+                ]);
+            }
+
+            if (request.FileName.Equals("winget", StringComparison.OrdinalIgnoreCase) &&
+                request.Arguments.StartsWith("show ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new StubProcessResult(0,
+                [
+                    "Found ContosoAgent [Contoso.Agent.Setup]",
+                    "Version: 9.1.0",
+                    "Publisher: Contoso Ltd",
+                    "Installer Type: exe",
+                    "Display Name: Contoso Agent",
+                    "Display Version: 9.1.0",
+                    "Display Icon: \"C:\\Program Files\\Contoso Agent\\Agent.exe\",0",
+                    "Installer Url: https://download.contoso.example/contoso-agent-9.1.0.exe"
+                ]);
+            }
+
+            return new StubProcessResult(1, []);
+        });
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.NotFound)));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var results = await sut.SearchAsync(new PackageCatalogQuery
+        {
+            SearchTerm = $"contoso-file-{Guid.NewGuid():N}",
+            IncludeWinget = true,
+            IncludeChocolatey = false,
+            IncludeGitHubReleases = false,
+            IncludeScoop = false,
+            IncludeNuGet = false
+        });
+
+        var entry = Assert.Single(results);
+        var variant = Assert.Single(entry.InstallerVariants);
+        Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Equal(IntuneDetectionRuleType.File, variant.DetectionRule.RuleType);
+        Assert.Equal(@"C:\Program Files\Contoso Agent", variant.DetectionRule.File.Path);
+        Assert.Equal("Agent.exe", variant.DetectionRule.File.FileOrFolderName);
+        Assert.Equal(IntuneDetectionOperator.Equals, variant.DetectionRule.File.Operator);
+        Assert.Equal("9.1.0", variant.DetectionRule.File.Value);
+        Assert.True(variant.IsDeterministicDetection);
+        Assert.Contains("Registry rejected", variant.DetectionGuidance, StringComparison.Ordinal);
+        Assert.Contains("File accepted", variant.DetectionGuidance, StringComparison.Ordinal);
+        Assert.DoesNotContain("Script selected", variant.DetectionGuidance, StringComparison.Ordinal);
     }
 
     [Fact]

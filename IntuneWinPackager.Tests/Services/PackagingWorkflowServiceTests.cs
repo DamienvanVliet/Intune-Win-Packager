@@ -59,7 +59,7 @@ public class PackagingWorkflowServiceTests
 
         var result = await sut.PackageAsync(request);
 
-        Assert.True(result.Success);
+        Assert.True(result.Success, result.Message);
         Assert.Equal(expectedOutput, result.OutputPackagePath);
         Assert.False(string.IsNullOrWhiteSpace(result.OutputMetadataPath));
         Assert.True(File.Exists(result.OutputMetadataPath));
@@ -325,6 +325,120 @@ public class PackagingWorkflowServiceTests
         var result = await sut.PackageAsync(request);
 
         Assert.True(result.Success);
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
+    public async Task PackageAsync_LogsDetectionDecisionTraceAndEvidence()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "ClientSetup.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        var expectedOutput = Path.Combine(outputFolder, "ClientSetup.intunewin");
+
+        await File.WriteAllBytesAsync(setupFilePath, new byte[128 * 1024]);
+        await File.WriteAllTextAsync(toolPath, "dummy");
+        await File.WriteAllBytesAsync(expectedOutput, new byte[96 * 1024]);
+
+        var request = BuildValidRequest(toolPath, sourceFolder, setupFilePath, outputFolder) with
+        {
+            Configuration = BuildValidRequest(toolPath, sourceFolder, setupFilePath, outputFolder).Configuration with
+            {
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    TemplateGuidance =
+                        "Fallback profile. Detection selection: MSI rejected (installer type EXE). Registry accepted using exact uninstall key metadata plus DisplayVersion equality. File/script detection were not needed. Confidence: High (91/100).",
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Registry,
+                        Registry = new RegistryDetectionRule
+                        {
+                            Hive = "HKEY_LOCAL_MACHINE",
+                            KeyPath = @"SOFTWARE\Contoso\Client",
+                            ValueName = "DisplayVersion",
+                            Operator = IntuneDetectionOperator.Equals,
+                            Value = "1.2.3"
+                        }
+                    },
+                    AdditionalDetectionRules =
+                    [
+                        new IntuneDetectionRule
+                        {
+                            RuleType = IntuneDetectionRuleType.Registry,
+                            Registry = new RegistryDetectionRule
+                            {
+                                Hive = "HKEY_LOCAL_MACHINE",
+                                KeyPath = @"SOFTWARE\Contoso\Client",
+                                ValueName = "DisplayName",
+                                Operator = IntuneDetectionOperator.Equals,
+                                Value = "Contoso Client"
+                            }
+                        },
+                        new IntuneDetectionRule
+                        {
+                            RuleType = IntuneDetectionRuleType.Registry,
+                            Registry = new RegistryDetectionRule
+                            {
+                                Hive = "HKEY_LOCAL_MACHINE",
+                                KeyPath = @"SOFTWARE\Contoso\Client",
+                                ValueName = "Publisher",
+                                Operator = IntuneDetectionOperator.Equals,
+                                Value = "Contoso Ltd"
+                            }
+                        }
+                    ],
+                    DetectionProvenance =
+                    [
+                        new DetectionFieldProvenance
+                        {
+                            FieldName = "DisplayName",
+                            FieldValue = "Contoso Client",
+                            Source = DetectionProvenanceSource.LocalUninstallRegistry,
+                            IsStrongEvidence = true,
+                            Notes = "Exact uninstall DisplayName."
+                        },
+                        new DetectionFieldProvenance
+                        {
+                            FieldName = "Publisher",
+                            FieldValue = "Contoso Ltd",
+                            Source = DetectionProvenanceSource.LocalUninstallRegistry,
+                            IsStrongEvidence = true,
+                            Notes = "Exact uninstall Publisher."
+                        },
+                        new DetectionFieldProvenance
+                        {
+                            FieldName = "DisplayVersion",
+                            FieldValue = "1.2.3",
+                            Source = DetectionProvenanceSource.LocalUninstallRegistry,
+                            IsStrongEvidence = true,
+                            Notes = "Exact uninstall DisplayVersion."
+                        }
+                    ]
+                }
+            }
+        };
+
+        var logs = new List<string>();
+        var sut = new PackagingWorkflowService(
+            new PackagingValidationService(),
+            new CapturingProcessRunner(exitCode: 0));
+
+        var result = await sut.PackageAsync(
+            request,
+            logProgress: new Progress<string>(logs.Add));
+
+        Assert.True(result.Success);
+        Assert.Contains(logs, entry => entry.Contains("Primary detection rule:", StringComparison.Ordinal));
+        Assert.Contains(logs, entry => entry.Contains("Additional detection rules:", StringComparison.Ordinal));
+        Assert.Contains(logs, entry => entry.Contains("Detection decision trace: Detection selection:", StringComparison.Ordinal));
+        Assert.Contains(logs, entry => entry.Contains("Detection evidence:", StringComparison.Ordinal));
 
         Directory.Delete(tempRoot, recursive: true);
     }

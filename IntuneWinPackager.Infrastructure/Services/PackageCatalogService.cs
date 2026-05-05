@@ -4008,6 +4008,9 @@ public sealed class PackageCatalogService : IPackageCatalogService
             var exactDisplayName = Coalesce(uninstallDisplayName, packageName);
             var exactPublisher = Coalesce(uninstallPublisher, publisher);
             var exactVersion = Coalesce(uninstallDisplayVersion, version);
+            var stableFilePath = fileDetectionPath;
+            var stableFileName = fileDetectionName;
+            var stableFileVersion = Coalesce(fileDetectionVersion, version);
 
             if (!string.IsNullOrWhiteSpace(uninstallRegistryKeyPath) &&
                 !string.IsNullOrWhiteSpace(exactDisplayName) &&
@@ -4027,7 +4030,28 @@ public sealed class PackageCatalogService : IPackageCatalogService
                             Value = exactVersion
                         }
                     },
-                    "Deterministic: exact uninstall registry key with DisplayVersion equality (identity: DisplayName + Publisher + DisplayVersion).",
+                    "Detection selection: MSI rejected (installer type EXE). Registry accepted using exact uninstall key metadata plus DisplayVersion equality. File/script detection were not needed.",
+                    true);
+            }
+
+            if (!string.IsNullOrWhiteSpace(stableFilePath) &&
+                !string.IsNullOrWhiteSpace(stableFileName) &&
+                !string.IsNullOrWhiteSpace(stableFileVersion))
+            {
+                return new DetectionStrategyPlan(
+                    new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.File,
+                        File = new FileDetectionRule
+                        {
+                            Path = stableFilePath,
+                            FileOrFolderName = stableFileName,
+                            Check32BitOn64System = false,
+                            Operator = IntuneDetectionOperator.Equals,
+                            Value = stableFileVersion
+                        }
+                    },
+                    "Detection selection: MSI rejected (installer type EXE). Registry rejected because exact uninstall key metadata is unavailable. File accepted using stable installed binary path + version metadata. Script detection was not needed.",
                     true);
             }
 
@@ -4046,37 +4070,13 @@ public sealed class PackageCatalogService : IPackageCatalogService
                             EnforceSignatureCheck = false
                         }
                     },
-                    "Deterministic: exact registry equality script on DisplayName, Publisher, and DisplayVersion (native registry rule not possible without exact uninstall key path).",
-                    true);
-            }
-
-            var stableFilePath = fileDetectionPath;
-            var stableFileName = fileDetectionName;
-            var stableFileVersion = Coalesce(fileDetectionVersion, version);
-            if (!string.IsNullOrWhiteSpace(stableFilePath) &&
-                !string.IsNullOrWhiteSpace(stableFileName) &&
-                !string.IsNullOrWhiteSpace(stableFileVersion))
-            {
-                return new DetectionStrategyPlan(
-                    new IntuneDetectionRule
-                    {
-                        RuleType = IntuneDetectionRuleType.File,
-                        File = new FileDetectionRule
-                        {
-                            Path = stableFilePath,
-                            FileOrFolderName = stableFileName,
-                            Check32BitOn64System = false,
-                            Operator = IntuneDetectionOperator.Equals,
-                            Value = stableFileVersion
-                        }
-                    },
-                    "Deterministic fallback: stable file version detection (registry identity metadata unavailable).",
+                    "Detection selection: MSI rejected (installer type EXE). Registry rejected because exact uninstall key metadata is unavailable. File rejected because no stable installed file path + version metadata was provided. Script selected as the last resort using exact DisplayName, Publisher, and DisplayVersion equality.",
                     true);
             }
 
             return new DetectionStrategyPlan(
                 new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None },
-                "EXE detected, but strict uninstall identity metadata is incomplete. Fill exact DisplayName/Publisher/DisplayVersion and uninstall key path.",
+                "Detection selection: MSI rejected (installer type EXE). Registry rejected because exact uninstall key metadata is unavailable. File rejected because no stable installed file path + version metadata was provided. Script rejected because strict DisplayName/Publisher/DisplayVersion metadata is incomplete.",
                 false);
         }
 

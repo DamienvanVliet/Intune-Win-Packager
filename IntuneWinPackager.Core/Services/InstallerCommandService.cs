@@ -544,6 +544,9 @@ public sealed class InstallerCommandService : IInstallerCommandService
         var fallbackApproved = false;
 
         var metadataBasedDetection = false;
+        var metadataDetectionRule = new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None };
+        string metadataDetectionSummary = string.Empty;
+        IReadOnlyList<DetectionFieldProvenance> metadataProvenance = [];
         if (installedEvidence is not null)
         {
             detectionRule = BuildPrimaryExeRegistryRule(installedEvidence, detectionIntent);
@@ -551,15 +554,16 @@ public sealed class InstallerCommandService : IInstallerCommandService
             uninstallCommand = installedEvidence.UninstallCommand;
             provenance.AddRange(BuildExeInstalledEvidenceProvenance(installedEvidence));
             guidanceParts.Add(
-                $"Deterministic local footprint matched '{installedEvidence.DisplayName}' " +
-                $"(exact DisplayName/Publisher/DisplayVersion) and was used for registry detection + uninstall suggestion.");
+                "Detection selection: MSI rejected (installer type EXE). " +
+                $"Registry accepted from exact local uninstall footprint '{installedEvidence.DisplayName}' " +
+                "(DisplayName/Publisher/DisplayVersion). File/script detection were not needed, and uninstall was reused from local evidence.");
         }
         else if (TryBuildDeterministicExeDetectionFromMetadata(
                      setupFilePath,
                      detectionIntent,
-                     out var metadataDetectionRule,
-                     out var metadataDetectionSummary,
-                     out var metadataProvenance))
+                     out metadataDetectionRule,
+                     out metadataDetectionSummary,
+                     out metadataProvenance))
         {
             detectionRule = metadataDetectionRule;
             metadataBasedDetection = true;
@@ -569,6 +573,11 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
         else
         {
+            if (!string.IsNullOrWhiteSpace(metadataDetectionSummary))
+            {
+                guidanceParts.Add(metadataDetectionSummary);
+            }
+
             guidanceParts.Add(
                 "No deterministic installed footprint match was found. Configure an exact detection rule manually " +
                 "(MSI Product Code, exact Registry value, or stable File path).");
@@ -586,7 +595,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
         var confidenceReason = installedEvidence is not null
             ? "Installer behavior matched deterministic local evidence and verified switch hints."
             : metadataBasedDetection
-                ? "Installer metadata produced deterministic EXE registry detection. Validate silent switches before production rollout."
+                ? "Installer metadata produced last-resort deterministic EXE script detection. Validate silent switches before production rollout."
                 : confidenceLevel switch
         {
             SuggestionConfidenceLevel.High => "Installer behavior was inferred with high confidence. Validate silent switches and detection once before rollout.",
@@ -1483,12 +1492,31 @@ public sealed class InstallerCommandService : IInstallerCommandService
             ],
             fieldProvenance));
         var signer = TryGetSignerSubject(setupFilePath);
+        var hasStrongDisplayName = HasStrongProvenance(fieldProvenance, "DisplayName");
+        var hasStrongPublisher = HasStrongProvenance(fieldProvenance, "Publisher");
+        var hasStrongDisplayVersion = HasStrongProvenance(fieldProvenance, "DisplayVersion");
 
         if (string.IsNullOrWhiteSpace(displayName) ||
             string.IsNullOrWhiteSpace(publisher) ||
             string.IsNullOrWhiteSpace(displayVersion))
         {
             provenance = fieldProvenance;
+            summary =
+                "Detection selection: MSI rejected (installer type EXE). " +
+                "Registry rejected because no exact local uninstall footprint was found. " +
+                "File rejected because no stable installed path metadata is available from the installer alone. " +
+                "Script rejected because exact DisplayName/Publisher/DisplayVersion metadata is incomplete.";
+            return false;
+        }
+
+        if (!hasStrongDisplayName || !hasStrongPublisher || !hasStrongDisplayVersion)
+        {
+            provenance = fieldProvenance;
+            summary =
+                "Detection selection: MSI rejected (installer type EXE). " +
+                "Registry rejected because no exact local uninstall footprint was found. " +
+                "File rejected because no stable installed path metadata is available from the installer alone. " +
+                "Script rejected because installer metadata is heuristic or weak; exact DisplayName, Publisher, and DisplayVersion are required before using script fallback.";
             return false;
         }
 
@@ -1512,7 +1540,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
         provenance = fieldProvenance;
 
         summary =
-            "No local installed footprint was found. Generated deterministic EXE detection script from installer metadata " +
+            "Detection selection: MSI rejected (installer type EXE). " +
+            "Registry rejected because no exact local uninstall footprint was found. " +
+            "File rejected because no stable installed path metadata is available from the installer alone. " +
+            "Script selected as the last resort from exact installer metadata " +
             $"(DisplayName='{displayName}', Publisher='{publisher}', DisplayVersion='{displayVersion}', Operator='{versionOperator}')." +
             (string.IsNullOrWhiteSpace(signer)
                 ? string.Empty
@@ -1553,6 +1584,16 @@ public sealed class InstallerCommandService : IInstallerCommandService
             Notes = "No metadata value resolved."
         });
         return string.Empty;
+    }
+
+    private static bool HasStrongProvenance(
+        IEnumerable<DetectionFieldProvenance> provenance,
+        string fieldName)
+    {
+        return provenance.Any(item =>
+            item.FieldName.Equals(fieldName, StringComparison.OrdinalIgnoreCase) &&
+            item.IsStrongEvidence &&
+            !string.IsNullOrWhiteSpace(item.FieldValue));
     }
 
     private static IntuneDetectionRule BuildPrimaryExeRegistryRule(

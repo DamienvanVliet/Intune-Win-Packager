@@ -188,6 +188,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                 ? $"Package source folder: {preparedSource.PackagingSourceFolder}"
                 : $"Temporary package source folder: {preparedSource.PackagingSourceFolder}");
             logProgress?.Report($"Output folder: {outputFolder}");
+            LogDetectionDecisionTrace(request.Configuration.IntuneRules, logProgress);
 
             var arguments = $"-c {Quote(preparedSource.PackagingSourceFolder)} -s {Quote(preparedSource.SetupRelativePath)} -o {Quote(outputFolder)} -q";
             logProgress?.Report($"IntuneWinAppUtil arguments: {arguments}");
@@ -764,6 +765,39 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         return value > 0 ? value.ToString() : "Not configured";
     }
 
+    private static void LogDetectionDecisionTrace(
+        IntuneWin32AppRules rules,
+        IProgress<string>? logProgress)
+    {
+        if (logProgress is null)
+        {
+            return;
+        }
+
+        logProgress.Report($"Primary detection rule: {SummarizeInlineRule(rules.DetectionRule)}");
+
+        if (rules.AdditionalDetectionRules is { Count: > 0 })
+        {
+            logProgress.Report(
+                "Additional detection rules: " +
+                string.Join(" | ", rules.AdditionalDetectionRules.Select(SummarizeInlineRule)));
+        }
+
+        var decisionTrace = ExtractDetectionDecisionTrace(rules.TemplateGuidance);
+        if (!string.IsNullOrWhiteSpace(decisionTrace))
+        {
+            logProgress.Report($"Detection decision trace: {decisionTrace}");
+        }
+
+        if (rules.DetectionProvenance is { Count: > 0 })
+        {
+            logProgress.Report(
+                "Detection evidence: " +
+                string.Join(" | ", rules.DetectionProvenance.Select(static item =>
+                    $"{item.FieldName}='{item.FieldValue}' [{item.Source}, strong={item.IsStrongEvidence}]")));
+        }
+    }
+
     private static string BuildDetectionSummary(
         IntuneDetectionRule detectionRule,
         IReadOnlyList<IntuneDetectionRule> additionalDetectionRules)
@@ -805,6 +839,30 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static string ExtractDetectionDecisionTrace(string? templateGuidance)
+    {
+        if (string.IsNullOrWhiteSpace(templateGuidance))
+        {
+            return string.Empty;
+        }
+
+        const string marker = "Detection selection:";
+        var startIndex = templateGuidance.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (startIndex < 0)
+        {
+            return string.Empty;
+        }
+
+        var trace = templateGuidance[startIndex..].Trim();
+        var confidenceIndex = trace.LastIndexOf(" Confidence:", StringComparison.OrdinalIgnoreCase);
+        if (confidenceIndex > 0)
+        {
+            trace = trace[..confidenceIndex].TrimEnd();
+        }
+
+        return trace;
     }
 
     private static string SummarizeInlineRule(IntuneDetectionRule detectionRule)

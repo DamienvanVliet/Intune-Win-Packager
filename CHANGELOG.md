@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.3] - 2026-05-05
+
+### Fixed
+- Detection selection now prefers native EXE rules more reliably: exact uninstall registry first, stable file detection second, script only as the final fallback.
+- Weak or heuristic-only EXE metadata no longer auto-promotes script detection; packaging now leaves detection manual when exact identity evidence is incomplete.
+- Packaging logs now include the selected detection rule, composite rules, provenance evidence, and the resolver decision trace so script fallback is easier to inspect.
+- Added regression coverage for EXE fallback ordering, weak metadata rejection, and packaging log detection tracing.
+
 ## [2.2.2] - 2026-05-05
 
 ### Fixed

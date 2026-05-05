@@ -63,6 +63,33 @@ public class InstallerCommandServiceTests
     }
 
     [Fact]
+    public void CreateSuggestion_ForExeWithIncompleteMetadata_DoesNotAutoSelectScriptDetection()
+    {
+        var sut = new InstallerCommandService();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-incomplete-exe-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var setupFile = Path.Combine(tempRoot, "AcmeSetup.exe");
+        File.WriteAllText(setupFile, "not-a-real-exe");
+
+        try
+        {
+            var suggestion = sut.CreateSuggestion(
+                setupFilePath: setupFile,
+                installerType: InstallerType.Exe);
+
+            Assert.Equal(IntuneDetectionRuleType.None, suggestion.SuggestedRules.DetectionRule.RuleType);
+            Assert.Contains(
+                "Script rejected because exact DisplayName/Publisher/DisplayVersion metadata is incomplete.",
+                suggestion.SuggestedRules.TemplateGuidance,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void DetectInstallerType_RecognizesAppxAndScriptTypes()
     {
         var sut = new InstallerCommandService();
