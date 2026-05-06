@@ -305,13 +305,8 @@ public class PreflightServiceTests
                         Script = new ScriptDetectionRule
                         {
                             ScriptBody = """
-                                         $packageName = "Contoso.App"
-                                         $expectedVersion = "1.2.3.4"
-                                         $match = Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue | Where-Object {
-                                             $_.Version.ToString() -eq $expectedVersion
-                                         } | Select-Object -First 1
-                                         if ($null -ne $match) { exit 0 }
-                                         exit 1
+                                         Write-Error "No valid success path is configured."
+                                         exit 2
                                          """
                         }
                     }
@@ -463,4 +458,3 @@ public class PreflightServiceTests
         }
     }
 }
-
