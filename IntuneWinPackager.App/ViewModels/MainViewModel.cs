@@ -2236,8 +2236,8 @@ public partial class MainViewModel : ObservableObject
                             result.BestCandidate.Rule.RuleType,
                             result.BestCandidate.Confidence,
                             result.CandidateCount);
-                        SandboxProofCandidateSummary = result.BestCandidate.Reason;
-                        AppendLog($"Applied sandbox proof detection candidate: {result.BestCandidate.Rule.RuleType} ({result.BestCandidate.Confidence}). {result.BestCandidate.Reason}");
+                        SandboxProofCandidateSummary = BuildSandboxCandidateSummary(result.BestCandidate);
+                        AppendLog($"Applied sandbox proof detection candidate: {result.BestCandidate.Rule.RuleType} ({result.BestCandidate.Confidence}). {SandboxProofCandidateSummary}");
                         SetStatus(
                             OperationState.Success,
                             T("Vm.Status.SandboxProofDetectionAppliedTitle"),
@@ -2388,8 +2388,8 @@ public partial class MainViewModel : ObservableObject
             result.BestCandidate.Rule.RuleType,
             result.BestCandidate.Confidence,
             result.CandidateCount);
-        SandboxProofCandidateSummary = result.BestCandidate.Reason;
-        AppendLog($"Applied sandbox proof detection candidate: {result.BestCandidate.Rule.RuleType} ({result.BestCandidate.Confidence}). {result.BestCandidate.Reason}");
+        SandboxProofCandidateSummary = BuildSandboxCandidateSummary(result.BestCandidate);
+        AppendLog($"Applied sandbox proof detection candidate: {result.BestCandidate.Rule.RuleType} ({result.BestCandidate.Confidence}). {SandboxProofCandidateSummary}");
 
         if (showStatus)
         {
@@ -2401,6 +2401,16 @@ public partial class MainViewModel : ObservableObject
 
         UpdateValidation();
         return true;
+    }
+
+    private static string BuildSandboxCandidateSummary(SandboxProofDetectionCandidate candidate)
+    {
+        if (!candidate.ProofAvailable || string.IsNullOrWhiteSpace(candidate.ProofSummary))
+        {
+            return candidate.Reason;
+        }
+
+        return $"{candidate.Reason} {candidate.ProofSummary}";
     }
 
     private async Task TestDetectionAsync()

@@ -12,6 +12,8 @@ public sealed record SandboxProofDetectionResult
 
     public int CandidateCount { get; init; }
 
+    public int ProvenCandidateCount { get; init; }
+
     public SandboxProofDetectionCandidate? BestCandidate { get; init; }
 
     public IReadOnlyList<SandboxProofDetectionCandidate> Candidates { get; init; } = [];

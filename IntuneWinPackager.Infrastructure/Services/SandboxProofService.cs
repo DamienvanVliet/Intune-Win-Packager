@@ -212,14 +212,17 @@ public sealed class SandboxProofService : ISandboxProofService
                 }
             }
 
-            var bestCandidate = candidates
+            var provenCandidateCount = candidates.Count(candidate => candidate.IsProven);
+            var proofAvailable = candidates.Any(candidate => candidate.ProofAvailable);
+            var selectableCandidates = proofAvailable
+                ? candidates.Where(candidate => candidate.IsProven)
+                : candidates;
+            var bestCandidate = selectableCandidates
                 .OrderByDescending(candidate => ConfidenceScore(candidate.Confidence))
                 .ThenBy(candidate => DetectionTypePriority(candidate.Rule.RuleType))
                 .FirstOrDefault();
 
-            var message = bestCandidate is null
-                ? "Sandbox proof finished, but no detection candidates were found."
-                : $"Sandbox proof found {candidates.Count} detection candidate(s). Best: {bestCandidate.Rule.RuleType} ({bestCandidate.Confidence}).";
+            var message = BuildSandboxProofResultMessage(candidates.Count, provenCandidateCount, proofAvailable, bestCandidate);
 
             return new SandboxProofDetectionResult
             {
@@ -227,6 +230,7 @@ public sealed class SandboxProofService : ISandboxProofService
                 ResultPath = resultPath,
                 Message = message,
                 CandidateCount = candidates.Count,
+                ProvenCandidateCount = provenCandidateCount,
                 BestCandidate = bestCandidate,
                 Candidates = candidates
             };
@@ -284,13 +288,52 @@ public sealed class SandboxProofService : ISandboxProofService
             return null;
         }
 
+        var proofAvailable = TryGetObject(candidateElement, "proof", out var proofElement);
+        var negativeProofSummary = proofAvailable && TryGetObject(proofElement, "negativePhase", out var negativePhase)
+            ? GetJsonString(negativePhase, "summary")
+            : string.Empty;
+        var positiveProofSummary = proofAvailable && TryGetObject(proofElement, "positivePhase", out var positivePhase)
+            ? GetJsonString(positivePhase, "summary")
+            : string.Empty;
+
         return new SandboxProofDetectionCandidate
         {
             Type = GetJsonString(candidateElement, "type"),
             Confidence = GetJsonString(candidateElement, "confidence"),
             Reason = GetJsonString(candidateElement, "reason"),
+            ProofAvailable = proofAvailable,
+            IsProven = proofAvailable && GetJsonBoolean(proofElement, "success"),
+            ProofSummary = proofAvailable ? GetJsonString(proofElement, "summary") : string.Empty,
+            NegativeProofSummary = negativeProofSummary,
+            PositiveProofSummary = positiveProofSummary,
             Rule = rule
         };
+    }
+
+    private static string BuildSandboxProofResultMessage(
+        int candidateCount,
+        int provenCandidateCount,
+        bool proofAvailable,
+        SandboxProofDetectionCandidate? bestCandidate)
+    {
+        if (candidateCount == 0)
+        {
+            return "Sandbox proof finished, but no detection candidates were found.";
+        }
+
+        if (proofAvailable && bestCandidate is null)
+        {
+            return $"Sandbox proof found {candidateCount} detection candidate(s), but none passed sandbox validation.";
+        }
+
+        if (bestCandidate is null)
+        {
+            return "Sandbox proof finished, but no importable detection candidate was found.";
+        }
+
+        return proofAvailable
+            ? $"Sandbox proof found {candidateCount} detection candidate(s), {provenCandidateCount} proven. Best: {bestCandidate.Rule.RuleType} ({bestCandidate.Confidence})."
+            : $"Sandbox proof found {candidateCount} detection candidate(s). Best: {bestCandidate.Rule.RuleType} ({bestCandidate.Confidence}).";
     }
 
     private static IntuneDetectionRule ParseDetectionRule(JsonElement ruleElement)
@@ -415,6 +458,11 @@ public sealed class SandboxProofService : ISandboxProofService
             JsonValueKind.String => bool.TryParse(property.GetString(), out var parsed) && parsed,
             _ => false
         };
+    }
+
+    private static bool TryGetObject(JsonElement element, string propertyName, out JsonElement property)
+    {
+        return element.TryGetProperty(propertyName, out property) && property.ValueKind == JsonValueKind.Object;
     }
 
     private static int ConfidenceScore(string confidence)
@@ -1054,14 +1102,62 @@ function Split-FileDetectionTarget {
 }
 
 function New-Candidate {
-    param([string]$Type, [string]$Confidence, [string]$Reason, $Rule, $Evidence)
+    param([string]$Type, [string]$Confidence, [string]$Reason, $Rule, $Evidence, $NegativePhase)
+    if ($null -eq $NegativePhase) {
+        $NegativePhase = [pscustomobject]@{
+            success = $true
+            summary = 'Candidate source was absent before install and present after install.'
+            details = ''
+        }
+    }
+
     return [pscustomobject]@{
         type = $Type
         confidence = $Confidence
         reason = $Reason
         rule = $Rule
         evidence = $Evidence
+        proof = [pscustomobject]@{
+            success = $false
+            summary = 'Candidate has not been validated yet.'
+            negativePhase = $NegativePhase
+            positivePhase = [pscustomobject]@{
+                success = $false
+                summary = 'Post-install rule validation has not run yet.'
+                details = ''
+            }
+        }
     }
+}
+
+function Complete-CandidateProof {
+    param($Candidate)
+    if ($null -eq $Candidate -or $null -eq $Candidate.rule) { return $Candidate }
+
+    $negativePhase = if ($null -ne $Candidate.proof -and $null -ne $Candidate.proof.negativePhase) {
+        $Candidate.proof.negativePhase
+    } else {
+        [pscustomobject]@{
+            success = $true
+            summary = 'Candidate source was absent before install and present after install.'
+            details = ''
+        }
+    }
+
+    $positive = Test-ProofDetection -Rule $Candidate.rule
+    $positivePhase = [pscustomobject]@{
+        success = [bool]$positive.success
+        summary = [string]$positive.summary
+        details = [string]$positive.details
+    }
+    $success = [bool]$negativePhase.success -and [bool]$positivePhase.success
+    $Candidate.proof = [pscustomobject]@{
+        success = $success
+        summary = if ($success) { 'Candidate passed sandbox two-phase validation.' } else { 'Candidate failed sandbox validation.' }
+        negativePhase = $negativePhase
+        positivePhase = $positivePhase
+    }
+    return $Candidate
 }
 
 function Get-DetectionCandidates {
@@ -1070,6 +1166,11 @@ function Get-DetectionCandidates {
 
     foreach ($entry in @($NewUninstallEntries)) {
         if (-not [string]::IsNullOrWhiteSpace($entry.displayName) -and -not [string]::IsNullOrWhiteSpace($entry.displayVersion)) {
+            $negative = [pscustomobject]@{
+                success = $true
+                summary = 'Uninstall registry entry was absent before install and present after install.'
+                details = "$($entry.hive)\$($entry.keyPath)"
+            }
             $candidates += New-Candidate -Type 'Registry' -Confidence 'High' -Reason 'New uninstall entry with DisplayVersion after install.' -Evidence $entry -Rule ([pscustomobject]@{
                 ruleType = 'Registry'
                 registry = [pscustomobject]@{
@@ -1077,10 +1178,10 @@ function Get-DetectionCandidates {
                     keyPath = $entry.keyPath
                     valueName = 'DisplayVersion'
                     check32BitOn64System = $false
-                    operator = 'Equals'
+                    operator = 'GreaterThanOrEqual'
                     value = $entry.displayVersion
                 }
-            })
+            }) -NegativePhase $negative
         }
 
         $targets = @($entry.displayIcon, $entry.uninstallString, $entry.quietUninstallString, $entry.installLocation)
@@ -1103,12 +1204,22 @@ function Get-DetectionCandidates {
                     value = if (-not [string]::IsNullOrWhiteSpace($fileTarget.version)) { $fileTarget.version } else { '' }
                 }
             }
-            $candidates += New-Candidate -Type 'File' -Confidence 'High' -Reason 'New uninstall entry points to an existing install footprint.' -Evidence $entry -Rule $rule
+            $negative = [pscustomobject]@{
+                success = $true
+                summary = 'Source uninstall registry entry was absent before install and present after install.'
+                details = "$($entry.hive)\$($entry.keyPath)"
+            }
+            $candidates += New-Candidate -Type 'File' -Confidence 'High' -Reason 'New uninstall entry points to an existing install footprint.' -Evidence $entry -Rule $rule -NegativePhase $negative
             break
         }
     }
 
     foreach ($directory in @($NewProgramDirectories | Select-Object -First 10)) {
+        $negative = [pscustomobject]@{
+            success = $true
+            summary = 'Install directory was absent before install and present after install.'
+            details = $directory.fullName
+        }
         $candidates += New-Candidate -Type 'File' -Confidence 'Medium' -Reason 'New top-level install directory appeared after install.' -Evidence $directory -Rule ([pscustomobject]@{
             ruleType = 'File'
             file = [pscustomobject]@{
@@ -1118,7 +1229,7 @@ function Get-DetectionCandidates {
                 operator = 'Exists'
                 value = ''
             }
-        })
+        }) -NegativePhase $negative
     }
 
     return @($candidates)
@@ -1150,8 +1261,11 @@ function Write-Report {
     }
     $lines += ''
     $lines += "Detection candidates: $(@($Result.candidates).Count)"
+    $lines += "Proven candidates: $(@($Result.candidates | Where-Object { $_.proof.success }).Count)"
     foreach ($candidate in @($Result.candidates | Select-Object -First 12)) {
-        $lines += "- [$($candidate.confidence)] $($candidate.type): $($candidate.reason)"
+        $proofLabel = if ($candidate.proof.success) { 'PROVEN' } else { 'UNPROVEN' }
+        $lines += "- [$($candidate.confidence)] [$proofLabel] $($candidate.type): $($candidate.reason)"
+        $lines += "  Proof: $($candidate.proof.summary)"
         $lines += "  Rule: $($candidate.rule | ConvertTo-Json -Compress -Depth 8)"
     }
     $lines += ''
@@ -1185,9 +1299,10 @@ try {
     }
 
     $candidates = @(Get-DetectionCandidates -NewUninstallEntries $diff.newUninstallEntries -NewProgramDirectories $diff.newProgramDirectories)
+    $candidates = @($candidates | ForEach-Object { Complete-CandidateProof -Candidate $_ })
 
     $result = [pscustomobject]@{
-        schemaVersion = 1
+        schemaVersion = 2
         completedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
         request = $inputData
         install = $installResult

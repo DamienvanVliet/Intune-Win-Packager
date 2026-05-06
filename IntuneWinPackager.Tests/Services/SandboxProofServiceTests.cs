@@ -52,6 +52,9 @@ public sealed class SandboxProofServiceTests
             var script = await File.ReadAllTextAsync(session.RunnerScriptPath);
             Assert.Contains("Get-UninstallSnapshot", script, StringComparison.Ordinal);
             Assert.Contains("Detection candidates", script, StringComparison.Ordinal);
+            Assert.Contains("Candidate passed sandbox two-phase validation", script, StringComparison.Ordinal);
+            Assert.Contains("schemaVersion = 2", script, StringComparison.Ordinal);
+            Assert.Contains("operator = 'GreaterThanOrEqual'", script, StringComparison.Ordinal);
             Assert.Contains("result.json", script, StringComparison.Ordinal);
         }
         finally
@@ -207,6 +210,20 @@ public sealed class SandboxProofServiceTests
                   "type": "Registry",
                   "confidence": "High",
                   "reason": "New uninstall entry with DisplayVersion after install.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox two-phase validation.",
+                    "negativePhase": {
+                      "success": true,
+                      "summary": "Uninstall registry entry was absent before install and present after install.",
+                      "details": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Notepad++"
+                    },
+                    "positivePhase": {
+                      "success": true,
+                      "summary": "Registry comparison passed.",
+                      "details": "Actual='8.9.4'"
+                    }
+                  },
                   "rule": {
                     "ruleType": "Registry",
                     "registry": {
@@ -214,7 +231,7 @@ public sealed class SandboxProofServiceTests
                       "keyPath": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Notepad++",
                       "valueName": "DisplayVersion",
                       "check32BitOn64System": false,
-                      "operator": "Equals",
+                      "operator": "GreaterThanOrEqual",
                       "value": "8.9.4"
                     }
                   }
@@ -232,12 +249,141 @@ public sealed class SandboxProofServiceTests
             Assert.True(result.Completed);
             Assert.False(result.Failed);
             Assert.Equal(2, result.CandidateCount);
+            Assert.Equal(1, result.ProvenCandidateCount);
             Assert.NotNull(result.BestCandidate);
+            Assert.True(result.BestCandidate.IsProven);
+            Assert.True(result.BestCandidate.ProofAvailable);
             Assert.Equal(IntuneDetectionRuleType.Registry, result.BestCandidate.Rule.RuleType);
             Assert.Equal(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Notepad++", result.BestCandidate.Rule.Registry.KeyPath);
             Assert.Equal("DisplayVersion", result.BestCandidate.Rule.Registry.ValueName);
-            Assert.Equal(IntuneDetectionOperator.Equals, result.BestCandidate.Rule.Registry.Operator);
+            Assert.Equal(IntuneDetectionOperator.GreaterThanOrEqual, result.BestCandidate.Rule.Registry.Operator);
             Assert.Equal("8.9.4", result.BestCandidate.Rule.Registry.Value);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenProofAvailable_SelectsProvenCandidateOverHigherConfidenceFailure()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "candidates": [
+                {
+                  "type": "Registry",
+                  "confidence": "High",
+                  "reason": "Registry candidate failed validation.",
+                  "proof": {
+                    "success": false,
+                    "summary": "Candidate failed sandbox validation.",
+                    "negativePhase": { "success": true, "summary": "Registry entry was new.", "details": "" },
+                    "positivePhase": { "success": false, "summary": "Registry comparison failed.", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "Registry",
+                    "registry": {
+                      "hive": "HKEY_LOCAL_MACHINE",
+                      "keyPath": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Contoso",
+                      "valueName": "DisplayVersion",
+                      "operator": "GreaterThanOrEqual",
+                      "value": "1.0"
+                    }
+                  }
+                },
+                {
+                  "type": "File",
+                  "confidence": "Medium",
+                  "reason": "Folder candidate passed validation.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox two-phase validation.",
+                    "negativePhase": { "success": true, "summary": "Folder was new.", "details": "" },
+                    "positivePhase": { "success": true, "summary": "File detection exists check passed.", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "File",
+                    "file": {
+                      "path": "C:\\Program Files",
+                      "fileOrFolderName": "Contoso",
+                      "operator": "Exists",
+                      "value": ""
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.Equal(2, result.CandidateCount);
+            Assert.Equal(1, result.ProvenCandidateCount);
+            Assert.NotNull(result.BestCandidate);
+            Assert.Equal(IntuneDetectionRuleType.File, result.BestCandidate.Rule.RuleType);
+            Assert.True(result.BestCandidate.IsProven);
+            Assert.Contains("1 proven", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenProofAvailableAndAllCandidatesFail_ReturnsNoBestCandidate()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "candidates": [
+                {
+                  "type": "Registry",
+                  "confidence": "High",
+                  "reason": "Registry candidate failed validation.",
+                  "proof": {
+                    "success": false,
+                    "summary": "Candidate failed sandbox validation.",
+                    "negativePhase": { "success": true, "summary": "Registry entry was new.", "details": "" },
+                    "positivePhase": { "success": false, "summary": "Registry comparison failed.", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "Registry",
+                    "registry": {
+                      "hive": "HKEY_LOCAL_MACHINE",
+                      "keyPath": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Contoso",
+                      "valueName": "DisplayVersion",
+                      "operator": "GreaterThanOrEqual",
+                      "value": "1.0"
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.Equal(1, result.CandidateCount);
+            Assert.Equal(0, result.ProvenCandidateCount);
+            Assert.Null(result.BestCandidate);
+            Assert.Contains("none passed", result.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
