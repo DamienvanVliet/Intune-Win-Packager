@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1] - 2026-05-06
+
+### Added
+- Fix Windows Sandbox Proof result handling so detection candidates from result.json are imported into the app automatically when no detection rule is set.
+- Add Apply Best Detection for sandbox proof results and allow Test Detection once a sandbox candidate is available.
+- Keep compatibility with existing sandbox result files while generating nested rule data for new proof runs.
+
 ## [2.3.0] - 2026-05-06
 
 ### Added
