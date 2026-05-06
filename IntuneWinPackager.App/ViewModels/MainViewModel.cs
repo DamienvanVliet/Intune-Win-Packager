@@ -37,6 +37,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IPackageCatalogService _packageCatalogService;
     private readonly IPackageProfileStoreService _packageProfileStoreService;
     private readonly IDetectionTestService _detectionTestService;
+    private readonly ISandboxProofService _sandboxProofService;
     private readonly IDialogService _dialogService;
     private readonly ILocalizationService _localizationService;
     private readonly IThemeService _themeService;
@@ -363,6 +364,18 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string detectionTestStatus = string.Empty;
 
+    [ObservableProperty]
+    private string sandboxProofStatus = string.Empty;
+
+    [ObservableProperty]
+    private string sandboxProofRunFolder = string.Empty;
+
+    [ObservableProperty]
+    private string sandboxProofReportPath = string.Empty;
+
+    [ObservableProperty]
+    private string sandboxProofResultPath = string.Empty;
+
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
         IValidationService validationService,
@@ -378,6 +391,7 @@ public partial class MainViewModel : ObservableObject
         IPackageCatalogService packageCatalogService,
         IPackageProfileStoreService packageProfileStoreService,
         IDetectionTestService detectionTestService,
+        ISandboxProofService sandboxProofService,
         IDialogService dialogService,
         ILocalizationService localizationService,
         IThemeService themeService,
@@ -397,6 +411,7 @@ public partial class MainViewModel : ObservableObject
         _packageCatalogService = packageCatalogService;
         _packageProfileStoreService = packageProfileStoreService;
         _detectionTestService = detectionTestService;
+        _sandboxProofService = sandboxProofService;
         _dialogService = dialogService;
         _localizationService = localizationService;
         _themeService = themeService;
@@ -484,9 +499,12 @@ public partial class MainViewModel : ObservableObject
         PackageCommand = new AsyncRelayCommand(PackageAsync, CanPackage);
         RunPreflightCommand = new AsyncRelayCommand(RunPreflightAsync, () => !IsBusy);
         TestDetectionCommand = new AsyncRelayCommand(TestDetectionAsync, CanTestDetection);
+        RunSandboxProofCommand = new AsyncRelayCommand(RunSandboxProofAsync, CanRunSandboxProof);
         QuickFixCommand = new AsyncRelayCommand(ApplyQuickFixesAsync, () => !IsBusy);
         ResetCommand = new RelayCommand(ResetConfiguration, () => !IsBusy);
         OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder, CanOpenOutputFolder);
+        OpenSandboxProofFolderCommand = new RelayCommand(OpenSandboxProofFolder, CanOpenSandboxProofFolder);
+        OpenSandboxProofReportCommand = new RelayCommand(OpenSandboxProofReport, CanOpenSandboxProofReport);
         SaveProfileCommand = new AsyncRelayCommand(SaveProfileAsync, () => !IsBusy);
         LoadProfileCommand = new AsyncRelayCommand(LoadProfileAsync, () => !IsBusy);
         DeleteProfileCommand = new AsyncRelayCommand(DeleteProfileAsync, CanDeleteProfile);
@@ -515,6 +533,7 @@ public partial class MainViewModel : ObservableObject
         PackagingProgressDetail = T("Vm.Progress.ReadyDetail");
         PackageCatalogStatus = T("Vm.Store.Ready");
         DetectionTestStatus = T("Vm.Detection.TestStatus.Idle");
+        SandboxProofStatus = T("Vm.SandboxProof.Status.Idle");
         RefreshSwitchVerificationStatus();
     }
 
@@ -788,11 +807,17 @@ public partial class MainViewModel : ObservableObject
 
     public IAsyncRelayCommand TestDetectionCommand { get; }
 
+    public IAsyncRelayCommand RunSandboxProofCommand { get; }
+
     public IAsyncRelayCommand QuickFixCommand { get; }
 
     public IRelayCommand ResetCommand { get; }
 
     public IRelayCommand OpenOutputFolderCommand { get; }
+
+    public IRelayCommand OpenSandboxProofFolderCommand { get; }
+
+    public IRelayCommand OpenSandboxProofReportCommand { get; }
 
     public IAsyncRelayCommand SaveProfileCommand { get; }
 
@@ -1328,6 +1353,7 @@ public partial class MainViewModel : ObservableObject
         PackageCommand.NotifyCanExecuteChanged();
         RunPreflightCommand.NotifyCanExecuteChanged();
         TestDetectionCommand.NotifyCanExecuteChanged();
+        RunSandboxProofCommand.NotifyCanExecuteChanged();
         InstallToolCommand.NotifyCanExecuteChanged();
         QuickFixCommand.NotifyCanExecuteChanged();
         ResetCommand.NotifyCanExecuteChanged();
@@ -1335,6 +1361,8 @@ public partial class MainViewModel : ObservableObject
         LoadProfileCommand.NotifyCanExecuteChanged();
         DeleteProfileCommand.NotifyCanExecuteChanged();
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
+        OpenSandboxProofFolderCommand.NotifyCanExecuteChanged();
+        OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
         CheckForUpdatesCommand.NotifyCanExecuteChanged();
         InstallUpdateCommand.NotifyCanExecuteChanged();
         SearchCatalogCommand.NotifyCanExecuteChanged();
@@ -1356,6 +1384,16 @@ public partial class MainViewModel : ObservableObject
     partial void OnResultMetadataPathChanged(string value)
     {
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSandboxProofRunFolderChanged(string value)
+    {
+        OpenSandboxProofFolderCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSandboxProofReportPathChanged(string value)
+    {
+        OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnResultChecklistPathChanged(string value)
@@ -2032,6 +2070,126 @@ public partial class MainViewModel : ObservableObject
                DetectionRuleType != IntuneDetectionRuleType.None &&
                !string.IsNullOrWhiteSpace(SetupFilePath) &&
                File.Exists(SetupFilePath);
+    }
+
+    private bool CanRunSandboxProof()
+    {
+        return !IsBusy &&
+               InstallerType != InstallerType.Unknown &&
+               !string.IsNullOrWhiteSpace(SetupFilePath) &&
+               File.Exists(SetupFilePath);
+    }
+
+    private async Task RunSandboxProofAsync()
+    {
+        if (!CanRunSandboxProof())
+        {
+            return;
+        }
+
+        IsBusy = true;
+        SandboxProofStatus = T("Vm.SandboxProof.Status.Running");
+        AppendLog("Preparing Windows Sandbox proof run...");
+
+        SetStatus(
+            OperationState.Running,
+            T("Vm.Status.SandboxProofRunningTitle"),
+            T("Vm.Status.SandboxProofRunningMessage"));
+
+        try
+        {
+            var session = await _sandboxProofService.StartAsync(new SandboxProofRequest
+            {
+                InstallerType = InstallerType,
+                SourceFolder = SourceFolder,
+                SetupFilePath = SetupFilePath,
+                InstallCommand = InstallCommand,
+                UninstallCommand = UninstallCommand,
+                DetectionRule = BuildDetectionRule(),
+                TimeoutMinutes = Math.Max(5, MaxRunTimeMinutes),
+                LaunchSandbox = true
+            });
+
+            SandboxProofRunFolder = session.RunDirectory;
+            SandboxProofReportPath = session.ReportPath;
+            SandboxProofResultPath = session.ResultPath;
+            OpenSandboxProofFolderCommand.NotifyCanExecuteChanged();
+            OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
+
+            SandboxProofStatus = session.Message;
+            AppendLog($"Sandbox proof workspace: {session.RunDirectory}");
+            AppendLog($"Sandbox proof WSB: {session.WsbPath}");
+            AppendLog($"Sandbox proof report path: {session.ReportPath}");
+
+            if (session.Success)
+            {
+                SetStatus(
+                    OperationState.Success,
+                    T("Vm.Status.SandboxProofLaunchedTitle"),
+                    session.Message);
+            }
+            else
+            {
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.SandboxProofFailedTitle"),
+                    session.Message);
+                AppendLog($"Sandbox proof could not start: {session.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            SandboxProofStatus = ex.Message;
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.SandboxProofFailedTitle"),
+                ex.Message);
+            AppendLog($"Sandbox proof failed: {ex.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanOpenSandboxProofFolder()
+    {
+        return !string.IsNullOrWhiteSpace(SandboxProofRunFolder) && Directory.Exists(SandboxProofRunFolder);
+    }
+
+    private void OpenSandboxProofFolder()
+    {
+        if (CanOpenSandboxProofFolder())
+        {
+            _dialogService.OpenFolder(SandboxProofRunFolder);
+        }
+    }
+
+    private bool CanOpenSandboxProofReport()
+    {
+        return !string.IsNullOrWhiteSpace(SandboxProofReportPath);
+    }
+
+    private void OpenSandboxProofReport()
+    {
+        if (string.IsNullOrWhiteSpace(SandboxProofReportPath))
+        {
+            return;
+        }
+
+        if (!File.Exists(SandboxProofReportPath))
+        {
+            SandboxProofStatus = T("Vm.SandboxProof.Status.ReportPending");
+            AppendLog($"Sandbox proof report is not written yet: {SandboxProofReportPath}");
+            OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = SandboxProofReportPath,
+            UseShellExecute = true
+        });
     }
 
     private async Task TestDetectionAsync()
@@ -3951,6 +4109,10 @@ public partial class MainViewModel : ObservableObject
             ResultMetadataPath = string.Empty;
             ResultChecklistPath = string.Empty;
             IntunePortalChecklist = string.Empty;
+            SandboxProofStatus = T("Vm.SandboxProof.Status.Idle");
+            SandboxProofRunFolder = string.Empty;
+            SandboxProofReportPath = string.Empty;
+            SandboxProofResultPath = string.Empty;
             HasPackagingRun = false;
             HasPreflightRun = false;
             PreflightSummary = T("Vm.Preflight.DefaultSummary");
@@ -4375,6 +4537,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         TestDetectionCommand.NotifyCanExecuteChanged();
+        RunSandboxProofCommand.NotifyCanExecuteChanged();
 
         NotifyReadinessChanged();
     }

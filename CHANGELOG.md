@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0] - 2026-05-06
+
+### Added
+- Added Phase 1 Windows Sandbox Proof mode with a one-click sandbox launch, generated `.wsb` workspace, automatic install/evidence runner, and `report.txt` plus `result.json` output.
+- Added sandbox proof controls to Packaging and Tools & Checks so EXE/MSI packages can be tested in a clean Windows Sandbox before packaging decisions are finalized.
+- Added regression coverage for sandbox workspace generation, source/setup path rewriting, copied installer fallback, missing setup handling, and generated PowerShell runner parsing.
+
 ## [2.2.6] - 2026-05-06
 
 ### Fixed

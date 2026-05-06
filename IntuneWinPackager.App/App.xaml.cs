@@ -57,6 +57,7 @@ public partial class App : System.Windows.Application
                     services.AddSingleton<IAppUpdateService, AppUpdateService>();
                     services.AddSingleton<IPackageCatalogService, PackageCatalogService>();
                     services.AddSingleton<IPackageProfileStoreService, PackageProfileStoreService>();
+                    services.AddSingleton<ISandboxProofService, SandboxProofService>();
 
                     services.AddSingleton<IDialogService, SystemDialogService>();
                     services.AddSingleton<ILocalizationService, LocalizationService>();

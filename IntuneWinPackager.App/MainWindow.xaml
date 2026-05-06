@@ -779,6 +779,11 @@
                                                 Margin="10,0,0,0"
                                                 Command="{Binding TestDetectionCommand}" />
                                         <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                Content="{DynamicResource Ui.SandboxProof.RunShort}"
+                                                MinWidth="140"
+                                                Margin="10,0,0,0"
+                                                Command="{Binding RunSandboxProofCommand}" />
+                                        <Button Style="{StaticResource SecondaryButtonStyle}"
                                                 Content="{DynamicResource Ui.FixForMe}"
                                                 MinWidth="120"
                                                 Margin="10,0,0,0"
@@ -1115,6 +1120,48 @@
                                              VerticalScrollBarVisibility="Auto"
                                              Height="220"
                                              Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBorderStyle}" Margin="0,16,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Ui.SandboxProof.Title}" Style="{StaticResource SectionTitleTextStyle}" />
+                                    <TextBlock Text="{DynamicResource Ui.SandboxProof.Description}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,4,0,10"
+                                               TextWrapping="Wrap" />
+
+                                    <WrapPanel Margin="0,0,0,10">
+                                        <Button Content="{DynamicResource Ui.SandboxProof.Run}"
+                                                Style="{StaticResource PrimaryButtonStyle}"
+                                                Command="{Binding RunSandboxProofCommand}" />
+                                        <Button Content="{DynamicResource Ui.SandboxProof.OpenFolder}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding OpenSandboxProofFolderCommand}" />
+                                        <Button Content="{DynamicResource Ui.SandboxProof.OpenReport}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding OpenSandboxProofReportCommand}" />
+                                    </WrapPanel>
+
+                                    <Border CornerRadius="10"
+                                            BorderThickness="1"
+                                            BorderBrush="{DynamicResource PanelBorderBrush}"
+                                            Background="{DynamicResource PanelBackgroundBrush}"
+                                            Padding="10">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding SandboxProofStatus}"
+                                                       Style="{StaticResource BodyTextStyle}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding SandboxProofRunFolder}"
+                                                       Style="{StaticResource BodyTextStyle}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="11"
+                                                       Margin="0,6,0,0"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </Border>
                         </StackPanel>

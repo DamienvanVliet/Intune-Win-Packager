@@ -101,6 +101,12 @@
 
     <sys:String x:Key="Ui.Verification.Title">Verification Approach</sys:String>
     <sys:String x:Key="Ui.Verification.Body">1. Run local preflight and resolve all blocking errors.&#10;2. Package and review generated .intune.json and .intune-checklist.md outputs.&#10;3. Validate install/uninstall/detection in a clean test VM before Intune import.&#10;4. Create app in Intune using the checklist and run pilot assignment first.&#10;5. Confirm detection and uninstall behavior from Intune device logs before broad rollout.</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.Title">Windows Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.Description">Launch a clean Windows Sandbox run that installs the selected package, captures before/after evidence, tests the current detection rule, and writes report.txt plus result.json.</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.Run">Run Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Run Folder</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Report</sys:String>
 
     <sys:String x:Key="Ui.AppUpdates.Title">App Updates</sys:String>
     <sys:String x:Key="Ui.SilentUpdateMode">Silent update install mode (policy)</sys:String>
@@ -348,6 +354,10 @@
     <sys:String x:Key="Vm.Status.DetectionTestRunningMessage">Running the current detection rule on this device...</sys:String>
     <sys:String x:Key="Vm.Status.DetectionTestPassedTitle">Detection Test Passed</sys:String>
     <sys:String x:Key="Vm.Status.DetectionTestFailedTitle">Detection Test Failed</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofRunningTitle">Sandbox Proof</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofRunningMessage">Creating proof workspace and launching Windows Sandbox...</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofLaunchedTitle">Sandbox Launched</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofFailedTitle">Sandbox Proof Failed</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Resolve preflight errors before starting package creation.</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedTitle">Package Created</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedMessage">Created: {0}</sys:String>
@@ -356,6 +366,9 @@
     <sys:String x:Key="Vm.Detection.TestStatus.Running">Running detection test...</sys:String>
     <sys:String x:Key="Vm.Detection.TestStatus.Passed">Detection test passed for this device.</sys:String>
     <sys:String x:Key="Vm.Detection.TestStatus.Failed">Detection test failed. Review output and rule settings.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.Idle">Sandbox proof has not been run yet.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.Running">Preparing Windows Sandbox proof run...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.ReportPending">The sandbox report is not ready yet. Wait for the sandbox run to finish, then try again.</sys:String>
     <sys:String x:Key="Vm.Status.UnexpectedErrorTitle">Unexpected Error</sys:String>
     <sys:String x:Key="Vm.Status.ProfileNameRequiredTitle">Profile Name Required</sys:String>
     <sys:String x:Key="Vm.Status.ProfileNameRequiredMessage">Provide a profile name before saving.</sys:String>

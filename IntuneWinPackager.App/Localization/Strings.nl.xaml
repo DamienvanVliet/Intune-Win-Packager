@@ -101,6 +101,12 @@
 
     <sys:String x:Key="Ui.Verification.Title">Verificatie-aanpak</sys:String>
     <sys:String x:Key="Ui.Verification.Body">1. Run lokale preflight en los alle blokkerende fouten op.&#10;2. Package en controleer de gegenereerde .intune.json en .intune-checklist.md outputs.&#10;3. Valideer install/uninstall/detectie in een schone test-VM voor Intune-import.&#10;4. Maak de app aan in Intune met de checklist en start met een pilot assignment.&#10;5. Bevestig detectie- en uninstall-gedrag via Intune device logs voordat je breed uitrolt.</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.Title">Windows Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.Description">Start een schone Windows Sandbox-run die het geselecteerde package installeert, before/after evidence vastlegt, de huidige detectieregel test en report.txt plus result.json wegschrijft.</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.Run">Run Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Runmap</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Rapport</sys:String>
 
     <sys:String x:Key="Ui.AppUpdates.Title">App-updates</sys:String>
     <sys:String x:Key="Ui.SilentUpdateMode">Stille update-installatiemodus (beleid)</sys:String>
@@ -284,6 +290,9 @@
     <sys:String x:Key="Vm.Detection.TestStatus.Running">Detectietest wordt uitgevoerd...</sys:String>
     <sys:String x:Key="Vm.Detection.TestStatus.Passed">Detectietest is geslaagd op dit apparaat.</sys:String>
     <sys:String x:Key="Vm.Detection.TestStatus.Failed">Detectietest is mislukt. Controleer output en regelinstellingen.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.Idle">Sandbox proof is nog niet uitgevoerd.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.Running">Windows Sandbox proof-run wordt voorbereid...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.ReportPending">Het sandboxrapport is nog niet klaar. Wacht tot de sandbox-run klaar is en probeer opnieuw.</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Klaar</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Wachten om te starten.</sys:String>
@@ -352,6 +361,10 @@
     <sys:String x:Key="Vm.Status.DetectionTestRunningMessage">De huidige detectieregel wordt lokaal op dit apparaat getest...</sys:String>
     <sys:String x:Key="Vm.Status.DetectionTestPassedTitle">Detectietest geslaagd</sys:String>
     <sys:String x:Key="Vm.Status.DetectionTestFailedTitle">Detectietest mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofRunningTitle">Sandbox Proof</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofRunningMessage">Proof-workspace wordt gemaakt en Windows Sandbox wordt gestart...</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofLaunchedTitle">Sandbox gestart</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofFailedTitle">Sandbox Proof mislukt</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Los preflight-fouten op voordat package-creatie start.</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedTitle">Package gemaakt</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedMessage">Gemaakt: {0}</sys:String>

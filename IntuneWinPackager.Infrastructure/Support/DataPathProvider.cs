@@ -26,6 +26,8 @@ internal static class DataPathProvider
 
     public static string CatalogIconsDirectory => Path.Combine(BaseDirectory, "catalog-icons");
 
+    public static string SandboxProofRunsDirectory => Path.Combine(BaseDirectory, "sandbox-proof", "runs");
+
     public static void EnsureBaseDirectory()
     {
         Directory.CreateDirectory(BaseDirectory);
