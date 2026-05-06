@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.6] - 2026-05-06
+
+### Fixed
+- Update checks now treat matching normalized versions as already current, even when the GitHub release was published later or the installer asset hash changed.
+- Removed the same-version "newer build" update path so the app no longer offers version 2.2.5 when 2.2.5 is already installed.
+
 ## [2.2.5] - 2026-05-06
 
 ### Fixed

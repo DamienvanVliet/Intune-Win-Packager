@@ -39,7 +39,7 @@ public class AppUpdateServiceTests
     }
 
     [Fact]
-    public async Task CheckForUpdatesAsync_ReturnsUpdate_WhenSameVersionButNewerBuildPublished()
+    public async Task CheckForUpdatesAsync_ReturnsLatest_WhenSameVersionButNewerBuildPublished()
     {
         var payload = """
                       [
@@ -65,8 +65,11 @@ public class AppUpdateServiceTests
         var result = await sut.CheckForUpdatesAsync("1.1.5", currentBuildTimestamp);
 
         Assert.True(result.CheckSucceeded);
-        Assert.True(result.IsUpdateAvailable);
-        Assert.Contains("newer build", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(result.IsUpdateAvailable);
+        Assert.False(result.IsInstallReady);
+        Assert.Equal("1.1.5", result.LatestVersion);
+        Assert.Contains("latest version", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("newer build", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

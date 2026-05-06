@@ -959,19 +959,6 @@ public sealed class AppUpdateService : IAppUpdateService
         }
 
         var updateAvailable = IsVersionGreater(latestVersion, currentNormalized);
-        var sameVersionNewerBuildAvailable = !updateAvailable
-            && string.Equals(latestVersion, currentNormalized, StringComparison.OrdinalIgnoreCase)
-            && publishedAt.HasValue
-            && currentBuildTimestampUtc.HasValue
-            && publishedAt.Value > currentBuildTimestampUtc.Value.AddMinutes(5)
-            && !string.IsNullOrWhiteSpace(installerUrl);
-
-        if (sameVersionNewerBuildAvailable && !IsValidSha256(installerSha256))
-        {
-            sameVersionNewerBuildAvailable = false;
-        }
-
-        updateAvailable = updateAvailable || sameVersionNewerBuildAvailable;
         if (!updateAvailable)
         {
             return new AppUpdateInfo
@@ -1043,9 +1030,7 @@ public sealed class AppUpdateService : IAppUpdateService
             InstallerDownloadUrl = installerUrl,
             InstallerSha256 = installerSha256,
             PublishedAtUtc = publishedAt,
-            Message = sameVersionNewerBuildAvailable
-                ? $"A newer build for version {latestVersion} is available."
-                : $"Update available: {latestVersion}"
+            Message = $"Update available: {latestVersion}"
         };
     }
 
