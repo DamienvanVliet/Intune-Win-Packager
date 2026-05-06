@@ -8,6 +8,7 @@
 - APPX/MSIX install command quoting is safer for Intune PowerShell execution.
 - Squirrel/Electron-style EXE installers, including Claude-like installers, now default to user install context.
 - Release publishing now creates/pushes the `v<version>` tag and targets GitHub Releases at `main`, so in-app update checks can see the new version after publishing.
+- Added a GitHub Actions release workflow that builds, tests, packages, hashes, and publishes installer assets automatically for `v*` tags.
 - Added regression coverage for script policy normalization, detection script export, APPX/MSIX quoting, and Squirrel EXE context.
 
 ## [2.2.3] - 2026-05-05

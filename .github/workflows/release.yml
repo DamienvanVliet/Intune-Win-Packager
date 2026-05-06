@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build and publish installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore .\IntuneWinPackager.sln
+
+      - name: Test
+        shell: pwsh
+        run: dotnet test .\IntuneWinPackager.sln -c Release --no-restore
+
+      - name: Build installer
+        shell: pwsh
+        run: .\scripts\build-installer.ps1 -Configuration Release
+
+      - name: Prepare release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "artifacts\installer" -Filter "IntuneWinPackager-Setup-*.exe" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $installer) {
+            throw "No installer asset was produced."
+          }
+
+          $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $shaPath = "$($installer.FullName).sha256"
+          "$hash  $($installer.Name)" | Set-Content -LiteralPath $shaPath -Encoding ascii
+
+          "installer_path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+          "sha_path=$shaPath" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body: See CHANGELOG.md for details.
+          draft: false
+          prerelease: false
+          files: |
+            ${{ steps.assets.outputs.installer_path }}
+            ${{ steps.assets.outputs.sha_path }}

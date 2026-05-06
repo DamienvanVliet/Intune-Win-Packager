@@ -119,7 +119,7 @@ Output:
 powershell -ExecutionPolicy Bypass -File .\scripts\publish-update.ps1 -Version 1.1.4 -ReleaseNotes "Your release notes here"
 ```
 
-This workflow updates app versioning, keeps changelog aligned, creates/pushes the release tag, and publishes installer assets used by in-app updates.
+This workflow updates app versioning, keeps changelog aligned, creates/pushes the release tag, and publishes installer assets used by in-app updates. GitHub Actions also builds and publishes installer assets automatically when a `v*` tag is pushed.
 
 ## Repo Cleanup Policy
 
