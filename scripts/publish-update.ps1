@@ -213,8 +213,15 @@ if (-not $SkipGitPush) {
             git commit -m "chore(release): publish $tagName"
         }
 
-        Write-Step "Pushing branch and tags"
+        Write-Step "Ensuring release tag exists"
+        git rev-parse -q --verify "refs/tags/$tagName" 1>$null 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            git tag -a $tagName -m "Release $tagName"
+        }
+
+        Write-Step "Pushing branch and release tag"
         git push
+        git push origin $tagName
     }
     finally {
         Pop-Location
@@ -243,7 +250,7 @@ try {
         & $ghPath release edit $tagName --title $finalTitle --notes-file $notesFile | Out-Null
     }
     else {
-        & $ghPath release create $tagName $installerPath --title $finalTitle --notes-file $notesFile | Out-Null
+        & $ghPath release create $tagName $installerPath --target main --title $finalTitle --notes-file $notesFile | Out-Null
     }
 }
 catch {

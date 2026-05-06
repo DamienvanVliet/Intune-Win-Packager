@@ -619,7 +619,9 @@ public sealed class InstallerCommandService : IInstallerCommandService
             ParameterProbeDetected = probe.HasEvidence,
             SuggestedRules = new IntuneWin32AppRules
             {
-                InstallContext = IntuneInstallContext.System,
+                InstallContext = template.Framework == ExeInstallerFramework.Squirrel
+                    ? IntuneInstallContext.User
+                    : IntuneInstallContext.System,
                 RestartBehavior = IntuneRestartBehavior.DetermineBehaviorBasedOnReturnCodes,
                 MaxRunTimeMinutes = 60,
                 RequireSilentSwitchReview = requireSilentSwitchReview,
@@ -650,10 +652,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
         string signerThumbprint)
     {
         var packageIdentity = TryReadAppxIdentity(setupFilePath);
-        var quotedSetup = $"\"{setupFileName}\"";
+        var powerShellSetupPath = EscapePowerShellSingleQuoted($".\\{setupFileName}");
 
         var installCommand =
-            $"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Add-AppxPackage -Path {quotedSetup}\"";
+            $"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Add-AppxPackage -Path '{powerShellSetupPath}'\"";
 
         var uninstallCommand = packageIdentity is null || string.IsNullOrWhiteSpace(packageIdentity.Name)
             ? $"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Get-AppxPackage -Name '{PlaceholderPackageName}' | Remove-AppxPackage\""
@@ -1859,6 +1861,11 @@ public sealed class InstallerCommandService : IInstallerCommandService
             PlaceholderDetectionScript,
             "exit 1"
         ]);
+    }
+
+    private static string EscapePowerShellSingleQuoted(string value)
+    {
+        return (value ?? string.Empty).Replace("'", "''", StringComparison.Ordinal);
     }
 
     private sealed record AppxIdentity

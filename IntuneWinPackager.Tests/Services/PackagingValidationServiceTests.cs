@@ -412,7 +412,7 @@ public class PackagingValidationServiceTests
                                          $match = Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue | Where-Object {
                                              $_.Version.ToString() -eq $expectedVersion
                                          } | Select-Object -First 1
-                                         if ($null -ne $match) { exit 0 }
+                                         if ($null -ne $match) { exit 2 }
                                          exit 1
                                          """
                         }
@@ -653,7 +653,7 @@ public class PackagingValidationServiceTests
                         RuleType = IntuneDetectionRuleType.Script,
                         Script = new ScriptDetectionRule
                         {
-                            ScriptBody = "Write-Output 'ok'; exit 0; exit 1"
+                            ScriptBody = DeterministicDetectionScript.Utf8Bom + "Write-Error 'bad'; Write-Output 'ok'; exit 0; exit 1"
                         }
                     }
                 }
@@ -664,6 +664,38 @@ public class PackagingValidationServiceTests
         var result = sut.Validate(request);
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, error => error.Contains("Strict script policy", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Validate_NormalizesScriptDetectionPolicyBeforeBlockingPackaging()
+    {
+        var request = BuildBaseExeRequest();
+        var script = DeterministicDetectionScript
+            .BuildExactExeRegistryScript("Contoso App", "Contoso Ltd", "1.0.0")
+            .TrimStart('\uFEFF');
+
+        request = request with
+        {
+            Configuration = request.Configuration with
+            {
+                IntuneRules = request.Configuration.IntuneRules with
+                {
+                    EnforceStrictScriptPolicy = true,
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Script,
+                        Script = new ScriptDetectionRule
+                        {
+                            ScriptBody = script
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PackagingValidationService();
+        var result = sut.Validate(request);
+        Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
     }
 
     private static PackagingRequest BuildBaseExeRequest()
@@ -709,4 +741,3 @@ public class PackagingValidationServiceTests
         };
     }
 }
-

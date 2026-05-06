@@ -311,6 +311,8 @@ public sealed class PackagingValidationService : IValidationService
                 break;
 
             case IntuneDetectionRuleType.Script:
+                var normalizedScriptBody = DeterministicDetectionScript.NormalizeForIntuneScriptPolicy(detection.Script.ScriptBody);
+
                 if (string.IsNullOrWhiteSpace(detection.Script.ScriptBody))
                 {
                     AddIssue(issues, "Core.Validation.ScriptDetectionBodyRequired", "Script detection requires script content.");
@@ -323,7 +325,7 @@ public sealed class PackagingValidationService : IValidationService
                         "Script detection still contains placeholders. Replace placeholders with production detection logic.");
                 }
 
-                if (!DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(detection.Script.ScriptBody))
+                if (!DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(normalizedScriptBody))
                 {
                     AddIssue(
                         issues,
@@ -332,7 +334,7 @@ public sealed class PackagingValidationService : IValidationService
                 }
 
                 if (installerType == InstallerType.Exe &&
-                    !DeterministicDetectionScript.IsExactExeRegistryScript(detection.Script.ScriptBody))
+                    !DeterministicDetectionScript.IsExactExeRegistryScript(normalizedScriptBody))
                 {
                     AddIssue(
                         issues,
@@ -340,7 +342,7 @@ public sealed class PackagingValidationService : IValidationService
                         "For EXE installers, script detection must use exact registry equality (DisplayName, Publisher, DisplayVersion).");
                 }
                 else if (installerType == InstallerType.AppxMsix &&
-                         !DeterministicDetectionScript.IsExactAppxIdentityScript(detection.Script.ScriptBody))
+                         !DeterministicDetectionScript.IsExactAppxIdentityScript(normalizedScriptBody))
                 {
                     AddIssue(
                         issues,
@@ -358,7 +360,7 @@ public sealed class PackagingValidationService : IValidationService
                 }
 
                 if (rules.EnforceStrictScriptPolicy &&
-                    !DeterministicDetectionScript.IsStrictIntuneScriptPolicyCompliant(detection.Script.ScriptBody))
+                    !DeterministicDetectionScript.IsStrictIntuneScriptPolicyCompliant(normalizedScriptBody))
                 {
                     AddIssue(
                         issues,
@@ -649,4 +651,3 @@ public sealed class PackagingValidationService : IValidationService
         return fileFullPath.StartsWith(folderFullPath, StringComparison.OrdinalIgnoreCase);
     }
 }
-

@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.4] - 2026-05-06
+
+### Fixed
+- Script detection is now normalized automatically for Intune: UTF-8 BOM, STDOUT on success, `exit 0`, and `exit 1` fallback are enforced before packaging.
+- Packaging now exports a ready-to-upload `.detection.ps1` file with UTF-8 BOM for script detection rules.
+- APPX/MSIX install command quoting is safer for Intune PowerShell execution.
+- Squirrel/Electron-style EXE installers, including Claude-like installers, now default to user install context.
+- Release publishing now creates/pushes the `v<version>` tag and targets GitHub Releases at `main`, so in-app update checks can see the new version after publishing.
+- Added regression coverage for script policy normalization, detection script export, APPX/MSIX quoting, and Squirrel EXE context.
+
 ## [2.2.3] - 2026-05-05
 
 ### Fixed

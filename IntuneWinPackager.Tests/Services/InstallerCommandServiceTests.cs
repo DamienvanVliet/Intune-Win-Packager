@@ -90,6 +90,30 @@ public class InstallerCommandServiceTests
     }
 
     [Fact]
+    public void CreateSuggestion_ForSquirrelExe_UsesUserInstallContext()
+    {
+        var sut = new InstallerCommandService();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-squirrel-exe-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var setupFile = Path.Combine(tempRoot, "ClaudeSetup.exe");
+        File.WriteAllText(setupFile, "squirrel --squirrel-install --squirrel-uninstall");
+
+        try
+        {
+            var suggestion = sut.CreateSuggestion(
+                setupFilePath: setupFile,
+                installerType: InstallerType.Exe);
+
+            Assert.Contains("--silent", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(IntuneInstallContext.User, suggestion.SuggestedRules.InstallContext);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void DetectInstallerType_RecognizesAppxAndScriptTypes()
     {
         var sut = new InstallerCommandService();
@@ -121,6 +145,7 @@ public class InstallerCommandServiceTests
                 installerType: InstallerType.AppxMsix);
 
             Assert.Contains("Add-AppxPackage", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("'.\\Contoso.msix'", suggestion.InstallCommand, StringComparison.Ordinal);
             Assert.Contains("Get-AppxPackage", suggestion.UninstallCommand, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(IntuneDetectionRuleType.Script, suggestion.SuggestedRules.DetectionRule.RuleType);
             Assert.Contains("Contoso.App", suggestion.SuggestedRules.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);

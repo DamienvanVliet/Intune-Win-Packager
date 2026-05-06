@@ -643,6 +643,7 @@ public sealed class PreflightService : IPreflightService
                 break;
 
             case IntuneDetectionRuleType.Script:
+                var normalizedScriptBody = DeterministicDetectionScript.NormalizeForIntuneScriptPolicy(detection.Script.ScriptBody);
                 if (string.IsNullOrWhiteSpace(detection.Script.ScriptBody))
                 {
                     checks.Add(Error(
@@ -666,7 +667,7 @@ public sealed class PreflightService : IPreflightService
                     checks.Add(Pass("detection-script", "Script Detection", "Script detection content is configured."));
                 }
 
-                if (!DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(detection.Script.ScriptBody))
+                if (!DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(normalizedScriptBody))
                 {
                     checks.Add(Error(
                         "detection-script-stdout",
@@ -677,7 +678,7 @@ public sealed class PreflightService : IPreflightService
                 }
 
                 if (installerType == InstallerType.Exe &&
-                    !DeterministicDetectionScript.IsExactExeRegistryScript(detection.Script.ScriptBody))
+                    !DeterministicDetectionScript.IsExactExeRegistryScript(normalizedScriptBody))
                 {
                     checks.Add(Error(
                         "detection-script-exe-deterministic",
@@ -687,7 +688,7 @@ public sealed class PreflightService : IPreflightService
                         messageKey: "Core.Preflight.Message.ScriptDetectionExeMustBeDeterministic"));
                 }
                 else if (installerType == InstallerType.AppxMsix &&
-                         !DeterministicDetectionScript.IsExactAppxIdentityScript(detection.Script.ScriptBody))
+                         !DeterministicDetectionScript.IsExactAppxIdentityScript(normalizedScriptBody))
                 {
                     checks.Add(Error(
                         "detection-script-appx-precision",
@@ -709,7 +710,7 @@ public sealed class PreflightService : IPreflightService
                 }
 
                 if (rules.EnforceStrictScriptPolicy &&
-                    !DeterministicDetectionScript.IsStrictIntuneScriptPolicyCompliant(detection.Script.ScriptBody))
+                    !DeterministicDetectionScript.IsStrictIntuneScriptPolicyCompliant(normalizedScriptBody))
                 {
                     checks.Add(Error(
                         "detection-script-strict-policy",
@@ -1141,4 +1142,3 @@ public sealed class PreflightService : IPreflightService
         return $"{value:0.#} {units[index]}";
     }
 }
-

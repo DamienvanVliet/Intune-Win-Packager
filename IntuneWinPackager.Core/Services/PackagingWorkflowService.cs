@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using IntuneWinPackager.Core.Interfaces;
+using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
@@ -60,6 +61,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         }
 
         ReportProgress(5, "Validating Input", "Checking source, setup, output, and Intune rules.");
+        request = NormalizeRequestForPackaging(request);
 
         var validation = _validationService.Validate(request);
         if (!validation.IsValid)
@@ -259,14 +261,21 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                         "Review source contents to confirm this is expected.");
                 }
 
+                var detectionScriptPath = await WriteDetectionScriptFileAsync(
+                    outputPackagePath,
+                    request.Configuration.IntuneRules.DetectionRule,
+                    logProgress,
+                    cancellationToken);
+
                 var metadataPath = await WriteMetadataFileAsync(
                     request,
                     preparedSource,
                     outputPackagePath,
+                    detectionScriptPath,
                     logProgress,
                     cancellationToken);
 
-                var checklist = BuildIntunePortalChecklist(request, outputPackagePath, metadataPath);
+                var checklist = BuildIntunePortalChecklist(request, outputPackagePath, metadataPath, detectionScriptPath);
                 var checklistPath = await WriteChecklistFileAsync(
                     outputPackagePath,
                     checklist,
@@ -628,10 +637,51 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateHardLinkNative(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
 
+    private static PackagingRequest NormalizeRequestForPackaging(PackagingRequest request)
+    {
+        var rules = request.Configuration.IntuneRules;
+        var normalizedRules = rules with
+        {
+            DetectionRule = NormalizeDetectionRuleForPackaging(rules.DetectionRule, rules.EnforceStrictScriptPolicy),
+            AdditionalDetectionRules = rules.AdditionalDetectionRules
+                .Select(rule => NormalizeDetectionRuleForPackaging(rule, rules.EnforceStrictScriptPolicy))
+                .ToList()
+        };
+
+        return request with
+        {
+            Configuration = request.Configuration with
+            {
+                IntuneRules = normalizedRules
+            }
+        };
+    }
+
+    private static IntuneDetectionRule NormalizeDetectionRuleForPackaging(
+        IntuneDetectionRule detectionRule,
+        bool enforceStrictScriptPolicy)
+    {
+        if (!enforceStrictScriptPolicy ||
+            detectionRule.RuleType != IntuneDetectionRuleType.Script ||
+            string.IsNullOrWhiteSpace(detectionRule.Script.ScriptBody))
+        {
+            return detectionRule;
+        }
+
+        return detectionRule with
+        {
+            Script = detectionRule.Script with
+            {
+                ScriptBody = DeterministicDetectionScript.NormalizeForIntuneScriptPolicy(detectionRule.Script.ScriptBody)
+            }
+        };
+    }
+
     private static async Task<string?> WriteMetadataFileAsync(
         PackagingRequest request,
         PreparedSourceContext preparedSource,
         string outputPackagePath,
+        string? detectionScriptPath,
         IProgress<string>? logProgress,
         CancellationToken cancellationToken)
     {
@@ -647,6 +697,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             installerType = request.InstallerType.ToString(),
             installCommand = request.Configuration.InstallCommand,
             uninstallCommand = request.Configuration.UninstallCommand,
+            detectionScriptFile = detectionScriptPath,
             intuneRules = request.Configuration.IntuneRules,
             packagingOptions = new
             {
@@ -669,6 +720,35 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         catch (Exception ex)
         {
             logProgress?.Report($"Warning: package succeeded but metadata export failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static async Task<string?> WriteDetectionScriptFileAsync(
+        string outputPackagePath,
+        IntuneDetectionRule detectionRule,
+        IProgress<string>? logProgress,
+        CancellationToken cancellationToken)
+    {
+        if (detectionRule.RuleType != IntuneDetectionRuleType.Script ||
+            string.IsNullOrWhiteSpace(detectionRule.Script.ScriptBody))
+        {
+            return null;
+        }
+
+        var scriptPath = Path.ChangeExtension(outputPackagePath, ".detection.ps1");
+        var scriptBody = DeterministicDetectionScript
+            .NormalizeForIntuneScriptPolicy(detectionRule.Script.ScriptBody)
+            .TrimStart('\uFEFF');
+        try
+        {
+            await File.WriteAllTextAsync(scriptPath, scriptBody, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), cancellationToken);
+            logProgress?.Report($"Exported Intune detection script: {scriptPath}");
+            return scriptPath;
+        }
+        catch (Exception ex)
+        {
+            logProgress?.Report($"Warning: package succeeded but detection script export failed: {ex.Message}");
             return null;
         }
     }
@@ -696,7 +776,8 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
     private static string BuildIntunePortalChecklist(
         PackagingRequest request,
         string outputPackagePath,
-        string? metadataPath)
+        string? metadataPath,
+        string? detectionScriptPath)
     {
         var rules = request.Configuration.IntuneRules;
         var requirements = rules.Requirements;
@@ -713,6 +794,11 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         if (!string.IsNullOrWhiteSpace(metadataPath))
         {
             builder.AppendLine($"- Optional reference metadata: `{metadataPath}`");
+        }
+
+        if (!string.IsNullOrWhiteSpace(detectionScriptPath))
+        {
+            builder.AppendLine($"- Script detection file: `{detectionScriptPath}`");
         }
 
         builder.AppendLine();

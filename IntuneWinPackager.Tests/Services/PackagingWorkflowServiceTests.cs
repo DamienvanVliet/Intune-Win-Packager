@@ -1,5 +1,6 @@
 ﻿using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Core.Services;
+using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
@@ -439,6 +440,64 @@ public class PackagingWorkflowServiceTests
         Assert.Contains(logs, entry => entry.Contains("Additional detection rules:", StringComparison.Ordinal));
         Assert.Contains(logs, entry => entry.Contains("Detection decision trace: Detection selection:", StringComparison.Ordinal));
         Assert.Contains(logs, entry => entry.Contains("Detection evidence:", StringComparison.Ordinal));
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
+    public async Task PackageAsync_ExportsNormalizedDetectionScriptWithUtf8Bom()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "ClientSetup.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        var expectedOutput = Path.Combine(outputFolder, "ClientSetup.intunewin");
+
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+        File.WriteAllText(expectedOutput, "dummy package content that is large enough for the test");
+
+        var baseRequest = BuildValidRequest(toolPath, sourceFolder, setupFilePath, outputFolder);
+        var request = baseRequest with
+        {
+            Configuration = baseRequest.Configuration with
+            {
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.Script,
+                        Script = new ScriptDetectionRule
+                        {
+                            ScriptBody = DeterministicDetectionScript
+                                .BuildExactExeRegistryScript("Contoso Client", "Contoso Ltd", "1.0.0")
+                                .TrimStart('\uFEFF')
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PackagingWorkflowService(
+            new PackagingValidationService(),
+            new FakeProcessRunner(exitCode: 0));
+
+        var result = await sut.PackageAsync(request);
+
+        Assert.True(result.Success, result.Message);
+        var detectionScriptPath = Path.ChangeExtension(expectedOutput, ".detection.ps1");
+        Assert.True(File.Exists(detectionScriptPath));
+        var bytes = await File.ReadAllBytesAsync(detectionScriptPath);
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, bytes.Take(3).ToArray());
+        Assert.NotEqual((byte)0xEF, bytes[3]);
+        var script = await File.ReadAllTextAsync(detectionScriptPath);
+        Assert.Contains("Write-Output", script, StringComparison.Ordinal);
+        Assert.Contains(detectionScriptPath, result.IntunePortalChecklist, StringComparison.Ordinal);
 
         Directory.Delete(tempRoot, recursive: true);
     }

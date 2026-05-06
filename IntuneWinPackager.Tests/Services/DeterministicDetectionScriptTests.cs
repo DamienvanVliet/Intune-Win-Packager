@@ -45,4 +45,17 @@ public sealed class DeterministicDetectionScriptTests
         Assert.False(DeterministicDetectionScript.IsExactExeRegistryScript(genericScript));
         Assert.False(DeterministicDetectionScript.IsIntuneCompliantSuccessSignalScript(genericScript));
     }
+
+    [Fact]
+    public void NormalizeForIntuneScriptPolicy_AddsBomStdoutAndFailureExit()
+    {
+        const string script = "if (Test-Path 'C:\\Program Files\\Contoso') { exit 0 }";
+
+        var normalized = DeterministicDetectionScript.NormalizeForIntuneScriptPolicy(script);
+
+        Assert.StartsWith(DeterministicDetectionScript.Utf8Bom, normalized, StringComparison.Ordinal);
+        Assert.Contains("Write-Output 'detected'; exit 0", normalized, StringComparison.Ordinal);
+        Assert.Contains("exit 1", normalized, StringComparison.Ordinal);
+        Assert.True(DeterministicDetectionScript.IsStrictIntuneScriptPolicyCompliant(normalized));
+    }
 }

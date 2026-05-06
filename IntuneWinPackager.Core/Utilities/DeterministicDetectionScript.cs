@@ -10,6 +10,7 @@ public static class DeterministicDetectionScript
     public const string AppxIdentityExactMarker = "# IWP-DETECTION:APPX-IDENTITY-EXACT";
 
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex ExitZeroRegex = new(@"\bexit\s+0\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     public static string BuildExactExeRegistryScript(
         string displayName,
@@ -163,8 +164,31 @@ public static class DeterministicDetectionScript
             return false;
         }
 
-        return normalized.Contains("write-output", StringComparison.Ordinal) ||
-               normalized.Contains("echo", StringComparison.Ordinal);
+        return WritesStdout(scriptBody);
+    }
+
+    public static string NormalizeForIntuneScriptPolicy(string? scriptBody)
+    {
+        if (string.IsNullOrWhiteSpace(scriptBody))
+        {
+            return EnsureUtf8Bom(string.Empty);
+        }
+
+        var normalized = EnsureUtf8Bom(scriptBody.TrimStart('\uFEFF'));
+        if (!WritesStdout(normalized) && ExitZeroRegex.IsMatch(normalized))
+        {
+            normalized = ExitZeroRegex.Replace(
+                normalized,
+                "Write-Output 'detected'; exit 0",
+                count: 1);
+        }
+
+        if (!NormalizeScript(normalized).Contains("exit1", StringComparison.Ordinal))
+        {
+            normalized = normalized.TrimEnd() + Environment.NewLine + "exit 1";
+        }
+
+        return normalized;
     }
 
     public static bool IsStrictIntuneScriptPolicyCompliant(string? scriptBody)
@@ -209,6 +233,14 @@ public static class DeterministicDetectionScript
         return IsUtf8BomPrefixed(scriptBody)
             ? scriptBody
             : Utf8Bom + scriptBody;
+    }
+
+    private static bool WritesStdout(string scriptBody)
+    {
+        var normalized = NormalizeScript(scriptBody);
+        return normalized.Contains("write-output", StringComparison.Ordinal) ||
+               normalized.Contains("echo", StringComparison.Ordinal) ||
+               normalized.Contains("[console]::out.writeline", StringComparison.Ordinal);
     }
 
     private static string EscapePowerShellDoubleQuoted(string value)

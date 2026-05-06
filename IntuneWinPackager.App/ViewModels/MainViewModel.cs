@@ -15,6 +15,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using IntuneWinPackager.App.Services;
 using IntuneWinPackager.Core.Interfaces;
+using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 
@@ -4267,7 +4268,9 @@ public partial class MainViewModel : ObservableObject
             },
             Script = new ScriptDetectionRule
             {
-                ScriptBody = DetectionScriptBody,
+                ScriptBody = DetectionRuleType == IntuneDetectionRuleType.Script && _enforceStrictScriptPolicy
+                    ? DeterministicDetectionScript.NormalizeForIntuneScriptPolicy(DetectionScriptBody)
+                    : DetectionScriptBody,
                 RunAs32BitOn64System = DetectionScriptRunAs32BitOn64System,
                 EnforceSignatureCheck = DetectionScriptEnforceSignatureCheck
             }
@@ -4354,7 +4357,9 @@ public partial class MainViewModel : ObservableObject
         DetectionRegistryCheck32BitOn64System = detectionRule.Registry.Check32BitOn64System;
         DetectionRegistryOperator = detectionRule.Registry.Operator;
         DetectionRegistryValue = detectionRule.Registry.Value;
-        DetectionScriptBody = detectionRule.Script.ScriptBody;
+        DetectionScriptBody = detectionRule.RuleType == IntuneDetectionRuleType.Script && _enforceStrictScriptPolicy
+            ? DeterministicDetectionScript.NormalizeForIntuneScriptPolicy(detectionRule.Script.ScriptBody)
+            : detectionRule.Script.ScriptBody;
         DetectionScriptRunAs32BitOn64System = detectionRule.Script.RunAs32BitOn64System;
         DetectionScriptEnforceSignatureCheck = detectionRule.Script.EnforceSignatureCheck;
     }
@@ -4815,7 +4820,6 @@ public partial class MainViewModel : ObservableObject
         return fileFullPath.StartsWith(folderFullPath, StringComparison.OrdinalIgnoreCase);
     }
 }
-
 
 
 

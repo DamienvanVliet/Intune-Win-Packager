@@ -98,6 +98,8 @@ Common causes:
 - repository/releases are private
 - no published release yet
 
+The in-app updater reads GitHub Releases from `DamienvanVliet/Intune-Win-Packager`; it does not read local Git commits or local tags. A new version is visible in the app only after a non-draft GitHub Release exists, for example `v2.2.4`, and that release is newer than the installed app version. Attach `IntuneWinPackager-Setup-<version>.exe` so one-click install can run.
+
 The app now avoids overriding packaging progress status when update checks fail or return no update.
 Update installs are hash-verified (SHA-256) before launch, and transient network failures use retry with backoff.
 
@@ -117,7 +119,7 @@ Output:
 powershell -ExecutionPolicy Bypass -File .\scripts\publish-update.ps1 -Version 1.1.4 -ReleaseNotes "Your release notes here"
 ```
 
-This workflow updates app versioning, keeps changelog aligned, and publishes installer assets used by in-app updates.
+This workflow updates app versioning, keeps changelog aligned, creates/pushes the release tag, and publishes installer assets used by in-app updates.
 
 ## Repo Cleanup Policy
 
