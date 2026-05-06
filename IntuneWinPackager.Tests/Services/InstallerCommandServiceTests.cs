@@ -114,6 +114,97 @@ public class InstallerCommandServiceTests
     }
 
     [Fact]
+    public void CreateSuggestion_ForExeWithStrongMetadataWithoutNativeFootprint_LeavesDetectionManual()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var exePath = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        if (!File.Exists(exePath))
+        {
+            return;
+        }
+
+        var versionInfo = FileVersionInfo.GetVersionInfo(exePath);
+        var displayName = FirstNonEmpty(versionInfo.ProductName, versionInfo.FileDescription);
+        var publisher = versionInfo.CompanyName ?? string.Empty;
+        var displayVersion = NormalizeVersion(versionInfo.ProductVersion ?? versionInfo.FileVersion);
+        if (string.IsNullOrWhiteSpace(displayName) ||
+            string.IsNullOrWhiteSpace(publisher) ||
+            string.IsNullOrWhiteSpace(displayVersion))
+        {
+            return;
+        }
+
+        var sut = new InstallerCommandService();
+        var suggestion = sut.CreateSuggestion(
+            setupFilePath: exePath,
+            installerType: InstallerType.Exe);
+
+        Assert.NotEqual(IntuneDetectionRuleType.Script, suggestion.SuggestedRules.DetectionRule.RuleType);
+        Assert.Contains("Script fallback is available", suggestion.SuggestedRules.TemplateGuidance, StringComparison.Ordinal);
+        Assert.DoesNotContain("Script selected", suggestion.SuggestedRules.TemplateGuidance, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CreateSuggestion_ForExeWithUninstallerFootprint_UsesNativeFileDetection()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var exePath = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        if (!File.Exists(exePath))
+        {
+            return;
+        }
+
+        var versionInfo = FileVersionInfo.GetVersionInfo(exePath);
+        var displayName = FirstNonEmpty(versionInfo.ProductName, versionInfo.FileDescription);
+        var publisher = versionInfo.CompanyName ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(displayName) ||
+            string.IsNullOrWhiteSpace(publisher))
+        {
+            return;
+        }
+
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-uninstaller-evidence-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var uninstallerPath = Path.Combine(tempRoot, "uninstall.exe");
+        File.WriteAllText(uninstallerPath, "dummy-uninstaller");
+
+        var subKey = $@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IwpTest-{Guid.NewGuid():N}";
+        Registry.CurrentUser.DeleteSubKeyTree(subKey, throwOnMissingSubKey: false);
+        using var created = Registry.CurrentUser.CreateSubKey(subKey);
+        created?.SetValue("DisplayName", displayName);
+        created?.SetValue("Publisher", publisher);
+        created?.SetValue("UninstallString", $"\"{uninstallerPath}\" /S");
+
+        try
+        {
+            var sut = new InstallerCommandService();
+            var suggestion = sut.CreateSuggestion(
+                setupFilePath: exePath,
+                installerType: InstallerType.Exe);
+
+            Assert.Equal(IntuneDetectionRuleType.File, suggestion.SuggestedRules.DetectionRule.RuleType);
+            Assert.Equal(tempRoot, suggestion.SuggestedRules.DetectionRule.File.Path);
+            Assert.Equal("uninstall.exe", suggestion.SuggestedRules.DetectionRule.File.FileOrFolderName);
+            Assert.Equal(IntuneDetectionOperator.Exists, suggestion.SuggestedRules.DetectionRule.File.Operator);
+            Assert.Contains("File accepted", suggestion.SuggestedRules.TemplateGuidance, StringComparison.Ordinal);
+            Assert.DoesNotContain("Script selected", suggestion.SuggestedRules.TemplateGuidance, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Registry.CurrentUser.DeleteSubKeyTree(subKey, throwOnMissingSubKey: false);
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void DetectInstallerType_RecognizesAppxAndScriptTypes()
     {
         var sut = new InstallerCommandService();

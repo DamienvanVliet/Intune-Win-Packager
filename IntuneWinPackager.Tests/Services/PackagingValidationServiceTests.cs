@@ -116,6 +116,58 @@ public class PackagingValidationServiceTests
     }
 
     [Fact]
+    public void Validate_ReturnsSuccess_ForSpecificUninstallerFileDetection()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "app.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        var request = new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.Exe,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "\"app.exe\" /S",
+                UninstallCommand = "\"app.exe\" /S",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.File,
+                        File = new FileDetectionRule
+                        {
+                            Path = @"%ProgramFiles%\\Contoso Agent",
+                            FileOrFolderName = "uninstall.exe",
+                            Operator = IntuneDetectionOperator.Exists
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PackagingValidationService();
+
+        var result = sut.Validate(request);
+
+        Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
     public void Validate_ReturnsError_WhenDetectionRuleIsMissing()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");

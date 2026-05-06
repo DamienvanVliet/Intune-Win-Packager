@@ -349,7 +349,7 @@ public sealed class PackageCatalogServiceTests
     }
 
     [Fact]
-    public async Task SearchAsync_ExeVariant_UsesDeterministicExactRegistryDetection()
+    public async Task SearchAsync_ExeVariant_WithoutNativeFootprint_LeavesDetectionManual()
     {
         var processRunner = new StubProcessRunner([]);
         using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
@@ -395,13 +395,12 @@ public sealed class PackageCatalogServiceTests
         var entry = Assert.Single(results);
         var variant = Assert.Single(entry.InstallerVariants);
         Assert.Equal(InstallerType.Exe, variant.InstallerType);
-        Assert.Equal(IntuneDetectionRuleType.Script, variant.DetectionRule.RuleType);
-        Assert.True(variant.IsDeterministicDetection);
-        Assert.Contains("DisplayName -eq", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
-        Assert.Contains("Test-IwpVersionMatch", variant.DetectionRule.Script.ScriptBody, StringComparison.Ordinal);
+        Assert.Equal(IntuneDetectionRuleType.None, variant.DetectionRule.RuleType);
+        Assert.False(variant.IsDeterministicDetection);
         Assert.Contains("Registry rejected", variant.DetectionGuidance, StringComparison.Ordinal);
         Assert.Contains("File rejected", variant.DetectionGuidance, StringComparison.Ordinal);
-        Assert.Contains("Script selected as the last resort", variant.DetectionGuidance, StringComparison.Ordinal);
+        Assert.Contains("Script fallback is available", variant.DetectionGuidance, StringComparison.Ordinal);
+        Assert.DoesNotContain("Script selected", variant.DetectionGuidance, StringComparison.Ordinal);
     }
 
     [Fact]

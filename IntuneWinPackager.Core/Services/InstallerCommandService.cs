@@ -36,6 +36,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
     private static readonly Regex GuidRegex = new("\\{[0-9A-Fa-f\\-]{36}\\}", RegexOptions.Compiled);
     private static readonly Regex HelpSwitchTokenRegex = new(@"(?<!\w)(--?[a-z][a-z0-9\-]*|/[a-z][a-z0-9\-]*)(?:[ =][^\r\n\t ]+)?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex WindowsExecutablePathRegex = new(@"(?<path>[A-Za-z]:\\[^""\r\n,]+?\.(?:exe|cmd|bat|ps1|vbs|wsf))", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private readonly object _knowledgeLock = new();
     private readonly string _knowledgeFilePath;
@@ -543,11 +544,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
         var provenance = new List<DetectionFieldProvenance>();
         var fallbackApproved = false;
 
-        var metadataBasedDetection = false;
-        var metadataDetectionRule = new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None };
+        var nativeFileDetection = false;
         string metadataDetectionSummary = string.Empty;
         IReadOnlyList<DetectionFieldProvenance> metadataProvenance = [];
-        if (installedEvidence is not null)
+        if (installedEvidence is { HasExactRegistryEvidence: true })
         {
             detectionRule = BuildPrimaryExeRegistryRule(installedEvidence, detectionIntent);
             additionalDetectionRules.AddRange(BuildCompositeExeRegistryRules(installedEvidence, detectionIntent));
@@ -558,21 +558,31 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 $"Registry accepted from exact local uninstall footprint '{installedEvidence.DisplayName}' " +
                 "(DisplayName/Publisher/DisplayVersion). File/script detection were not needed, and uninstall was reused from local evidence.");
         }
-        else if (TryBuildDeterministicExeDetectionFromMetadata(
-                     setupFilePath,
-                     detectionIntent,
-                     out metadataDetectionRule,
-                     out metadataDetectionSummary,
-                     out metadataProvenance))
+        else if (installedEvidence is { HasStableFileEvidence: true })
         {
-            detectionRule = metadataDetectionRule;
-            metadataBasedDetection = true;
-            provenance.AddRange(metadataProvenance);
+            detectionRule = BuildExeFileDetectionRule(installedEvidence, detectionIntent);
+            nativeFileDetection = true;
             fallbackApproved = true;
-            guidanceParts.Add(metadataDetectionSummary);
+            uninstallCommand = installedEvidence.UninstallCommand;
+            provenance.AddRange(BuildExeInstalledEvidenceProvenance(installedEvidence));
+            guidanceParts.Add(
+                "Detection selection: MSI rejected (installer type EXE). " +
+                "Registry rejected because no exact local DisplayVersion match was found. " +
+                $"File accepted from local uninstall footprint target '{Path.Combine(installedEvidence.FileDetectionPath, installedEvidence.FileDetectionName)}' " +
+                $"({installedEvidence.FileDetectionSource}). Script detection was not needed, and uninstall was reused from local evidence.");
         }
         else
         {
+            var hasMetadataFallback = TryCollectDeterministicExeMetadataFallback(
+                setupFilePath,
+                out metadataDetectionSummary,
+                out metadataProvenance);
+
+            if (hasMetadataFallback)
+            {
+                provenance.AddRange(metadataProvenance);
+            }
+
             if (!string.IsNullOrWhiteSpace(metadataDetectionSummary))
             {
                 guidanceParts.Add(metadataDetectionSummary);
@@ -584,18 +594,18 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
 
         var baseScore = Math.Max(template.BaseConfidenceScore, probe.ConfidenceScore);
-        var detectionBoost = installedEvidence is not null
+        var detectionBoost = installedEvidence is { HasExactRegistryEvidence: true }
             ? 8
-            : metadataBasedDetection
+            : nativeFileDetection
                 ? 5
                 : 0;
         var adjustedScore = Math.Min(99, baseScore + detectionBoost);
         var confidenceLevel = ToConfidenceLevel(adjustedScore);
 
-        var confidenceReason = installedEvidence is not null
+        var confidenceReason = installedEvidence is { HasExactRegistryEvidence: true }
             ? "Installer behavior matched deterministic local evidence and verified switch hints."
-            : metadataBasedDetection
-                ? "Installer metadata produced last-resort deterministic EXE script detection. Validate silent switches before production rollout."
+            : nativeFileDetection
+                ? "Installer behavior matched local uninstall file evidence. Validate silent switches before production rollout."
                 : confidenceLevel switch
         {
             SuggestionConfidenceLevel.High => "Installer behavior was inferred with high confidence. Validate silent switches and detection once before rollout.",
@@ -1324,11 +1334,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
         .ToList();
 
         var expectedPublisher = Normalize(version?.CompanyName);
-        var expectedVersion = NormalizeVersion(version?.ProductVersion);
+        var expectedVersion = NormalizeVersion(FirstNonEmpty(version?.ProductVersion, version?.FileVersion));
 
         if (expectedDisplayNames.Count == 0 ||
-            string.IsNullOrWhiteSpace(expectedPublisher) ||
-            string.IsNullOrWhiteSpace(expectedVersion))
+            string.IsNullOrWhiteSpace(expectedPublisher))
         {
             return null;
         }
@@ -1336,7 +1345,28 @@ public sealed class InstallerCommandService : IInstallerCommandService
         var matches = EnumerateUninstallEntries()
             .Where(entry => expectedDisplayNames.Contains(Normalize(entry.DisplayName), StringComparer.OrdinalIgnoreCase))
             .Where(entry => Normalize(entry.Publisher).Equals(expectedPublisher, StringComparison.OrdinalIgnoreCase))
-            .Where(entry => NormalizeVersion(entry.DisplayVersion).Equals(expectedVersion, StringComparison.OrdinalIgnoreCase))
+            .Select(entry =>
+            {
+                var hasExactRegistryEvidence =
+                    !string.IsNullOrWhiteSpace(expectedVersion) &&
+                    NormalizeVersion(entry.DisplayVersion).Equals(expectedVersion, StringComparison.OrdinalIgnoreCase);
+                var hasStableFileEvidence = TryResolveStableFileDetectionTarget(
+                    entry,
+                    out var fileDetectionPath,
+                    out var fileDetectionName,
+                    out var fileDetectionSource);
+
+                return new
+                {
+                    Entry = entry,
+                    HasExactRegistryEvidence = hasExactRegistryEvidence,
+                    HasStableFileEvidence = hasStableFileEvidence,
+                    FileDetectionPath = fileDetectionPath,
+                    FileDetectionName = fileDetectionName,
+                    FileDetectionSource = fileDetectionSource
+                };
+            })
+            .Where(match => match.HasExactRegistryEvidence || match.HasStableFileEvidence)
             .ToList();
 
         if (matches.Count == 0)
@@ -1345,20 +1375,26 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
 
         var match = matches
-            .OrderBy(entry => entry.HiveName.Equals("HKEY_CURRENT_USER", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
-            .ThenBy(entry => entry.Check32BitOn64System ? 1 : 0)
-            .ThenBy(entry => entry.KeyPath, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(entry => entry.HasExactRegistryEvidence)
+            .ThenBy(entry => entry.Entry.HiveName.Equals("HKEY_CURRENT_USER", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(entry => entry.Entry.Check32BitOn64System ? 1 : 0)
+            .ThenBy(entry => entry.Entry.KeyPath, StringComparer.OrdinalIgnoreCase)
             .First();
 
         return new InstalledAppEvidence
         {
-            HiveName = match.HiveName,
-            KeyPath = match.KeyPath,
-            DisplayName = match.DisplayName,
-            Publisher = match.Publisher,
-            DisplayVersion = match.DisplayVersion,
-            Check32BitOn64System = match.Check32BitOn64System,
-            UninstallCommand = NormalizeUninstallCommand(match.UninstallString)
+            HiveName = match.Entry.HiveName,
+            KeyPath = match.Entry.KeyPath,
+            DisplayName = match.Entry.DisplayName,
+            Publisher = match.Entry.Publisher,
+            DisplayVersion = match.Entry.DisplayVersion,
+            Check32BitOn64System = match.Entry.Check32BitOn64System,
+            UninstallCommand = NormalizeUninstallCommand(match.Entry.UninstallString),
+            HasExactRegistryEvidence = match.HasExactRegistryEvidence,
+            FileDetectionPath = match.FileDetectionPath,
+            FileDetectionName = match.FileDetectionName,
+            FileDetectionSource = match.FileDetectionSource,
+            ExpectedVersion = expectedVersion
         };
     }
 
@@ -1426,6 +1462,8 @@ public sealed class InstallerCommandService : IInstallerCommandService
                             Publisher = appKey.GetValue("Publisher")?.ToString() ?? string.Empty,
                             DisplayVersion = appKey.GetValue("DisplayVersion")?.ToString() ?? string.Empty,
                             Check32BitOn64System = root.Hive == RegistryHive.LocalMachine && root.View == RegistryView.Registry32,
+                            InstallLocation = appKey.GetValue("InstallLocation")?.ToString() ?? string.Empty,
+                            DisplayIcon = appKey.GetValue("DisplayIcon")?.ToString() ?? string.Empty,
                             UninstallString = appKey.GetValue("QuietUninstallString")?.ToString()
                                 ?? appKey.GetValue("UninstallString")?.ToString()
                                 ?? string.Empty
@@ -1434,6 +1472,86 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 }
             }
         }
+    }
+
+    private static bool TryResolveStableFileDetectionTarget(
+        RegistryUninstallEntry entry,
+        out string fileDetectionPath,
+        out string fileDetectionName,
+        out string source)
+    {
+        fileDetectionPath = string.Empty;
+        fileDetectionName = string.Empty;
+        source = string.Empty;
+
+        foreach (var candidate in new[]
+                 {
+                     (Value: entry.DisplayIcon, Source: "DisplayIcon"),
+                     (Value: entry.UninstallString, Source: "UninstallString")
+                 })
+        {
+            if (!TryExtractExistingFilePath(candidate.Value, out var filePath))
+            {
+                continue;
+            }
+
+            fileDetectionPath = Path.GetDirectoryName(filePath) ?? string.Empty;
+            fileDetectionName = Path.GetFileName(filePath);
+            source = candidate.Source;
+            return !string.IsNullOrWhiteSpace(fileDetectionPath) &&
+                   !string.IsNullOrWhiteSpace(fileDetectionName);
+        }
+
+        var installLocation = Environment.ExpandEnvironmentVariables((entry.InstallLocation ?? string.Empty).Trim().Trim('"'));
+        if (!string.IsNullOrWhiteSpace(installLocation) && Directory.Exists(installLocation))
+        {
+            var normalized = Path.GetFullPath(installLocation)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            fileDetectionPath = Path.GetDirectoryName(normalized) ?? string.Empty;
+            fileDetectionName = Path.GetFileName(normalized);
+            source = "InstallLocation";
+            return !string.IsNullOrWhiteSpace(fileDetectionPath) &&
+                   !string.IsNullOrWhiteSpace(fileDetectionName);
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractExistingFilePath(string value, out string filePath)
+    {
+        filePath = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var candidates = new List<string>();
+        if (trimmed.StartsWith("\"", StringComparison.Ordinal))
+        {
+            var closingQuoteIndex = trimmed.IndexOf('"', 1);
+            if (closingQuoteIndex > 1)
+            {
+                candidates.Add(trimmed[1..closingQuoteIndex]);
+            }
+        }
+
+        foreach (Match match in WindowsExecutablePathRegex.Matches(trimmed))
+        {
+            candidates.Add(match.Groups["path"].Value);
+        }
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var expanded = Environment.ExpandEnvironmentVariables(candidate.Trim().Trim('"'));
+            if (File.Exists(expanded))
+            {
+                filePath = Path.GetFullPath(expanded);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string NormalizeUninstallCommand(string uninstallString)
@@ -1456,17 +1574,11 @@ public sealed class InstallerCommandService : IInstallerCommandService
         return trimmed;
     }
 
-    private static bool TryBuildDeterministicExeDetectionFromMetadata(
+    private static bool TryCollectDeterministicExeMetadataFallback(
         string setupFilePath,
-        DetectionDeploymentIntent detectionIntent,
-        out IntuneDetectionRule detectionRule,
         out string summary,
         out IReadOnlyList<DetectionFieldProvenance> provenance)
     {
-        detectionRule = new IntuneDetectionRule
-        {
-            RuleType = IntuneDetectionRuleType.None
-        };
         summary = string.Empty;
         provenance = [];
 
@@ -1522,31 +1634,15 @@ public sealed class InstallerCommandService : IInstallerCommandService
             return false;
         }
 
-        var versionOperator = detectionIntent == DetectionDeploymentIntent.Update
-            ? IntuneDetectionOperator.GreaterThanOrEqual
-            : IntuneDetectionOperator.Equals;
-        detectionRule = new IntuneDetectionRule
-        {
-            RuleType = IntuneDetectionRuleType.Script,
-            Script = new ScriptDetectionRule
-            {
-                ScriptBody = DeterministicDetectionScript.BuildExactExeRegistryScript(
-                    displayName,
-                    publisher,
-                    displayVersion,
-                    versionOperator),
-                RunAs32BitOn64System = false,
-                EnforceSignatureCheck = false
-            }
-        };
         provenance = fieldProvenance;
 
         summary =
             "Detection selection: MSI rejected (installer type EXE). " +
             "Registry rejected because no exact local uninstall footprint was found. " +
             "File rejected because no stable installed path metadata is available from the installer alone. " +
-            "Script selected as the last resort from exact installer metadata " +
-            $"(DisplayName='{displayName}', Publisher='{publisher}', DisplayVersion='{displayVersion}', Operator='{versionOperator}')." +
+            "Script fallback is available from exact installer metadata, but was not applied automatically; " +
+            "choose Script manually only when native Registry/File detection cannot be supplied " +
+            $"(DisplayName='{displayName}', Publisher='{publisher}', DisplayVersion='{displayVersion}')." +
             (string.IsNullOrWhiteSpace(signer)
                 ? string.Empty
                 : $" Signer: '{signer}'.");
@@ -1596,6 +1692,30 @@ public sealed class InstallerCommandService : IInstallerCommandService
             item.FieldName.Equals(fieldName, StringComparison.OrdinalIgnoreCase) &&
             item.IsStrongEvidence &&
             !string.IsNullOrWhiteSpace(item.FieldValue));
+    }
+
+    private static IntuneDetectionRule BuildExeFileDetectionRule(
+        InstalledAppEvidence evidence,
+        DetectionDeploymentIntent detectionIntent)
+    {
+        var useVersionComparison =
+            detectionIntent == DetectionDeploymentIntent.Update &&
+            !string.IsNullOrWhiteSpace(evidence.ExpectedVersion);
+
+        return new IntuneDetectionRule
+        {
+            RuleType = IntuneDetectionRuleType.File,
+            File = new FileDetectionRule
+            {
+                Path = evidence.FileDetectionPath,
+                FileOrFolderName = evidence.FileDetectionName,
+                Check32BitOn64System = false,
+                Operator = useVersionComparison
+                    ? IntuneDetectionOperator.GreaterThanOrEqual
+                    : IntuneDetectionOperator.Exists,
+                Value = useVersionComparison ? evidence.ExpectedVersion : string.Empty
+            }
+        };
     }
 
     private static IntuneDetectionRule BuildPrimaryExeRegistryRule(
@@ -1724,6 +1844,18 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 Notes = "Exact uninstall DisplayVersion."
             }
         };
+
+        if (evidence.HasStableFileEvidence)
+        {
+            values.Add(new DetectionFieldProvenance
+            {
+                FieldName = "FileDetectionTarget",
+                FieldValue = Path.Combine(evidence.FileDetectionPath, evidence.FileDetectionName),
+                Source = DetectionProvenanceSource.LocalUninstallRegistry,
+                IsStrongEvidence = true,
+                Notes = $"Resolved from uninstall entry {evidence.FileDetectionSource}."
+            });
+        }
 
         return values;
     }
@@ -1980,6 +2112,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
 
         public bool Check32BitOn64System { get; init; }
 
+        public string InstallLocation { get; init; } = string.Empty;
+
+        public string DisplayIcon { get; init; } = string.Empty;
+
         public string UninstallString { get; init; } = string.Empty;
     }
 
@@ -1998,6 +2134,20 @@ public sealed class InstallerCommandService : IInstallerCommandService
         public bool Check32BitOn64System { get; init; }
 
         public string UninstallCommand { get; init; } = string.Empty;
+
+        public bool HasExactRegistryEvidence { get; init; }
+
+        public string FileDetectionPath { get; init; } = string.Empty;
+
+        public string FileDetectionName { get; init; } = string.Empty;
+
+        public string FileDetectionSource { get; init; } = string.Empty;
+
+        public string ExpectedVersion { get; init; } = string.Empty;
+
+        public bool HasStableFileEvidence =>
+            !string.IsNullOrWhiteSpace(FileDetectionPath) &&
+            !string.IsNullOrWhiteSpace(FileDetectionName);
     }
 
     private enum ExeInstallerFramework

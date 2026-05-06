@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.5] - 2026-05-06
+
+### Fixed
+- EXE suggestions no longer auto-select the registry-scanning script fallback from installer metadata alone.
+- EXE detection now uses native file detection when an installed uninstall footprint exposes an existing uninstaller, display icon, or install folder target.
+- Store/catalog EXE entries without native registry or file metadata now remain in manual detection review instead of being marked script-ready.
+- Validation and preflight now allow specific uninstaller-file detection under a real install path.
+
 ## [2.2.4] - 2026-05-06
 
 ### Fixed

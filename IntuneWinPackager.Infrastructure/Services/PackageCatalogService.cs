@@ -4060,18 +4060,9 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 !string.IsNullOrWhiteSpace(exactVersion))
             {
                 return new DetectionStrategyPlan(
-                    new IntuneDetectionRule
-                    {
-                        RuleType = IntuneDetectionRuleType.Script,
-                        Script = new ScriptDetectionRule
-                        {
-                            ScriptBody = BuildExactRegistryDetectionScript(exactDisplayName, exactPublisher, exactVersion),
-                            RunAs32BitOn64System = false,
-                            EnforceSignatureCheck = false
-                        }
-                    },
-                    "Detection selection: MSI rejected (installer type EXE). Registry rejected because exact uninstall key metadata is unavailable. File rejected because no stable installed file path + version metadata was provided. Script selected as the last resort using exact DisplayName, Publisher, and DisplayVersion equality.",
-                    true);
+                    new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None },
+                    "Detection selection: MSI rejected (installer type EXE). Registry rejected because exact uninstall key metadata is unavailable. File rejected because no stable installed file path + version metadata was provided. Script fallback is available from exact DisplayName, Publisher, and DisplayVersion metadata, but was not applied automatically.",
+                    false);
             }
 
             return new DetectionStrategyPlan(

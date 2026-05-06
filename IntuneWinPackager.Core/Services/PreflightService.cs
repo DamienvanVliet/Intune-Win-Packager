@@ -559,7 +559,7 @@ public sealed class PreflightService : IPreflightService
                         messageKey: "Core.Preflight.Message.FileDetectionPathTooGeneric"));
                 }
 
-                if (IsGenericDetectionName(detection.File.FileOrFolderName))
+                if (IsGenericDetectionName(detection.File.FileOrFolderName, detection.File.Path))
                 {
                     checks.Add(Error(
                         "detection-file-name-generic",
@@ -1112,14 +1112,33 @@ public sealed class PreflightService : IPreflightService
         return hasUserScope && !hasMachineScope;
     }
 
-    private static bool IsGenericDetectionName(string? value)
+    private static bool IsGenericDetectionName(string? value, string? path)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
             return false;
         }
 
-        return GenericDetectionNames.Contains(value.Trim());
+        if (!GenericDetectionNames.Contains(value.Trim()))
+        {
+            return false;
+        }
+
+        return !IsSpecificInstallDetectionPath(path);
+    }
+
+    private static bool IsSpecificInstallDetectionPath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || IsGenericDetectionPath(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim().Replace('/', '\\');
+        return normalized.Contains("%ProgramFiles%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("%ProgramFiles(x86)%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains(@"\Program Files\", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains(@"\Program Files (x86)\", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FormatBytes(long bytes)
