@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.0] - 2026-05-07
+
+### Added
+- Start v3 with a dedicated setup wizard as the first screen.
+- Add guided steps for activating Windows Sandbox, downloading IntuneWinAppUtil, and creating a user-selected workspace.
+- Create input, output, sandbox-proof, catalog-downloads, catalog-icons, updates, logs, tools, and profiles folders, then link input/output to Packaging.
+
 ## [2.5.0] - 2026-05-07
 
 ### Added
