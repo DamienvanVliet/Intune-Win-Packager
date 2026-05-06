@@ -3,7 +3,8 @@
 ## [2.5.0] - 2026-05-07
 
 ### Added
-- Add one-click Proof & Package workflow that launches Windows Sandbox, waits for a proven detection candidate, applies it, and starts packaging automatically.\n- Keep manual Sandbox Proof and Start Packaging flows intact while sharing the same preflight/package pipeline.
+- Add one-click Proof & Package workflow that launches Windows Sandbox, waits for a proven detection candidate, applies it, and starts packaging automatically.
+- Keep manual Sandbox Proof and Start Packaging flows intact while sharing the same preflight/package pipeline.
 
 ## [2.4.0] - 2026-05-07
 
