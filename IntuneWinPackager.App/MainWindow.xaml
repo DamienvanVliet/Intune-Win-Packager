@@ -784,6 +784,11 @@
                                                 Margin="10,0,0,0"
                                                 Command="{Binding RunSandboxProofCommand}" />
                                         <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                Content="{DynamicResource Ui.SandboxProof.ProofAndPackageShort}"
+                                                MinWidth="150"
+                                                Margin="10,0,0,0"
+                                                Command="{Binding ProofAndPackageCommand}" />
+                                        <Button Style="{StaticResource SecondaryButtonStyle}"
                                                 Content="{DynamicResource Ui.FixForMe}"
                                                 MinWidth="120"
                                                 Margin="10,0,0,0"
@@ -1132,8 +1137,12 @@
                                                TextWrapping="Wrap" />
 
                                     <WrapPanel Margin="0,0,0,10">
-                                        <Button Content="{DynamicResource Ui.SandboxProof.Run}"
+                                        <Button Content="{DynamicResource Ui.SandboxProof.ProofAndPackage}"
                                                 Style="{StaticResource PrimaryButtonStyle}"
+                                                Command="{Binding ProofAndPackageCommand}" />
+                                        <Button Content="{DynamicResource Ui.SandboxProof.Run}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
                                                 Command="{Binding RunSandboxProofCommand}" />
                                         <Button Content="{DynamicResource Ui.SandboxProof.OpenFolder}"
                                                 Style="{StaticResource SecondaryButtonStyle}"

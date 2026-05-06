@@ -105,6 +105,8 @@
     <sys:String x:Key="Ui.SandboxProof.Description">Launch a clean Windows Sandbox run that installs the selected package, captures before/after evidence, tests the current detection rule, and imports the best detected rule when result.json is ready.</sys:String>
     <sys:String x:Key="Ui.SandboxProof.Run">Run Sandbox Proof</sys:String>
     <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.ProofAndPackage">Proof &amp; Package</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.ProofAndPackageShort">Proof &amp; Package</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Apply Best Detection</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Run Folder</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Report</sys:String>
@@ -300,6 +302,8 @@
     <sys:String x:Key="Vm.Progress.CompletedDetail">Package created successfully.</sys:String>
     <sys:String x:Key="Vm.Progress.FailedStep">Failed</sys:String>
     <sys:String x:Key="Vm.Progress.UnexpectedErrorStep">Unexpected Error</sys:String>
+    <sys:String x:Key="Vm.Progress.SandboxProofStep">Sandbox Proof</sys:String>
+    <sys:String x:Key="Vm.Progress.SandboxProofDetail">Launching Windows Sandbox and waiting for proven detection evidence.</sys:String>
 
     <sys:String x:Key="Vm.Preset.Custom">Custom</sys:String>
 
@@ -360,6 +364,10 @@
     <sys:String x:Key="Vm.Status.SandboxProofLaunchedTitle">Sandbox Launched</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofDetectionAppliedTitle">Detection Applied</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofFailedTitle">Sandbox Proof Failed</sys:String>
+    <sys:String x:Key="Vm.Status.ProofAndPackageRunningTitle">Proof &amp; Package</sys:String>
+    <sys:String x:Key="Vm.Status.ProofAndPackageRunningMessage">Launching Windows Sandbox, proving detection, then packaging automatically.</sys:String>
+    <sys:String x:Key="Vm.Status.ProofAndPackageDetectionReadyTitle">Proof Passed</sys:String>
+    <sys:String x:Key="Vm.Status.ProofAndPackageFailedTitle">Proof &amp; Package Failed</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Resolve preflight errors before starting package creation.</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedTitle">Package Created</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedMessage">Created: {0}</sys:String>
@@ -377,6 +385,7 @@
     <sys:String x:Key="Vm.SandboxProof.Status.ResultMissing">Sandbox proof result.json is not available yet.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultTimedOut">Sandbox proof did not finish within the expected time. Open the run folder to inspect logs.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.NoRuleToTest">No detection rule is configured yet. Run Sandbox Proof and apply a candidate first.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.ProofAndPackageWaiting">Sandbox launched. Leave it running; packaging will start automatically after a proven detection candidate is written.</sys:String>
     <sys:String x:Key="Vm.Status.UnexpectedErrorTitle">Unexpected Error</sys:String>
     <sys:String x:Key="Vm.Status.ProfileNameRequiredTitle">Profile Name Required</sys:String>
     <sys:String x:Key="Vm.Status.ProfileNameRequiredMessage">Provide a profile name before saving.</sys:String>

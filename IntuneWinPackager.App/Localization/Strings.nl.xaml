@@ -105,6 +105,8 @@
     <sys:String x:Key="Ui.SandboxProof.Description">Start een schone Windows Sandbox-run die het geselecteerde package installeert, before/after evidence vastlegt, de huidige detectieregel test en de beste gedetecteerde regel importeert zodra result.json klaar is.</sys:String>
     <sys:String x:Key="Ui.SandboxProof.Run">Run Sandbox Proof</sys:String>
     <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.ProofAndPackage">Proof &amp; Package</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.ProofAndPackageShort">Proof &amp; Package</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Beste detectie toepassen</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Runmap</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Rapport</sys:String>
@@ -300,6 +302,7 @@
     <sys:String x:Key="Vm.SandboxProof.Status.ResultMissing">Sandbox proof result.json is nog niet beschikbaar.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultTimedOut">Sandbox proof is niet binnen de verwachte tijd afgerond. Open de runmap om logs te bekijken.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.NoRuleToTest">Er is nog geen detectieregel ingesteld. Run Sandbox Proof en pas eerst een kandidaat toe.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.ProofAndPackageWaiting">Sandbox is gestart. Laat hem draaien; packaging start automatisch zodra een bewezen detectiekandidaat is weggeschreven.</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Klaar</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Wachten om te starten.</sys:String>
@@ -313,6 +316,8 @@
     <sys:String x:Key="Vm.Progress.CompletedDetail">Package is succesvol gemaakt.</sys:String>
     <sys:String x:Key="Vm.Progress.FailedStep">Mislukt</sys:String>
     <sys:String x:Key="Vm.Progress.UnexpectedErrorStep">Onverwachte fout</sys:String>
+    <sys:String x:Key="Vm.Progress.SandboxProofStep">Sandbox Proof</sys:String>
+    <sys:String x:Key="Vm.Progress.SandboxProofDetail">Windows Sandbox wordt gestart en wacht op bewezen detectie-evidence.</sys:String>
 
     <sys:String x:Key="Vm.Preset.Custom">Aangepast</sys:String>
 
@@ -373,6 +378,10 @@
     <sys:String x:Key="Vm.Status.SandboxProofLaunchedTitle">Sandbox gestart</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofDetectionAppliedTitle">Detectie toegepast</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofFailedTitle">Sandbox Proof mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.ProofAndPackageRunningTitle">Proof &amp; Package</sys:String>
+    <sys:String x:Key="Vm.Status.ProofAndPackageRunningMessage">Windows Sandbox wordt gestart, detectie wordt bewezen en daarna wordt automatisch gepackaged.</sys:String>
+    <sys:String x:Key="Vm.Status.ProofAndPackageDetectionReadyTitle">Proof geslaagd</sys:String>
+    <sys:String x:Key="Vm.Status.ProofAndPackageFailedTitle">Proof &amp; Package mislukt</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Los preflight-fouten op voordat package-creatie start.</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedTitle">Package gemaakt</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedMessage">Gemaakt: {0}</sys:String>
