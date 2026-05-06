@@ -4,6 +4,7 @@
     <sys:String x:Key="Ui.AppTitle">Intune Win Packager</sys:String>
     <sys:String x:Key="Ui.AppSubtitle">Bereid productieklare Intune Win32-packages voor met duidelijke install-commando's, detectieregels, requirements en deploymentmetadata.</sys:String>
 
+    <sys:String x:Key="Ui.Tab.Start">Start</sys:String>
     <sys:String x:Key="Ui.Tab.Packaging">Packaging</sys:String>
     <sys:String x:Key="Ui.Tab.Store">Store</sys:String>
     <sys:String x:Key="Ui.Tab.ToolsChecks">Tools &amp; Controles</sys:String>
@@ -75,6 +76,26 @@
     <sys:String x:Key="Ui.FixForMe">Los Op Voor Mij</sys:String>
     <sys:String x:Key="Ui.Reset">Reset</sys:String>
     <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
+
+    <sys:String x:Key="Ui.SetupWizard.Title">Setup Wizard</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Description">Bereid deze pc voor op schone packaging voordat je een installer selecteert.</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Summary">Readiness</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Refresh">Status verversen</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.GoPackaging">Open Packaging</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step1.Title">1. Sandbox activeren</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step1.Description">Windows Sandbox wordt gebruikt om installatie- en detectiegedrag op een schone machine te bewijzen.</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step1.Action">Sandbox activeren</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step2.Title">2. IntuneWinAppUtil downloaden</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step2.Description">De Microsoft Win32 Content Prep Tool is nodig om .intunewin-packages te maken.</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step2.Action">Tool downloaden</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step3.Title">3. Werkmappen aanmaken</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step3.Description">Kies een hoofdmap. De app maakt daarin input, output, sandbox proof, catalogus, update, log, tool en profielmappen aan.</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.WorkspaceRoot">Hoofdmap</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.CreateFolders">Mappen aanmaken</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.OpenWorkspace">Open werkmap</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.InputFolder">Input</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.OutputFolder">Output</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.SandboxRunsFolder">Sandbox proof-runs</sys:String>
 
     <sys:String x:Key="Ui.Result.Title">Resultaat</sys:String>
     <sys:String x:Key="Ui.Result.StartToSeeProgress">Start packaging om live voortgang te zien.</sys:String>
@@ -220,6 +241,16 @@
     <sys:String x:Key="Vm.Readiness.Enabled">Ingeschakeld</sys:String>
     <sys:String x:Key="Vm.Readiness.Disabled">Uitgeschakeld</sys:String>
 
+    <sys:String x:Key="Vm.SetupWizard.Sandbox.Label">Windows Sandbox</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Tool.Label">IntuneWinAppUtil</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Workspace.Label">Werkmap</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Sandbox.Ready">Windows Sandbox is beschikbaar.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Sandbox.Missing">Windows Sandbox is nog niet beschikbaar. Activeer hem en herstart Windows als dat gevraagd wordt.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Tool.Ready">Tool klaar: {0}</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Tool.Missing">IntuneWinAppUtil.exe is nog niet ingesteld.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Workspace.Ready">Werkmappen zijn klaar en gekoppeld aan Packaging.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Workspace.Missing">Kies een hoofdmap en maak de mappen aan.</sys:String>
+
     <sys:String x:Key="Vm.NextStep.ToolMissing">Tool niet gevonden. Klik op Installeer Tool, Auto Locate, of stel het pad handmatig in.</sys:String>
     <sys:String x:Key="Vm.NextStep.SetupMissing">Sleep of selecteer een ondersteund setup-bestand (.msi, .exe, .appx/.msix/.bundle, .ps1, .cmd, .bat).</sys:String>
     <sys:String x:Key="Vm.NextStep.SourceMissing">Stel de bronmap in (meestal de map van de installer).</sys:String>
@@ -332,6 +363,20 @@
     <sys:String x:Key="Vm.Status.ToolInstalledTitle">Tool geinstalleerd</sys:String>
     <sys:String x:Key="Vm.Status.ToolInstalledMessage">IntuneWinAppUtil.exe is geinstalleerd en geconfigureerd.</sys:String>
     <sys:String x:Key="Vm.Status.ToolInstallFailedTitle">Tool-installatie mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceMissingTitle">Werkmap vereist</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceMissingMessage">Kies een hoofdmap voordat je werkmappen aanmaakt.</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceCreatedTitle">Werkmap klaar</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceCreatedMessage">Werkmappen zijn aangemaakt onder {0}.</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceCreateFailedTitle">Werkmap instellen mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxUnsupportedTitle">Sandbox niet ondersteund</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxUnsupportedMessage">Windows Sandbox kan alleen op Windows worden ingeschakeld.</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxReadyTitle">Sandbox klaar</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxReadyMessage">Windows Sandbox is al beschikbaar.</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxEnableStartedTitle">Sandbox-activatie gestart</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxEnableStartedMessage">Keur het verhoogde PowerShell-venster goed. Herstart Windows als de feature daarom vraagt.</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxEnableFailedTitle">Sandbox-activatie mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.SetupWizardRefreshedTitle">Setup ververst</sys:String>
+    <sys:String x:Key="Vm.Status.SetupWizardRefreshedMessage">Dependency- en werkmapstatus is ververst.</sys:String>
     <sys:String x:Key="Vm.Status.InstallErrorTitle">Installatiefout</sys:String>
     <sys:String x:Key="Vm.Status.PresetAppliedTitle">Preset toegepast</sys:String>
     <sys:String x:Key="Vm.Status.PresetAppliedMessage">Preset toegepast: {0}.</sys:String>

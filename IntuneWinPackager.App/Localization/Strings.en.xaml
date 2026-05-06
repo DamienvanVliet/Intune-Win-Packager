@@ -4,6 +4,7 @@
     <sys:String x:Key="Ui.AppTitle">Intune Win Packager</sys:String>
     <sys:String x:Key="Ui.AppSubtitle">Prepare production-ready Intune Win32 packages with clear install commands, detection rules, requirements, and deployment metadata.</sys:String>
 
+    <sys:String x:Key="Ui.Tab.Start">Start</sys:String>
     <sys:String x:Key="Ui.Tab.Packaging">Packaging</sys:String>
     <sys:String x:Key="Ui.Tab.Store">Store</sys:String>
     <sys:String x:Key="Ui.Tab.ToolsChecks">Tools &amp; Checks</sys:String>
@@ -75,6 +76,26 @@
     <sys:String x:Key="Ui.FixForMe">Fix For Me</sys:String>
     <sys:String x:Key="Ui.Reset">Reset</sys:String>
     <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
+
+    <sys:String x:Key="Ui.SetupWizard.Title">Setup Wizard</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Description">Prepare this PC for clean packaging before selecting an installer.</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Summary">Readiness</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Refresh">Refresh Status</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.GoPackaging">Open Packaging</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step1.Title">1. Activate Windows Sandbox</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step1.Description">Windows Sandbox is used to prove install and detection behavior on a clean machine.</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step1.Action">Activate Sandbox</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step2.Title">2. Download IntuneWinAppUtil</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step2.Description">The Microsoft Win32 Content Prep Tool is required to create .intunewin packages.</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step2.Action">Download Tool</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step3.Title">3. Create Workspace</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.Step3.Description">Choose a main folder. The app will create input, output, sandbox proof, catalog, update, log, tool, and profile folders inside it.</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.WorkspaceRoot">Workspace root</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.CreateFolders">Create Folders</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.OpenWorkspace">Open Workspace</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.InputFolder">Input</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.OutputFolder">Output</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.SandboxRunsFolder">Sandbox proof runs</sys:String>
 
     <sys:String x:Key="Ui.Result.Title">Result</sys:String>
     <sys:String x:Key="Ui.Result.StartToSeeProgress">Start packaging to show live progress.</sys:String>
@@ -220,6 +241,16 @@
     <sys:String x:Key="Vm.Readiness.Enabled">Enabled</sys:String>
     <sys:String x:Key="Vm.Readiness.Disabled">Disabled</sys:String>
 
+    <sys:String x:Key="Vm.SetupWizard.Sandbox.Label">Windows Sandbox</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Tool.Label">IntuneWinAppUtil</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Workspace.Label">Workspace</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Sandbox.Ready">Windows Sandbox is available.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Sandbox.Missing">Windows Sandbox is not available yet. Activate it, then restart Windows if required.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Tool.Ready">Tool ready: {0}</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Tool.Missing">IntuneWinAppUtil.exe is not configured yet.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Workspace.Ready">Workspace folders are ready and linked to Packaging.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Workspace.Missing">Choose a workspace root and create folders.</sys:String>
+
     <sys:String x:Key="Vm.NextStep.ToolMissing">Tool not found. Click Install Tool, Auto Locate, or set the path manually.</sys:String>
     <sys:String x:Key="Vm.NextStep.SetupMissing">Drop or browse a supported setup file (.msi, .exe, .appx/.msix/.bundle, .ps1, .cmd, .bat).</sys:String>
     <sys:String x:Key="Vm.NextStep.SourceMissing">Set the source folder (usually the installer's folder).</sys:String>
@@ -318,6 +349,20 @@
     <sys:String x:Key="Vm.Status.ToolInstalledTitle">Tool Installed</sys:String>
     <sys:String x:Key="Vm.Status.ToolInstalledMessage">Installed and configured IntuneWinAppUtil.exe.</sys:String>
     <sys:String x:Key="Vm.Status.ToolInstallFailedTitle">Tool Install Failed</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceMissingTitle">Workspace Required</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceMissingMessage">Choose a workspace root before creating folders.</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceCreatedTitle">Workspace Ready</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceCreatedMessage">Workspace folders were created under {0}.</sys:String>
+    <sys:String x:Key="Vm.Status.WorkspaceCreateFailedTitle">Workspace Setup Failed</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxUnsupportedTitle">Sandbox Unsupported</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxUnsupportedMessage">Windows Sandbox can only be enabled on Windows.</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxReadyTitle">Sandbox Ready</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxReadyMessage">Windows Sandbox is already available.</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxEnableStartedTitle">Sandbox Activation Started</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxEnableStartedMessage">Approve the elevated PowerShell window. Restart Windows if the feature asks for it.</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxEnableFailedTitle">Sandbox Activation Failed</sys:String>
+    <sys:String x:Key="Vm.Status.SetupWizardRefreshedTitle">Setup Refreshed</sys:String>
+    <sys:String x:Key="Vm.Status.SetupWizardRefreshedMessage">Dependency and workspace status was refreshed.</sys:String>
     <sys:String x:Key="Vm.Status.InstallErrorTitle">Install Error</sys:String>
     <sys:String x:Key="Vm.Status.PresetAppliedTitle">Preset Applied</sys:String>
     <sys:String x:Key="Vm.Status.PresetAppliedMessage">Applied preset: {0}.</sys:String>

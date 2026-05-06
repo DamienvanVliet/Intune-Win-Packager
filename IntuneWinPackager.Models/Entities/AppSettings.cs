@@ -8,6 +8,8 @@ public sealed record AppSettings
 
     public string LastOutputFolder { get; init; } = string.Empty;
 
+    public string WorkspaceRoot { get; init; } = string.Empty;
+
     public string LastSetupFilePath { get; init; } = string.Empty;
 
     public bool UseLowImpactMode { get; init; } = false;

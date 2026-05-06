@@ -5,6 +5,7 @@ using System.IO;
 using System.Reflection;
 using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfColor = System.Windows.Media.Color;
 using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
@@ -16,6 +17,7 @@ using CommunityToolkit.Mvvm.Input;
 using IntuneWinPackager.App.Services;
 using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Core.Utilities;
+using IntuneWinPackager.Infrastructure.Support;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 
@@ -52,6 +54,21 @@ public partial class MainViewModel : ObservableObject
     private const int MaxVisibleLogLines = 500;
     private const int MaxLogFlushBatchSize = 40;
     private const int StoreSearchMaxResults = 50;
+    private const int StartTabIndex = 0;
+    private const int PackagingTabIndex = 1;
+    private static readonly string[] WorkspaceSubfolders =
+    [
+        "input",
+        "output",
+        "sandbox-proof",
+        Path.Combine("sandbox-proof", "runs"),
+        "catalog-downloads",
+        "catalog-icons",
+        "updates",
+        "logs",
+        "tools",
+        "profiles"
+    ];
     private static readonly TimeSpan PreflightReuseWindow = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan BackgroundUpdateCheckInterval = TimeSpan.FromHours(4);
     private static readonly TimeSpan MinimumUpdateRecheckInterval = TimeSpan.FromMinutes(10);
@@ -62,6 +79,7 @@ public partial class MainViewModel : ObservableObject
     private bool _isInitialized;
     private bool _suppressSetupRefresh;
     private bool _isApplyingPreferences;
+    private bool _isLoadingSettings;
     private bool _isCheckingForUpdates;
     private AppUpdateInfo? _latestUpdateInfo;
     private DateTimeOffset? _lastUpdateCheckCompletedAtUtc;
@@ -89,6 +107,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private string outputFolder = string.Empty;
+
+    [ObservableProperty]
+    private string workspaceRoot = string.Empty;
 
     [ObservableProperty]
     private string installCommand = string.Empty;
@@ -497,6 +518,12 @@ public partial class MainViewModel : ObservableObject
         BrowseSourceFolderCommand = new RelayCommand(BrowseSourceFolder);
         BrowseSetupFileCommand = new AsyncRelayCommand(BrowseSetupFileAsync);
         BrowseOutputFolderCommand = new RelayCommand(BrowseOutputFolder);
+        BrowseWorkspaceRootCommand = new RelayCommand(BrowseWorkspaceRoot);
+        CreateWorkspaceFoldersCommand = new AsyncRelayCommand(CreateWorkspaceFoldersAsync, () => !IsBusy);
+        OpenWorkspaceRootCommand = new RelayCommand(OpenWorkspaceRoot, CanOpenWorkspaceRoot);
+        EnableWindowsSandboxCommand = new AsyncRelayCommand(EnableWindowsSandboxAsync, () => !IsBusy);
+        RefreshSetupWizardCommand = new RelayCommand(RefreshSetupWizard);
+        GoToPackagingCommand = new RelayCommand(() => SelectedMainTabIndex = PackagingTabIndex);
         BrowseToolPathCommand = new RelayCommand(BrowseToolPath);
         AutoLocateToolCommand = new RelayCommand(AutoLocateToolPath);
         InstallToolCommand = new AsyncRelayCommand(InstallToolAsync, () => !IsBusy);
@@ -715,11 +742,45 @@ public partial class MainViewModel : ObservableObject
 
     public bool IsToolPathValid => !string.IsNullOrWhiteSpace(IntuneWinAppUtilPath) && File.Exists(IntuneWinAppUtilPath);
 
+    public bool IsWindowsSandboxAvailable => OperatingSystem.IsWindows() &&
+                                             File.Exists(Path.Combine(Environment.SystemDirectory, "WindowsSandbox.exe"));
+
     public bool IsSetupFileValid => !string.IsNullOrWhiteSpace(SetupFilePath) && File.Exists(SetupFilePath);
 
     public bool IsSourceFolderValid => !string.IsNullOrWhiteSpace(SourceFolder) && Directory.Exists(SourceFolder);
 
     public bool IsOutputFolderValid => !string.IsNullOrWhiteSpace(OutputFolder);
+
+    public bool IsWorkspaceRootValid => !string.IsNullOrWhiteSpace(WorkspaceRoot) && Directory.Exists(WorkspaceRoot);
+
+    public string WorkspaceInputFolder => BuildWorkspaceSubfolder("input");
+
+    public string WorkspaceOutputFolder => BuildWorkspaceSubfolder("output");
+
+    public string WorkspaceSandboxRunsFolder => BuildWorkspaceSubfolder("sandbox-proof", "runs");
+
+    public bool IsWorkspaceReady => IsWorkspaceRootValid &&
+                                    Directory.Exists(WorkspaceInputFolder) &&
+                                    Directory.Exists(WorkspaceOutputFolder) &&
+                                    Directory.Exists(WorkspaceSandboxRunsFolder);
+
+    public string WorkspaceStatus => IsWorkspaceReady
+        ? T("Vm.SetupWizard.Workspace.Ready")
+        : T("Vm.SetupWizard.Workspace.Missing");
+
+    public string SandboxDependencyStatus => IsWindowsSandboxAvailable
+        ? T("Vm.SetupWizard.Sandbox.Ready")
+        : T("Vm.SetupWizard.Sandbox.Missing");
+
+    public string ToolDependencyStatus => IsToolPathValid
+        ? TF("Vm.SetupWizard.Tool.Ready", IntuneWinAppUtilPath)
+        : T("Vm.SetupWizard.Tool.Missing");
+
+    public string SetupWizardSummary => string.Join(
+        Environment.NewLine,
+        $"{T("Vm.SetupWizard.Sandbox.Label")}: {(IsWindowsSandboxAvailable ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}",
+        $"{T("Vm.SetupWizard.Tool.Label")}: {(IsToolPathValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}",
+        $"{T("Vm.SetupWizard.Workspace.Label")}: {(IsWorkspaceReady ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}");
 
     public string ReadinessSummary =>
         $"{T("Vm.Readiness.ToolPath")}: {(IsToolPathValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}{Environment.NewLine}" +
@@ -799,6 +860,18 @@ public partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand BrowseSetupFileCommand { get; }
 
     public IRelayCommand BrowseOutputFolderCommand { get; }
+
+    public IRelayCommand BrowseWorkspaceRootCommand { get; }
+
+    public IAsyncRelayCommand CreateWorkspaceFoldersCommand { get; }
+
+    public IRelayCommand OpenWorkspaceRootCommand { get; }
+
+    public IAsyncRelayCommand EnableWindowsSandboxCommand { get; }
+
+    public IRelayCommand RefreshSetupWizardCommand { get; }
+
+    public IRelayCommand GoToPackagingCommand { get; }
 
     public IRelayCommand BrowseToolPathCommand { get; }
 
@@ -922,6 +995,17 @@ public partial class MainViewModel : ObservableObject
         UpdateValidation();
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
         NotifyReadinessChanged();
+    }
+
+    partial void OnWorkspaceRootChanged(string value)
+    {
+        DataPathProvider.ConfigureWorkspaceRoot(value);
+        OpenWorkspaceRootCommand.NotifyCanExecuteChanged();
+        NotifySetupWizardChanged();
+        if (!_isLoadingSettings)
+        {
+            _ = PersistSettingsSafeAsync();
+        }
     }
 
     partial void OnInstallCommandChanged(string value)
@@ -1190,6 +1274,7 @@ public partial class MainViewModel : ObservableObject
         InvalidatePreflightIfNeeded();
         UpdateValidation();
         NotifyReadinessChanged();
+        NotifySetupWizardChanged();
     }
 
     partial void OnSetupFilePathChanged(string value)
@@ -1367,6 +1452,8 @@ public partial class MainViewModel : ObservableObject
         RunSandboxProofCommand.NotifyCanExecuteChanged();
         ProofAndPackageCommand.NotifyCanExecuteChanged();
         ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
+        CreateWorkspaceFoldersCommand.NotifyCanExecuteChanged();
+        EnableWindowsSandboxCommand.NotifyCanExecuteChanged();
         InstallToolCommand.NotifyCanExecuteChanged();
         QuickFixCommand.NotifyCanExecuteChanged();
         ResetCommand.NotifyCanExecuteChanged();
@@ -1549,53 +1636,65 @@ public partial class MainViewModel : ObservableObject
 
     private async Task LoadSettingsAsync()
     {
-        var settings = await _settingsService.LoadAsync();
-
-        _isApplyingPreferences = true;
+        _isLoadingSettings = true;
         try
         {
-            var language = _localizationService.DisplayNameFromCode(settings.UiLanguage);
-            _localizationService.SetLanguage(language);
-            SelectedLanguage = language;
+            var settings = await _settingsService.LoadAsync();
 
-            var theme = _themeService.DisplayNameFromCode(settings.UiTheme);
-            _themeService.SetTheme(theme);
-            SelectedTheme = theme;
+            try
+            {
+                _isApplyingPreferences = true;
+                var language = _localizationService.DisplayNameFromCode(settings.UiLanguage);
+                _localizationService.SetLanguage(language);
+                SelectedLanguage = language;
 
-            var density = _densityService.DisplayNameFromCode(settings.UiDensity);
-            _densityService.SetDensity(density);
-            SelectedDensity = density;
+                var theme = _themeService.DisplayNameFromCode(settings.UiTheme);
+                _themeService.SetTheme(theme);
+                SelectedTheme = theme;
+
+                var density = _densityService.DisplayNameFromCode(settings.UiDensity);
+                _densityService.SetDensity(density);
+                SelectedDensity = density;
+            }
+            finally
+            {
+                _isApplyingPreferences = false;
+            }
+
+            IntuneWinAppUtilPath = settings.IntuneWinAppUtilPath;
+            WorkspaceRoot = settings.WorkspaceRoot;
+            DataPathProvider.ConfigureWorkspaceRoot(WorkspaceRoot);
+            SourceFolder = settings.LastSourceFolder;
+            OutputFolder = settings.LastOutputFolder;
+            UseLowImpactMode = settings.UseLowImpactMode;
+            EnableSilentAppUpdates = settings.EnableSilentAppUpdates;
+            ShowStoreAdvancedDetails = settings.StoreShowAdvancedDetails;
+            _lastUpdateCheckCompletedAtUtc = settings.LastUpdateCheckUtc;
+
+            if (!string.IsNullOrWhiteSpace(settings.LastKnownLatestVersion) &&
+                IsVersionGreaterForNotification(settings.LastKnownLatestVersion, CurrentVersion))
+            {
+                LatestVersion = settings.LastKnownLatestVersion;
+                IsUpdateAvailable = true;
+                IsUpdateInstallReady = false;
+                UpdateStatus = TF("Vm.Update.NotificationFormat", LatestVersion, CurrentVersion);
+            }
+
+            if (File.Exists(settings.LastSetupFilePath))
+            {
+                await SelectSetupFileAsync(settings.LastSetupFilePath, updateOutputWhenEmpty: false);
+            }
+
+            if (string.IsNullOrWhiteSpace(IntuneWinAppUtilPath) || !File.Exists(IntuneWinAppUtilPath))
+            {
+                IntuneWinAppUtilPath = _toolLocatorService.LocateToolPath() ?? string.Empty;
+            }
+
+            NotifySetupWizardChanged();
         }
         finally
         {
-            _isApplyingPreferences = false;
-        }
-
-        IntuneWinAppUtilPath = settings.IntuneWinAppUtilPath;
-        SourceFolder = settings.LastSourceFolder;
-        OutputFolder = settings.LastOutputFolder;
-        UseLowImpactMode = settings.UseLowImpactMode;
-        EnableSilentAppUpdates = settings.EnableSilentAppUpdates;
-        ShowStoreAdvancedDetails = settings.StoreShowAdvancedDetails;
-        _lastUpdateCheckCompletedAtUtc = settings.LastUpdateCheckUtc;
-
-        if (!string.IsNullOrWhiteSpace(settings.LastKnownLatestVersion) &&
-            IsVersionGreaterForNotification(settings.LastKnownLatestVersion, CurrentVersion))
-        {
-            LatestVersion = settings.LastKnownLatestVersion;
-            IsUpdateAvailable = true;
-            IsUpdateInstallReady = false;
-            UpdateStatus = TF("Vm.Update.NotificationFormat", LatestVersion, CurrentVersion);
-        }
-
-        if (File.Exists(settings.LastSetupFilePath))
-        {
-            await SelectSetupFileAsync(settings.LastSetupFilePath, updateOutputWhenEmpty: false);
-        }
-
-        if (string.IsNullOrWhiteSpace(IntuneWinAppUtilPath) || !File.Exists(IntuneWinAppUtilPath))
-        {
-            IntuneWinAppUtilPath = _toolLocatorService.LocateToolPath() ?? string.Empty;
+            _isLoadingSettings = false;
         }
     }
 
@@ -1667,6 +1766,160 @@ public partial class MainViewModel : ObservableObject
         {
             OutputFolder = folder;
         }
+    }
+
+    private void BrowseWorkspaceRoot()
+    {
+        var folder = _dialogService.PickFolder(WorkspaceRoot);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return;
+        }
+
+        WorkspaceRoot = Path.GetFullPath(folder);
+    }
+
+    private async Task CreateWorkspaceFoldersAsync()
+    {
+        if (string.IsNullOrWhiteSpace(WorkspaceRoot))
+        {
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.WorkspaceMissingTitle"),
+                T("Vm.Status.WorkspaceMissingMessage"));
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            WorkspaceRoot = Path.GetFullPath(WorkspaceRoot);
+            Directory.CreateDirectory(WorkspaceRoot);
+
+            foreach (var subfolder in WorkspaceSubfolders)
+            {
+                Directory.CreateDirectory(Path.Combine(WorkspaceRoot, subfolder));
+            }
+
+            DataPathProvider.ConfigureWorkspaceRoot(WorkspaceRoot);
+            DataPathProvider.EnsureWorkspaceDirectories();
+
+            SourceFolder = WorkspaceInputFolder;
+            OutputFolder = WorkspaceOutputFolder;
+
+            await PersistSettingsAsync();
+            NotifySetupWizardChanged();
+
+            SetStatus(
+                OperationState.Success,
+                T("Vm.Status.WorkspaceCreatedTitle"),
+                TF("Vm.Status.WorkspaceCreatedMessage", WorkspaceRoot));
+            AppendLog($"Workspace prepared at {WorkspaceRoot}");
+        }
+        catch (Exception ex)
+        {
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.WorkspaceCreateFailedTitle"),
+                ex.Message);
+            AppendLog($"Workspace preparation failed: {ex.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanOpenWorkspaceRoot()
+    {
+        return !string.IsNullOrWhiteSpace(WorkspaceRoot) && Directory.Exists(WorkspaceRoot);
+    }
+
+    private string BuildWorkspaceSubfolder(params string[] parts)
+    {
+        if (string.IsNullOrWhiteSpace(WorkspaceRoot))
+        {
+            return string.Empty;
+        }
+
+        var segments = new string[parts.Length + 1];
+        segments[0] = WorkspaceRoot;
+        Array.Copy(parts, 0, segments, 1, parts.Length);
+        return Path.Combine(segments);
+    }
+
+    private void OpenWorkspaceRoot()
+    {
+        if (CanOpenWorkspaceRoot())
+        {
+            _dialogService.OpenFolder(WorkspaceRoot);
+        }
+    }
+
+    private async Task EnableWindowsSandboxAsync()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.SandboxUnsupportedTitle"),
+                T("Vm.Status.SandboxUnsupportedMessage"));
+            return;
+        }
+
+        if (IsWindowsSandboxAvailable)
+        {
+            SetStatus(
+                OperationState.Success,
+                T("Vm.Status.SandboxReadyTitle"),
+                T("Vm.Status.SandboxReadyMessage"));
+            NotifySetupWizardChanged();
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var command = "Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All -NoRestart; " +
+                          "Write-Host ''; Write-Host 'Windows Sandbox feature command completed. Restart Windows if Windows asks for it.'; Pause";
+            var encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encodedCommand}",
+                UseShellExecute = true,
+                Verb = "runas"
+            });
+
+            SetStatus(
+                OperationState.Running,
+                T("Vm.Status.SandboxEnableStartedTitle"),
+                T("Vm.Status.SandboxEnableStartedMessage"));
+            AppendLog("Started elevated Windows Sandbox feature enable command.");
+        }
+        catch (Exception ex)
+        {
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.SandboxEnableFailedTitle"),
+                ex.Message);
+            AppendLog($"Windows Sandbox enable command failed: {ex.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
+            await Task.CompletedTask;
+        }
+    }
+
+    private void RefreshSetupWizard()
+    {
+        NotifySetupWizardChanged();
+        SetStatus(
+            OperationState.Idle,
+            T("Vm.Status.SetupWizardRefreshedTitle"),
+            T("Vm.Status.SetupWizardRefreshedMessage"));
     }
 
     private void BrowseToolPath()
@@ -3200,7 +3453,7 @@ public partial class MainViewModel : ObservableObject
             RefreshStoreVisibleResults();
             if (switchToPackagingTab)
             {
-                SelectedMainTabIndex = 0;
+                SelectedMainTabIndex = PackagingTabIndex;
             }
 
             PackageCatalogStatus = TF("Vm.Store.DownloadReady", entry.Name);
@@ -3258,7 +3511,7 @@ public partial class MainViewModel : ObservableObject
         {
             if (switchToPackagingTab)
             {
-                SelectedMainTabIndex = 0;
+                SelectedMainTabIndex = PackagingTabIndex;
             }
 
             SelectedCatalogEntry = DecorateCatalogEntry(entry);
@@ -3359,7 +3612,7 @@ public partial class MainViewModel : ObservableObject
         SelectedQueueCatalogEntry = StoreImportQueue.FirstOrDefault();
         if (successCount > 0)
         {
-            SelectedMainTabIndex = 0;
+            SelectedMainTabIndex = PackagingTabIndex;
         }
 
         PackageCatalogStatus = TF("Vm.Store.QueueImportSummary", successCount, failureCount);
@@ -4754,6 +5007,7 @@ public partial class MainViewModel : ObservableObject
             IntuneWinAppUtilPath = IntuneWinAppUtilPath,
             LastSourceFolder = SourceFolder,
             LastOutputFolder = OutputFolder,
+            WorkspaceRoot = WorkspaceRoot,
             LastSetupFilePath = SetupFilePath,
             UseLowImpactMode = UseLowImpactMode,
             EnableSilentAppUpdates = EnableSilentAppUpdates,
@@ -5001,6 +5255,22 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsOutputFolderValid));
         OnPropertyChanged(nameof(ReadinessSummary));
         OnPropertyChanged(nameof(NextStepHint));
+        NotifySetupWizardChanged();
+    }
+
+    private void NotifySetupWizardChanged()
+    {
+        OnPropertyChanged(nameof(IsWindowsSandboxAvailable));
+        OnPropertyChanged(nameof(SandboxDependencyStatus));
+        OnPropertyChanged(nameof(ToolDependencyStatus));
+        OnPropertyChanged(nameof(IsWorkspaceRootValid));
+        OnPropertyChanged(nameof(WorkspaceInputFolder));
+        OnPropertyChanged(nameof(WorkspaceOutputFolder));
+        OnPropertyChanged(nameof(WorkspaceSandboxRunsFolder));
+        OnPropertyChanged(nameof(IsWorkspaceReady));
+        OnPropertyChanged(nameof(WorkspaceStatus));
+        OnPropertyChanged(nameof(SetupWizardSummary));
+        OpenWorkspaceRootCommand.NotifyCanExecuteChanged();
     }
 
     private void InvalidatePreflightIfNeeded()

@@ -113,6 +113,198 @@
             <TabItem>
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE10F;" Margin="0,0,6,0" />
+                        <TextBlock Text="{DynamicResource Ui.Tab.Start}" />
+                    </StackPanel>
+                </TabItem.Header>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.05*" MinWidth="460" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="1.35*" MinWidth="540" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.Title}" Style="{StaticResource SectionTitleTextStyle}" />
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.Description}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,4,0,12"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.Summary}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               FontWeight="SemiBold" />
+                                    <Border CornerRadius="10"
+                                            Background="{DynamicResource PanelBackgroundBrush}"
+                                            BorderBrush="{DynamicResource PanelBorderBrush}"
+                                            BorderThickness="1"
+                                            Padding="10"
+                                            Margin="0,6,0,12">
+                                        <TextBlock Text="{Binding SetupWizardSummary}"
+                                                   FontFamily="Segoe UI Variable Text"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </Border>
+                                    <WrapPanel>
+                                        <Button Content="{DynamicResource Ui.SetupWizard.Refresh}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Command="{Binding RefreshSetupWizardCommand}" />
+                                        <Button Content="{DynamicResource Ui.SetupWizard.GoPackaging}"
+                                                Style="{StaticResource PrimaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding GoToPackagingCommand}" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.Step1.Title}" Style="{StaticResource SectionTitleTextStyle}" />
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.Step1.Description}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,4,0,10"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding SandboxDependencyStatus}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,10" />
+                                    <Button Content="{DynamicResource Ui.SetupWizard.Step1.Action}"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            HorizontalAlignment="Left"
+                                            Command="{Binding EnableWindowsSandboxCommand}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBorderStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.Step2.Title}" Style="{StaticResource SectionTitleTextStyle}" />
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.Step2.Description}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,4,0,10"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding ToolDependencyStatus}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,10" />
+                                    <WrapPanel>
+                                        <Button Content="{DynamicResource Ui.SetupWizard.Step2.Action}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Command="{Binding InstallToolCommand}" />
+                                        <Button Content="{DynamicResource Ui.AutoLocate}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding AutoLocateToolCommand}" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2">
+                            <Border Style="{StaticResource CardBorderStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.Step3.Title}" Style="{StaticResource SectionTitleTextStyle}" />
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.Step3.Description}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Margin="0,4,0,12"
+                                               TextWrapping="Wrap" />
+
+                                    <TextBlock Text="{DynamicResource Ui.SetupWizard.WorkspaceRoot}" Style="{StaticResource BodyTextStyle}" />
+                                    <Grid Margin="0,6,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox Grid.Column="0"
+                                                 Text="{Binding WorkspaceRoot, UpdateSourceTrigger=LostFocus}"
+                                                 FontFamily="Consolas"
+                                                 FontSize="12" />
+                                        <Button Grid.Column="1"
+                                                Content="{DynamicResource Ui.Browse}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding BrowseWorkspaceRootCommand}" />
+                                    </Grid>
+
+                                    <TextBlock Text="{Binding WorkspaceStatus}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,10" />
+
+                                    <WrapPanel Margin="0,0,0,14">
+                                        <Button Content="{DynamicResource Ui.SetupWizard.CreateFolders}"
+                                                Style="{StaticResource PrimaryButtonStyle}"
+                                                Command="{Binding CreateWorkspaceFoldersCommand}" />
+                                        <Button Content="{DynamicResource Ui.SetupWizard.OpenWorkspace}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding OpenWorkspaceRootCommand}" />
+                                    </WrapPanel>
+
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0"
+                                                   Text="{DynamicResource Ui.SetupWizard.InputFolder}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,10,6" />
+                                        <TextBlock Grid.Row="0" Grid.Column="1"
+                                                   Text="{Binding WorkspaceInputFolder}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,6" />
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0"
+                                                   Text="{DynamicResource Ui.SetupWizard.OutputFolder}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,10,6" />
+                                        <TextBlock Grid.Row="1" Grid.Column="1"
+                                                   Text="{Binding WorkspaceOutputFolder}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,6" />
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0"
+                                                   Text="{DynamicResource Ui.SetupWizard.SandboxRunsFolder}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,10,0" />
+                                        <TextBlock Grid.Row="2" Grid.Column="1"
+                                                   Text="{Binding WorkspaceSandboxRunsFolder}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
                         <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;" Margin="0,0,6,0" />
                         <TextBlock Text="{DynamicResource Ui.Tab.Packaging}" />
                     </StackPanel>
