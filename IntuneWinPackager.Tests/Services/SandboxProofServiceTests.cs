@@ -179,6 +179,117 @@ public sealed class SandboxProofServiceTests
         }
     }
 
+    [Fact]
+    public async Task ReadResultAsync_WhenNestedCandidateExists_ReturnsBestDetectionRule()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 1,
+              "candidates": [
+                {
+                  "type": "File",
+                  "confidence": "Medium",
+                  "reason": "Folder appeared.",
+                  "rule": {
+                    "ruleType": "File",
+                    "file": {
+                      "path": "C:\\Program Files",
+                      "fileOrFolderName": "Notepad++",
+                      "check32BitOn64System": false,
+                      "operator": "Exists",
+                      "value": ""
+                    }
+                  }
+                },
+                {
+                  "type": "Registry",
+                  "confidence": "High",
+                  "reason": "New uninstall entry with DisplayVersion after install.",
+                  "rule": {
+                    "ruleType": "Registry",
+                    "registry": {
+                      "hive": "HKEY_LOCAL_MACHINE",
+                      "keyPath": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Notepad++",
+                      "valueName": "DisplayVersion",
+                      "check32BitOn64System": false,
+                      "operator": "Equals",
+                      "value": "8.9.4"
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.False(result.Failed);
+            Assert.Equal(2, result.CandidateCount);
+            Assert.NotNull(result.BestCandidate);
+            Assert.Equal(IntuneDetectionRuleType.Registry, result.BestCandidate.Rule.RuleType);
+            Assert.Equal(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Notepad++", result.BestCandidate.Rule.Registry.KeyPath);
+            Assert.Equal("DisplayVersion", result.BestCandidate.Rule.Registry.ValueName);
+            Assert.Equal(IntuneDetectionOperator.Equals, result.BestCandidate.Rule.Registry.Operator);
+            Assert.Equal("8.9.4", result.BestCandidate.Rule.Registry.Value);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenLegacyFlattenedCandidateExists_StillReturnsDetectionRule()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 1,
+              "candidates": [
+                {
+                  "type": "File",
+                  "confidence": "High",
+                  "reason": "New uninstall entry points to an existing install footprint.",
+                  "rule": {
+                    "ruleType": "File",
+                    "path": "C:\\Program Files\\Notepad++",
+                    "fileOrFolderName": "notepad++.exe",
+                    "check32BitOn64System": false,
+                    "operator": "GreaterThanOrEqual",
+                    "value": "8.9.4"
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.NotNull(result.BestCandidate);
+            Assert.Equal(IntuneDetectionRuleType.File, result.BestCandidate.Rule.RuleType);
+            Assert.Equal(@"C:\Program Files\Notepad++", result.BestCandidate.Rule.File.Path);
+            Assert.Equal("notepad++.exe", result.BestCandidate.Rule.File.FileOrFolderName);
+            Assert.Equal(IntuneDetectionOperator.GreaterThanOrEqual, result.BestCandidate.Rule.File.Operator);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
     private static IntuneDetectionRule BuildFileDetectionRule()
     {
         return new IntuneDetectionRule

@@ -155,12 +155,288 @@ public sealed class SandboxProofService : ISandboxProofService
         }
     }
 
+    public async Task<SandboxProofDetectionResult> ReadResultAsync(
+        string resultPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(resultPath))
+        {
+            return new SandboxProofDetectionResult
+            {
+                Completed = false,
+                Message = "Sandbox proof result path is empty."
+            };
+        }
+
+        if (!File.Exists(resultPath))
+        {
+            return new SandboxProofDetectionResult
+            {
+                Completed = false,
+                ResultPath = resultPath,
+                Message = "Sandbox proof result is not ready yet."
+            };
+        }
+
+        try
+        {
+            await using var stream = File.OpenRead(resultPath);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            var root = document.RootElement;
+
+            if (GetJsonBoolean(root, "failed"))
+            {
+                var error = GetJsonString(root, "error");
+                return new SandboxProofDetectionResult
+                {
+                    Completed = true,
+                    Failed = true,
+                    ResultPath = resultPath,
+                    Message = string.IsNullOrWhiteSpace(error)
+                        ? "Sandbox proof failed."
+                        : $"Sandbox proof failed: {error}"
+                };
+            }
+
+            var candidates = new List<SandboxProofDetectionCandidate>();
+            if (root.TryGetProperty("candidates", out var candidatesElement) &&
+                candidatesElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var candidateElement in candidatesElement.EnumerateArray())
+                {
+                    var candidate = ParseDetectionCandidate(candidateElement);
+                    if (candidate is not null && candidate.Rule.RuleType != IntuneDetectionRuleType.None)
+                    {
+                        candidates.Add(candidate);
+                    }
+                }
+            }
+
+            var bestCandidate = candidates
+                .OrderByDescending(candidate => ConfidenceScore(candidate.Confidence))
+                .ThenBy(candidate => DetectionTypePriority(candidate.Rule.RuleType))
+                .FirstOrDefault();
+
+            var message = bestCandidate is null
+                ? "Sandbox proof finished, but no detection candidates were found."
+                : $"Sandbox proof found {candidates.Count} detection candidate(s). Best: {bestCandidate.Rule.RuleType} ({bestCandidate.Confidence}).";
+
+            return new SandboxProofDetectionResult
+            {
+                Completed = true,
+                ResultPath = resultPath,
+                Message = message,
+                CandidateCount = candidates.Count,
+                BestCandidate = bestCandidate,
+                Candidates = candidates
+            };
+        }
+        catch (JsonException)
+        {
+            return new SandboxProofDetectionResult
+            {
+                Completed = false,
+                ResultPath = resultPath,
+                Message = "Sandbox proof result is still being written."
+            };
+        }
+        catch (IOException)
+        {
+            return new SandboxProofDetectionResult
+            {
+                Completed = false,
+                ResultPath = resultPath,
+                Message = "Sandbox proof result is still being written."
+            };
+        }
+        catch (Exception ex)
+        {
+            return new SandboxProofDetectionResult
+            {
+                Completed = true,
+                Failed = true,
+                ResultPath = resultPath,
+                Message = $"Sandbox proof result could not be read: {ex.Message}"
+            };
+        }
+    }
+
     private static SandboxProofSession Failed(string message)
     {
         return new SandboxProofSession
         {
             Success = false,
             Message = message
+        };
+    }
+
+    private static SandboxProofDetectionCandidate? ParseDetectionCandidate(JsonElement candidateElement)
+    {
+        if (!candidateElement.TryGetProperty("rule", out var ruleElement) ||
+            ruleElement.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var rule = ParseDetectionRule(ruleElement);
+        if (rule.RuleType == IntuneDetectionRuleType.None)
+        {
+            return null;
+        }
+
+        return new SandboxProofDetectionCandidate
+        {
+            Type = GetJsonString(candidateElement, "type"),
+            Confidence = GetJsonString(candidateElement, "confidence"),
+            Reason = GetJsonString(candidateElement, "reason"),
+            Rule = rule
+        };
+    }
+
+    private static IntuneDetectionRule ParseDetectionRule(JsonElement ruleElement)
+    {
+        var ruleType = ParseEnum(GetJsonString(ruleElement, "ruleType"), IntuneDetectionRuleType.None);
+        return ruleType switch
+        {
+            IntuneDetectionRuleType.MsiProductCode => new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.MsiProductCode,
+                Msi = ParseMsiDetectionRule(SelectNestedRuleElement(ruleElement, "msi"))
+            },
+            IntuneDetectionRuleType.File => new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.File,
+                File = ParseFileDetectionRule(SelectNestedRuleElement(ruleElement, "file"))
+            },
+            IntuneDetectionRuleType.Registry => new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Registry,
+                Registry = ParseRegistryDetectionRule(SelectNestedRuleElement(ruleElement, "registry"))
+            },
+            IntuneDetectionRuleType.Script => new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Script,
+                Script = ParseScriptDetectionRule(SelectNestedRuleElement(ruleElement, "script"))
+            },
+            _ => new IntuneDetectionRule()
+        };
+    }
+
+    private static JsonElement SelectNestedRuleElement(JsonElement ruleElement, string propertyName)
+    {
+        return ruleElement.TryGetProperty(propertyName, out var nested) && nested.ValueKind == JsonValueKind.Object
+            ? nested
+            : ruleElement;
+    }
+
+    private static MsiDetectionRule ParseMsiDetectionRule(JsonElement element)
+    {
+        return new MsiDetectionRule
+        {
+            ProductCode = GetJsonString(element, "productCode"),
+            ProductVersion = GetJsonString(element, "productVersion"),
+            ProductVersionOperator = ParseEnum(GetJsonString(element, "productVersionOperator"), IntuneDetectionOperator.Equals)
+        };
+    }
+
+    private static FileDetectionRule ParseFileDetectionRule(JsonElement element)
+    {
+        return new FileDetectionRule
+        {
+            Path = GetJsonString(element, "path"),
+            FileOrFolderName = GetJsonString(element, "fileOrFolderName"),
+            Check32BitOn64System = GetJsonBoolean(element, "check32BitOn64System"),
+            Operator = ParseEnum(GetJsonString(element, "operator"), IntuneDetectionOperator.Exists),
+            Value = GetJsonString(element, "value")
+        };
+    }
+
+    private static RegistryDetectionRule ParseRegistryDetectionRule(JsonElement element)
+    {
+        return new RegistryDetectionRule
+        {
+            Hive = string.IsNullOrWhiteSpace(GetJsonString(element, "hive"))
+                ? "HKEY_LOCAL_MACHINE"
+                : GetJsonString(element, "hive"),
+            KeyPath = GetJsonString(element, "keyPath"),
+            ValueName = GetJsonString(element, "valueName"),
+            Check32BitOn64System = GetJsonBoolean(element, "check32BitOn64System"),
+            Operator = ParseEnum(GetJsonString(element, "operator"), IntuneDetectionOperator.Exists),
+            Value = GetJsonString(element, "value")
+        };
+    }
+
+    private static ScriptDetectionRule ParseScriptDetectionRule(JsonElement element)
+    {
+        return new ScriptDetectionRule
+        {
+            ScriptBody = GetJsonString(element, "scriptBody"),
+            RunAs32BitOn64System = GetJsonBoolean(element, "runAs32BitOn64System"),
+            EnforceSignatureCheck = GetJsonBoolean(element, "enforceSignatureCheck")
+        };
+    }
+
+    private static TEnum ParseEnum<TEnum>(string value, TEnum fallback)
+        where TEnum : struct, Enum
+    {
+        return Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private static string GetJsonString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return string.Empty;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.String => property.GetString() ?? string.Empty,
+            JsonValueKind.Number => property.GetRawText(),
+            JsonValueKind.True => bool.TrueString,
+            JsonValueKind.False => bool.FalseString,
+            _ => string.Empty
+        };
+    }
+
+    private static bool GetJsonBoolean(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => bool.TryParse(property.GetString(), out var parsed) && parsed,
+            _ => false
+        };
+    }
+
+    private static int ConfidenceScore(string confidence)
+    {
+        return confidence switch
+        {
+            _ when string.Equals(confidence, "High", StringComparison.OrdinalIgnoreCase) => 3,
+            _ when string.Equals(confidence, "Medium", StringComparison.OrdinalIgnoreCase) => 2,
+            _ when string.Equals(confidence, "Low", StringComparison.OrdinalIgnoreCase) => 1,
+            _ => 0
+        };
+    }
+
+    private static int DetectionTypePriority(IntuneDetectionRuleType ruleType)
+    {
+        return ruleType switch
+        {
+            IntuneDetectionRuleType.Registry => 0,
+            IntuneDetectionRuleType.MsiProductCode => 1,
+            IntuneDetectionRuleType.File => 2,
+            IntuneDetectionRuleType.Script => 3,
+            _ => 4
         };
     }
 
@@ -796,12 +1072,14 @@ function Get-DetectionCandidates {
         if (-not [string]::IsNullOrWhiteSpace($entry.displayName) -and -not [string]::IsNullOrWhiteSpace($entry.displayVersion)) {
             $candidates += New-Candidate -Type 'Registry' -Confidence 'High' -Reason 'New uninstall entry with DisplayVersion after install.' -Evidence $entry -Rule ([pscustomobject]@{
                 ruleType = 'Registry'
-                hive = if ($entry.hive -eq 'HKCU') { 'HKEY_CURRENT_USER' } else { 'HKEY_LOCAL_MACHINE' }
-                keyPath = $entry.keyPath
-                valueName = 'DisplayVersion'
-                check32BitOn64System = $false
-                operator = 'Equals'
-                value = $entry.displayVersion
+                registry = [pscustomobject]@{
+                    hive = if ($entry.hive -eq 'HKCU') { 'HKEY_CURRENT_USER' } else { 'HKEY_LOCAL_MACHINE' }
+                    keyPath = $entry.keyPath
+                    valueName = 'DisplayVersion'
+                    check32BitOn64System = $false
+                    operator = 'Equals'
+                    value = $entry.displayVersion
+                }
             })
         }
 
@@ -817,11 +1095,13 @@ function Get-DetectionCandidates {
 
             $rule = [pscustomobject]@{
                 ruleType = 'File'
-                path = $fileTarget.path
-                fileOrFolderName = $fileTarget.name
-                check32BitOn64System = $false
-                operator = if (-not [string]::IsNullOrWhiteSpace($fileTarget.version)) { 'GreaterThanOrEqual' } else { 'Exists' }
-                value = if (-not [string]::IsNullOrWhiteSpace($fileTarget.version)) { $fileTarget.version } else { '' }
+                file = [pscustomobject]@{
+                    path = $fileTarget.path
+                    fileOrFolderName = $fileTarget.name
+                    check32BitOn64System = $false
+                    operator = if (-not [string]::IsNullOrWhiteSpace($fileTarget.version)) { 'GreaterThanOrEqual' } else { 'Exists' }
+                    value = if (-not [string]::IsNullOrWhiteSpace($fileTarget.version)) { $fileTarget.version } else { '' }
+                }
             }
             $candidates += New-Candidate -Type 'File' -Confidence 'High' -Reason 'New uninstall entry points to an existing install footprint.' -Evidence $entry -Rule $rule
             break
@@ -831,11 +1111,13 @@ function Get-DetectionCandidates {
     foreach ($directory in @($NewProgramDirectories | Select-Object -First 10)) {
         $candidates += New-Candidate -Type 'File' -Confidence 'Medium' -Reason 'New top-level install directory appeared after install.' -Evidence $directory -Rule ([pscustomobject]@{
             ruleType = 'File'
-            path = $directory.root
-            fileOrFolderName = $directory.name
-            check32BitOn64System = $false
-            operator = 'Exists'
-            value = ''
+            file = [pscustomobject]@{
+                path = $directory.root
+                fileOrFolderName = $directory.name
+                check32BitOn64System = $false
+                operator = 'Exists'
+                value = ''
+            }
         })
     }
 

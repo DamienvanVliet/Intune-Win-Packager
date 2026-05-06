@@ -57,6 +57,7 @@ public partial class MainViewModel : ObservableObject
     private static readonly TimeSpan MinimumUpdateRecheckInterval = TimeSpan.FromMinutes(10);
 
     private CancellationTokenSource? _msiInspectionCancellation;
+    private CancellationTokenSource? _sandboxProofWatchCancellation;
     private bool _isInitialized;
     private bool _suppressSetupRefresh;
     private bool _isApplyingPreferences;
@@ -368,6 +369,9 @@ public partial class MainViewModel : ObservableObject
     private string sandboxProofStatus = string.Empty;
 
     [ObservableProperty]
+    private string sandboxProofCandidateSummary = string.Empty;
+
+    [ObservableProperty]
     private string sandboxProofRunFolder = string.Empty;
 
     [ObservableProperty]
@@ -500,6 +504,7 @@ public partial class MainViewModel : ObservableObject
         RunPreflightCommand = new AsyncRelayCommand(RunPreflightAsync, () => !IsBusy);
         TestDetectionCommand = new AsyncRelayCommand(TestDetectionAsync, CanTestDetection);
         RunSandboxProofCommand = new AsyncRelayCommand(RunSandboxProofAsync, CanRunSandboxProof);
+        ApplySandboxProofDetectionCommand = new AsyncRelayCommand(ApplySandboxProofDetectionAsync, CanApplySandboxProofDetection);
         QuickFixCommand = new AsyncRelayCommand(ApplyQuickFixesAsync, () => !IsBusy);
         ResetCommand = new RelayCommand(ResetConfiguration, () => !IsBusy);
         OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder, CanOpenOutputFolder);
@@ -808,6 +813,8 @@ public partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand TestDetectionCommand { get; }
 
     public IAsyncRelayCommand RunSandboxProofCommand { get; }
+
+    public IAsyncRelayCommand ApplySandboxProofDetectionCommand { get; }
 
     public IAsyncRelayCommand QuickFixCommand { get; }
 
@@ -1354,6 +1361,7 @@ public partial class MainViewModel : ObservableObject
         RunPreflightCommand.NotifyCanExecuteChanged();
         TestDetectionCommand.NotifyCanExecuteChanged();
         RunSandboxProofCommand.NotifyCanExecuteChanged();
+        ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
         InstallToolCommand.NotifyCanExecuteChanged();
         QuickFixCommand.NotifyCanExecuteChanged();
         ResetCommand.NotifyCanExecuteChanged();
@@ -1394,6 +1402,12 @@ public partial class MainViewModel : ObservableObject
     partial void OnSandboxProofReportPathChanged(string value)
     {
         OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSandboxProofResultPathChanged(string value)
+    {
+        ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
+        TestDetectionCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnResultChecklistPathChanged(string value)
@@ -2067,9 +2081,9 @@ public partial class MainViewModel : ObservableObject
     {
         return !IsBusy &&
                InstallerType != InstallerType.Unknown &&
-               DetectionRuleType != IntuneDetectionRuleType.None &&
                !string.IsNullOrWhiteSpace(SetupFilePath) &&
-               File.Exists(SetupFilePath);
+               File.Exists(SetupFilePath) &&
+               (DetectionRuleType != IntuneDetectionRuleType.None || CanApplySandboxProofDetection());
     }
 
     private bool CanRunSandboxProof()
@@ -2123,6 +2137,8 @@ public partial class MainViewModel : ObservableObject
 
             if (session.Success)
             {
+                StartSandboxProofWatcher(session, Math.Max(5, MaxRunTimeMinutes));
+
                 SetStatus(
                     OperationState.Success,
                     T("Vm.Status.SandboxProofLaunchedTitle"),
@@ -2149,6 +2165,113 @@ public partial class MainViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    private void StartSandboxProofWatcher(SandboxProofSession session, int timeoutMinutes)
+    {
+        _sandboxProofWatchCancellation?.Cancel();
+        _sandboxProofWatchCancellation?.Dispose();
+        _sandboxProofWatchCancellation = new CancellationTokenSource();
+
+        SandboxProofCandidateSummary = T("Vm.SandboxProof.Status.WaitingForResult");
+        ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
+        TestDetectionCommand.NotifyCanExecuteChanged();
+
+        _ = WatchSandboxProofResultAsync(
+            session.ResultPath,
+            timeoutMinutes,
+            _sandboxProofWatchCancellation.Token);
+    }
+
+    private async Task WatchSandboxProofResultAsync(
+        string resultPath,
+        int timeoutMinutes,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var deadline = DateTimeOffset.UtcNow.AddMinutes(Math.Clamp(timeoutMinutes + 5, 10, 245));
+
+            while (!cancellationToken.IsCancellationRequested && DateTimeOffset.UtcNow <= deadline)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+                var result = await _sandboxProofService.ReadResultAsync(resultPath, cancellationToken).ConfigureAwait(false);
+                if (!result.Completed)
+                {
+                    continue;
+                }
+
+                await RunOnUiThreadAsync(() =>
+                {
+                    SandboxProofCandidateSummary = result.Message;
+                    ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
+                    TestDetectionCommand.NotifyCanExecuteChanged();
+
+                    if (result.Failed)
+                    {
+                        SandboxProofStatus = result.Message;
+                        SetStatus(
+                            OperationState.Error,
+                            T("Vm.Status.SandboxProofFailedTitle"),
+                            result.Message);
+                        return;
+                    }
+
+                    if (result.BestCandidate is null)
+                    {
+                        SandboxProofStatus = result.Message;
+                        SetStatus(
+                            OperationState.Error,
+                            T("Vm.Status.SandboxProofFailedTitle"),
+                            result.Message);
+                        return;
+                    }
+
+                    if (DetectionRuleType == IntuneDetectionRuleType.None)
+                    {
+                        ApplyDetectionRule(result.BestCandidate.Rule);
+                        SandboxProofStatus = TF(
+                            "Vm.SandboxProof.Status.DetectionApplied",
+                            result.BestCandidate.Rule.RuleType,
+                            result.BestCandidate.Confidence,
+                            result.CandidateCount);
+                        SandboxProofCandidateSummary = result.BestCandidate.Reason;
+                        AppendLog($"Applied sandbox proof detection candidate: {result.BestCandidate.Rule.RuleType} ({result.BestCandidate.Confidence}). {result.BestCandidate.Reason}");
+                        SetStatus(
+                            OperationState.Success,
+                            T("Vm.Status.SandboxProofDetectionAppliedTitle"),
+                            SandboxProofStatus);
+                        UpdateValidation();
+                        return;
+                    }
+
+                    SandboxProofStatus = TF(
+                        "Vm.SandboxProof.Status.ResultReady",
+                        result.CandidateCount);
+                    SetStatus(
+                        OperationState.Success,
+                        T("Vm.Status.SandboxProofLaunchedTitle"),
+                        SandboxProofStatus);
+                }).ConfigureAwait(false);
+
+                return;
+            }
+
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                await RunOnUiThreadAsync(() =>
+                {
+                    SandboxProofCandidateSummary = T("Vm.SandboxProof.Status.ResultTimedOut");
+                    ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
+                    TestDetectionCommand.NotifyCanExecuteChanged();
+                }).ConfigureAwait(false);
+            }
+
+        }
+        catch (OperationCanceledException)
+        {
+            // A new sandbox proof run or Reset cancelled the watcher.
         }
     }
 
@@ -2192,11 +2315,113 @@ public partial class MainViewModel : ObservableObject
         });
     }
 
+    private bool CanApplySandboxProofDetection()
+    {
+        return !IsBusy &&
+               !string.IsNullOrWhiteSpace(SandboxProofResultPath) &&
+               File.Exists(SandboxProofResultPath);
+    }
+
+    private async Task ApplySandboxProofDetectionAsync()
+    {
+        await ApplySandboxProofDetectionAsync(showStatus: true);
+    }
+
+    private async Task<bool> ApplySandboxProofDetectionAsync(bool showStatus)
+    {
+        if (string.IsNullOrWhiteSpace(SandboxProofResultPath))
+        {
+            if (showStatus)
+            {
+                SandboxProofStatus = T("Vm.SandboxProof.Status.ResultMissing");
+            }
+
+            return false;
+        }
+
+        var result = await _sandboxProofService.ReadResultAsync(SandboxProofResultPath);
+        SandboxProofCandidateSummary = result.Message;
+        ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
+        TestDetectionCommand.NotifyCanExecuteChanged();
+
+        if (!result.Completed)
+        {
+            if (showStatus)
+            {
+                SandboxProofStatus = result.Message;
+            }
+
+            return false;
+        }
+
+        if (result.Failed)
+        {
+            SandboxProofStatus = result.Message;
+            if (showStatus)
+            {
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.SandboxProofFailedTitle"),
+                    result.Message);
+            }
+
+            return false;
+        }
+
+        if (result.BestCandidate is null)
+        {
+            SandboxProofStatus = result.Message;
+            if (showStatus)
+            {
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.SandboxProofFailedTitle"),
+                    result.Message);
+            }
+
+            return false;
+        }
+
+        ApplyDetectionRule(result.BestCandidate.Rule);
+        SandboxProofStatus = TF(
+            "Vm.SandboxProof.Status.DetectionApplied",
+            result.BestCandidate.Rule.RuleType,
+            result.BestCandidate.Confidence,
+            result.CandidateCount);
+        SandboxProofCandidateSummary = result.BestCandidate.Reason;
+        AppendLog($"Applied sandbox proof detection candidate: {result.BestCandidate.Rule.RuleType} ({result.BestCandidate.Confidence}). {result.BestCandidate.Reason}");
+
+        if (showStatus)
+        {
+            SetStatus(
+                OperationState.Success,
+                T("Vm.Status.SandboxProofDetectionAppliedTitle"),
+                SandboxProofStatus);
+        }
+
+        UpdateValidation();
+        return true;
+    }
+
     private async Task TestDetectionAsync()
     {
         if (!CanTestDetection())
         {
             return;
+        }
+
+        if (DetectionRuleType == IntuneDetectionRuleType.None)
+        {
+            var applied = await ApplySandboxProofDetectionAsync(showStatus: false);
+            if (!applied)
+            {
+                DetectionTestStatus = T("Vm.Detection.TestStatus.Failed");
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.DetectionTestFailedTitle"),
+                    T("Vm.SandboxProof.Status.NoRuleToTest"));
+                return;
+            }
         }
 
         IsBusy = true;
@@ -4049,6 +4274,8 @@ public partial class MainViewModel : ObservableObject
 
     private void ResetConfiguration()
     {
+        _sandboxProofWatchCancellation?.Cancel();
+
         _suppressSetupRefresh = true;
         try
         {
@@ -4110,6 +4337,7 @@ public partial class MainViewModel : ObservableObject
             ResultChecklistPath = string.Empty;
             IntunePortalChecklist = string.Empty;
             SandboxProofStatus = T("Vm.SandboxProof.Status.Idle");
+            SandboxProofCandidateSummary = string.Empty;
             SandboxProofRunFolder = string.Empty;
             SandboxProofReportPath = string.Empty;
             SandboxProofResultPath = string.Empty;
@@ -4538,6 +4766,7 @@ public partial class MainViewModel : ObservableObject
 
         TestDetectionCommand.NotifyCanExecuteChanged();
         RunSandboxProofCommand.NotifyCanExecuteChanged();
+        ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
 
         NotifyReadinessChanged();
     }
@@ -4755,6 +4984,18 @@ public partial class MainViewModel : ObservableObject
         }
 
         _ = dispatcher.InvokeAsync(Apply);
+    }
+
+    private static Task RunOnUiThreadAsync(Action action)
+    {
+        var dispatcher = WpfApplication.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            action();
+            return Task.CompletedTask;
+        }
+
+        return dispatcher.InvokeAsync(action).Task;
     }
 
     private void AppendLog(string message)

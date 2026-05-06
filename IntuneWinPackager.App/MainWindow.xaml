@@ -1143,6 +1143,10 @@
                                                 Style="{StaticResource SecondaryButtonStyle}"
                                                 Margin="8,0,0,0"
                                                 Command="{Binding OpenSandboxProofReportCommand}" />
+                                        <Button Content="{DynamicResource Ui.SandboxProof.ApplyDetection}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding ApplySandboxProofDetectionCommand}" />
                                     </WrapPanel>
 
                                     <Border CornerRadius="10"
@@ -1154,12 +1158,17 @@
                                             <TextBlock Text="{Binding SandboxProofStatus}"
                                                        Style="{StaticResource BodyTextStyle}"
                                                        TextWrapping="Wrap" />
-                                            <TextBlock Text="{Binding SandboxProofRunFolder}"
+                                             <TextBlock Text="{Binding SandboxProofRunFolder}"
+                                                        Style="{StaticResource BodyTextStyle}"
+                                                        FontFamily="Consolas"
+                                                        FontSize="11"
+                                                        Margin="0,6,0,0"
+                                                        TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding SandboxProofCandidateSummary}"
                                                        Style="{StaticResource BodyTextStyle}"
-                                                       FontFamily="Consolas"
-                                                       FontSize="11"
                                                        Margin="0,6,0,0"
-                                                       TextWrapping="Wrap" />
+                                                       TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
