@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0] - 2026-05-07
+
+### Added
+- Phase 2 Windows Sandbox Proof: validate every sandbox detection candidate after install and mark candidates as proven or unproven in result.json and report.txt.
+- Auto-apply only proven sandbox candidates when proof data is available, with legacy result compatibility for older Phase 1 runs.
+- Make sandbox registry DisplayVersion candidates use GreaterThanOrEqual so auto-updating EXE apps like VS Code are less brittle than exact-version detection.
+
 ## [2.3.1] - 2026-05-06
 
 ### Added
