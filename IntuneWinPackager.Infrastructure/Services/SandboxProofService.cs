@@ -1188,7 +1188,8 @@ function Invoke-ProofCommand {
     $timeoutMs = [Math]::Max(5, $TimeoutMinutes) * 60 * 1000
     $exited = $process.WaitForExit($timeoutMs)
     if (-not $exited) {
-        try { $process.Kill() } catch {}
+        Write-ProofLog "Install command timed out after $TimeoutMinutes minute(s); terminating installer process tree."
+        try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }
     }
 
     $stdoutText = $stdOutTask.GetAwaiter().GetResult()

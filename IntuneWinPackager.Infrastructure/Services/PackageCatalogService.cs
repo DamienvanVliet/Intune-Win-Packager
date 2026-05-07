@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -2830,7 +2831,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
         if (downloadExitCode == 0)
         {
-            var installerFromDownload = FindInstallerInFolder(workingFolder);
+            var installerFromDownload = FindInstallerInFolder(workingFolder, entry);
             if (!string.IsNullOrWhiteSpace(installerFromDownload))
             {
                 return BuildSuccessfulDownloadResult(
@@ -3120,6 +3121,9 @@ public sealed class PackageCatalogService : IPackageCatalogService
     }
 
     private static string FindInstallerInFolder(string folderPath)
+        => FindInstallerInFolder(folderPath, null);
+
+    private static string FindInstallerInFolder(string folderPath, PackageCatalogEntry? entry)
     {
         if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
         {
@@ -3129,11 +3133,87 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var candidates = Directory
             .EnumerateFiles(folderPath, "*.*", SearchOption.AllDirectories)
             .Where(IsSupportedInstallerFile)
-            .OrderBy(path => InstallerPriority(path))
+            .OrderBy(path => InstallerSelectionScore(path, entry))
+            .ThenBy(path => InstallerPriority(path))
             .ThenByDescending(path => new FileInfo(path).Length)
             .ToList();
 
         return candidates.FirstOrDefault() ?? string.Empty;
+    }
+
+    private static int InstallerSelectionScore(string path, PackageCatalogEntry? entry)
+    {
+        var score = InstallerPriority(path) * 10;
+        var normalizedPath = path.Replace('/', '\\');
+        if (normalizedPath.Contains("\\Dependencies\\", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 100;
+        }
+
+        if (entry is null)
+        {
+            return score;
+        }
+
+        var fileName = Path.GetFileNameWithoutExtension(path);
+        var hints = BuildInstallerNameHints(entry);
+        if (hints.Count == 0)
+        {
+            return score;
+        }
+
+        var normalizedFileName = NormalizeInstallerHint(fileName);
+        var matched = hints.Any(hint =>
+            normalizedFileName.Contains(hint, StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains(normalizedFileName, StringComparison.OrdinalIgnoreCase));
+
+        return matched ? score - 40 : score + 25;
+    }
+
+    private static IReadOnlyList<string> BuildInstallerNameHints(PackageCatalogEntry entry)
+    {
+        var values = new List<string>();
+        AddInstallerNameHints(values, entry.Name);
+        AddInstallerNameHints(values, entry.PackageId);
+        AddInstallerNameHints(values, entry.CanonicalProductName);
+        return values
+            .Select(NormalizeInstallerHint)
+            .Where(value => value.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static void AddInstallerNameHints(List<string> values, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        values.Add(value);
+        foreach (var part in value.Split(['.', '-', '_', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            values.Add(part);
+        }
+    }
+
+    private static string NormalizeInstallerHint(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                builder.Append(char.ToLowerInvariant(character));
+            }
+        }
+
+        return builder.ToString();
     }
 
     private static int InstallerPriority(string path)

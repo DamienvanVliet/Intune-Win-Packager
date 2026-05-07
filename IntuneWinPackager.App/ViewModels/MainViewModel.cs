@@ -3419,6 +3419,10 @@ public partial class MainViewModel : ObservableObject
                 return false;
             }
 
+            var selectedVariant = ResolveCatalogVariant(entry, downloadResult.InstallerSha256);
+            _sourceChannelHint = entry.SourceChannel;
+            _installerArchitectureHint = selectedVariant?.Architecture ?? _installerArchitectureHint;
+
             await SelectSetupFileAsync(downloadResult.InstallerPath);
             if (!string.IsNullOrWhiteSpace(downloadResult.WorkingFolderPath) &&
                 Directory.Exists(downloadResult.WorkingFolderPath))
@@ -3431,6 +3435,7 @@ public partial class MainViewModel : ObservableObject
                 ProfileName = $"{entry.PackageId}-profile";
             }
 
+            ApplyCatalogMetadataToCurrentPackage(entry, selectedVariant, downloadResult);
             ApplyCatalogAutomaticDefaults(entry);
             await SaveCatalogProfileFromCurrentStateAsync(
                 entry,
@@ -3442,7 +3447,6 @@ public partial class MainViewModel : ObservableObject
             var refreshedEntry = DecorateCatalogEntry(entry);
             SelectedCatalogEntry = refreshedEntry;
             CatalogEntryDetails = refreshedEntry;
-            var selectedVariant = ResolveCatalogVariant(refreshedEntry, downloadResult.InstallerSha256);
             _sourceChannelHint = refreshedEntry.SourceChannel;
             _installerArchitectureHint = selectedVariant?.Architecture ?? _installerArchitectureHint;
             _activeCatalogSelectionContext = new CatalogSelectionContext(
@@ -3654,6 +3658,215 @@ public partial class MainViewModel : ObservableObject
     private static bool ContainsCatalogTemplatePlaceholder(string command)
     {
         return command.Contains('<') && command.Contains('>');
+    }
+
+    private void ApplyCatalogMetadataToCurrentPackage(
+        PackageCatalogEntry entry,
+        CatalogInstallerVariant? selectedVariant,
+        PackageCatalogDownloadResult downloadResult)
+    {
+        if (entry is null ||
+            downloadResult is null ||
+            string.IsNullOrWhiteSpace(downloadResult.InstallerPath) ||
+            !File.Exists(downloadResult.InstallerPath))
+        {
+            return;
+        }
+
+        var installCommandFromManifest = TryBuildWingetManifestSilentInstallCommand(downloadResult.InstallerPath);
+        var installCommandFromCatalog = BuildCatalogCommandFromTemplate(
+            CoalesceCatalogValue(selectedVariant?.SuggestedInstallCommand, entry.SuggestedInstallCommand),
+            downloadResult.InstallerPath);
+
+        var preferredInstallCommand = CoalesceCatalogValue(installCommandFromManifest, installCommandFromCatalog);
+        if (!string.IsNullOrWhiteSpace(preferredInstallCommand))
+        {
+            InstallCommand = preferredInstallCommand;
+            AppendLog($"Catalog silent install command applied: {InstallCommand}");
+        }
+
+        var uninstallCommandFromCatalog = BuildCatalogCommandFromTemplate(
+            CoalesceCatalogValue(selectedVariant?.SuggestedUninstallCommand, entry.SuggestedUninstallCommand),
+            downloadResult.InstallerPath);
+        if (!string.IsNullOrWhiteSpace(uninstallCommandFromCatalog))
+        {
+            UninstallCommand = uninstallCommandFromCatalog;
+        }
+        else if (InstallerType == InstallerType.Exe && !string.IsNullOrWhiteSpace(preferredInstallCommand))
+        {
+            UninstallCommand = BuildCatalogAdaptiveUninstallCommand(entry);
+            AppendLog("Catalog automation generated uninstall command from installed app registry metadata.");
+        }
+
+        var catalogDetectionRule = selectedVariant?.DetectionRule ?? new IntuneDetectionRule();
+        if (DetectionRuleType == IntuneDetectionRuleType.None &&
+            catalogDetectionRule.RuleType != IntuneDetectionRuleType.None)
+        {
+            ApplyDetectionRule(catalogDetectionRule);
+            _additionalDetectionRules = [];
+            _detectionProvenance = [];
+            AppendLog("Catalog deterministic detection rule applied as the initial rule. Sandbox Proof can still replace it with stronger evidence.");
+        }
+
+        RefreshSwitchVerificationStatus();
+        UpdateValidation();
+        NotifyReadinessChanged();
+    }
+
+    private static string BuildCatalogCommandFromTemplate(string commandTemplate, string installerPath)
+    {
+        if (string.IsNullOrWhiteSpace(commandTemplate) || string.IsNullOrWhiteSpace(installerPath))
+        {
+            return string.Empty;
+        }
+
+        var fileName = Path.GetFileName(installerPath);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return string.Empty;
+        }
+
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        var quotedFileName = QuoteCatalogCommandFileName(fileName);
+        var rewritten = commandTemplate
+            .Replace("\"<installer-file>.exe\"", quotedFileName, StringComparison.OrdinalIgnoreCase)
+            .Replace("\"<installer-file>.msi\"", quotedFileName, StringComparison.OrdinalIgnoreCase)
+            .Replace("\"<installer-file>\"", quotedFileName, StringComparison.OrdinalIgnoreCase)
+            .Replace("<installer-file>.exe", fileName, StringComparison.OrdinalIgnoreCase)
+            .Replace("<installer-file>.msi", fileName, StringComparison.OrdinalIgnoreCase)
+            .Replace("<installer-file>", fileName, StringComparison.OrdinalIgnoreCase)
+            .Replace("<package-file>.msix", fileName, StringComparison.OrdinalIgnoreCase)
+            .Replace("<package-file>", fileName, StringComparison.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(extension))
+        {
+            rewritten = rewritten.Replace($"{fileName}{extension}", fileName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        rewritten = rewritten.Replace(fileNameWithoutExtension + extension + extension, fileName, StringComparison.OrdinalIgnoreCase);
+        return ContainsCatalogTemplatePlaceholder(rewritten) ? string.Empty : rewritten.Trim();
+    }
+
+    private static string TryBuildWingetManifestSilentInstallCommand(string installerPath)
+    {
+        var silentSwitches = TryReadWingetManifestInstallerSwitch(installerPath, "Silent");
+        if (string.IsNullOrWhiteSpace(silentSwitches))
+        {
+            silentSwitches = TryReadWingetManifestInstallerSwitch(installerPath, "SilentWithProgress");
+        }
+
+        if (string.IsNullOrWhiteSpace(silentSwitches))
+        {
+            return string.Empty;
+        }
+
+        return $"{QuoteCatalogCommandFileName(Path.GetFileName(installerPath))} {silentSwitches}".Trim();
+    }
+
+    private static string TryReadWingetManifestInstallerSwitch(string installerPath, string switchName)
+    {
+        var directory = Path.GetDirectoryName(installerPath);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return string.Empty;
+        }
+
+        var yamlPath = Directory
+            .EnumerateFiles(directory, "*.yaml", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(yamlPath))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var inInstallerSwitches = false;
+            var installerSwitchIndent = -1;
+            foreach (var rawLine in File.ReadLines(yamlPath))
+            {
+                if (string.IsNullOrWhiteSpace(rawLine))
+                {
+                    continue;
+                }
+
+                var trimmed = rawLine.Trim();
+                var indent = rawLine.Length - rawLine.TrimStart().Length;
+                if (trimmed.Equals("InstallerSwitches:", StringComparison.OrdinalIgnoreCase))
+                {
+                    inInstallerSwitches = true;
+                    installerSwitchIndent = indent;
+                    continue;
+                }
+
+                if (!inInstallerSwitches)
+                {
+                    continue;
+                }
+
+                if (indent <= installerSwitchIndent && !trimmed.StartsWith("-", StringComparison.Ordinal))
+                {
+                    return string.Empty;
+                }
+
+                var prefix = switchName + ":";
+                if (!trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return UnquoteCatalogYamlValue(trimmed[prefix.Length..].Trim());
+            }
+        }
+        catch
+        {
+            return string.Empty;
+        }
+
+        return string.Empty;
+    }
+
+    private static string UnquoteCatalogYamlValue(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length >= 2 &&
+            ((trimmed[0] == '\'' && trimmed[^1] == '\'') ||
+             (trimmed[0] == '"' && trimmed[^1] == '"')))
+        {
+            trimmed = trimmed[1..^1];
+        }
+
+        return trimmed.Replace("''", "'", StringComparison.Ordinal);
+    }
+
+    private static string QuoteCatalogCommandFileName(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return "\"\"";
+        }
+
+        return $"\"{fileName.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+    }
+
+    private static string CoalesceCatalogValue(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return string.Empty;
     }
 
     private void ApplyCatalogAutomaticDefaults(PackageCatalogEntry entry)
@@ -4893,6 +5106,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        var setupChanged = !PathsEqual(SetupFilePath, filePath);
+        if (setupChanged)
+        {
+            ResetPackageSpecificStateForSetupChange();
+        }
+
         SetupFilePath = filePath;
 
         if (string.IsNullOrWhiteSpace(SourceFolder) || !IsPathInsideFolder(filePath, SourceFolder))
@@ -4906,6 +5125,53 @@ public partial class MainViewModel : ObservableObject
         }
 
         await HandleSetupFileChangedAsync(filePath);
+    }
+
+    private void ResetPackageSpecificStateForSetupChange()
+    {
+        _sandboxProofWatchCancellation?.Cancel();
+        _proofAndPackageCancellation?.Cancel();
+        _activeCatalogSelectionContext = null;
+        _additionalDetectionRules = [];
+        _detectionProvenance = [];
+        _strictDetectionProvenanceMode = false;
+        _exeIdentityLockEnabled = true;
+        _exeFallbackApproved = false;
+        _enforceStrictScriptPolicy = true;
+        _sourceChannelHint = string.Empty;
+        _installerArchitectureHint = string.Empty;
+        _installerSignerThumbprintHint = string.Empty;
+
+        ApplyDetectionRule(new IntuneDetectionRule { RuleType = IntuneDetectionRuleType.None });
+        DetectionTestStatus = T("Vm.Detection.TestStatus.Idle");
+        SandboxProofStatus = T("Vm.SandboxProof.Status.Idle");
+        SandboxProofCandidateSummary = string.Empty;
+        SandboxProofRunFolder = string.Empty;
+        SandboxProofReportPath = string.Empty;
+        SandboxProofResultPath = string.Empty;
+        ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
+        TestDetectionCommand.NotifyCanExecuteChanged();
+        OpenSandboxProofFolderCommand.NotifyCanExecuteChanged();
+        OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+        {
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
+
+        try
+        {
+            return Path.GetFullPath(left)
+                .TrimEnd('\\')
+                .Equals(Path.GetFullPath(right).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return left.Equals(right, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private async Task HandleSetupFileChangedAsync(string filePath)

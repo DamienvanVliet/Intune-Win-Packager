@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Threading;
 using IntuneWinPackager.Core.Interfaces;
 using IntuneWinPackager.Infrastructure.Services;
+using IntuneWinPackager.Infrastructure.Support;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
@@ -112,6 +113,54 @@ public sealed class PackageCatalogServiceTests
         finally
         {
             TryDeleteDirectory(result.WorkingFolderPath);
+        }
+    }
+
+    [Fact]
+    public async Task DownloadInstallerAsync_WingetDownload_PrefersPackageInstallerOverDependency()
+    {
+        var packageId = $"UnitTest.AmazonGames.{Guid.NewGuid():N}";
+        const string version = "3.0.9700.3";
+        var workingFolder = Path.Combine(DataPathProvider.CatalogDownloadsDirectory, packageId, version);
+        var dependenciesFolder = Path.Combine(workingFolder, "Dependencies");
+        Directory.CreateDirectory(dependenciesFolder);
+
+        var mainInstaller = Path.Combine(workingFolder, "Amazon Games_3.0.9700.3_User_X86_exe_en-US.exe");
+        var dependencyInstaller = Path.Combine(dependenciesFolder, "Microsoft Visual C++ v14 Redistributable (x86)_14.50.35719.0_Machine_X86_burn_en-US.exe");
+        File.WriteAllBytes(mainInstaller, [0x4D, 0x5A]);
+        File.WriteAllBytes(dependencyInstaller, new byte[1024]);
+
+        var processRunner = new StubProcessRunner(
+        [
+            new StubProcessResult(0,
+            [
+                "Successfully downloaded installer and dependency."
+            ])
+        ]);
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.NotFound)));
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var entry = new PackageCatalogEntry
+        {
+            Source = PackageCatalogSource.Winget,
+            SourceDisplayName = "WinGet",
+            SourceChannel = "winget",
+            PackageId = packageId,
+            Name = "Amazon Games",
+            Version = version
+        };
+
+        var result = await sut.DownloadInstallerAsync(entry);
+
+        try
+        {
+            Assert.True(result.Success, result.Message);
+            Assert.Equal(mainInstaller, result.InstallerPath);
+        }
+        finally
+        {
+            TryDeleteDirectory(Path.Combine(DataPathProvider.CatalogDownloadsDirectory, packageId));
         }
     }
 
