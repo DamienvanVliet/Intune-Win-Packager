@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.0.1] - 2026-05-07
+
+### Added
+- Strengthen Windows Sandbox detection proof candidate selection across MSI, Registry, and File detection.
+- Detect MSI ProductCode evidence from EXE wrapper installs when the installed app registers an MSI product.
+- Capture new executable, shortcut, service, and scheduled task evidence in sandbox reports.
+- Prefer proven app executable targets over folder-only fallback detection when evidence supports it.
+- Apply sandbox additional detection rules when a proven candidate includes stronger registry identity checks.
+
 ## [3.0.0] - 2026-05-07
 
 ### Added
