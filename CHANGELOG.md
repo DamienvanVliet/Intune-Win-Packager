@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.2] - 2026-05-07
+
+### Added
+- Fix package-specific sandbox proof state resets so stale detection rules cannot carry over between packages.
+- Prefer WinGet manifest silent switches over local EXE guesses or stale knowledge cache entries.
+- Prefer the downloaded main package installer over dependency installers during catalog downloads.
+- Improve sandbox timeout logging and process cleanup for hanging bootstrapper installs.
+
 ## [3.0.1] - 2026-05-07
 
 ### Added
