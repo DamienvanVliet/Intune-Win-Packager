@@ -6,6 +6,8 @@ public sealed record SandboxProofDetectionCandidate
 
     public string Confidence { get; init; } = string.Empty;
 
+    public int Score { get; init; }
+
     public string Reason { get; init; } = string.Empty;
 
     public bool ProofAvailable { get; init; }
@@ -19,4 +21,6 @@ public sealed record SandboxProofDetectionCandidate
     public string PositiveProofSummary { get; init; } = string.Empty;
 
     public IntuneDetectionRule Rule { get; init; } = new();
+
+    public IReadOnlyList<IntuneDetectionRule> AdditionalRules { get; init; } = [];
 }

@@ -51,10 +51,15 @@ public sealed class SandboxProofServiceTests
 
             var script = await File.ReadAllTextAsync(session.RunnerScriptPath);
             Assert.Contains("Get-UninstallSnapshot", script, StringComparison.Ordinal);
+            Assert.Contains("Get-ExecutableSnapshot", script, StringComparison.Ordinal);
+            Assert.Contains("Get-ShortcutSnapshot", script, StringComparison.Ordinal);
+            Assert.Contains("Find-ExecutableDetectionTargets", script, StringComparison.Ordinal);
+            Assert.Contains("additionalRules", script, StringComparison.Ordinal);
+            Assert.Contains("New MSI ProductCode registered after install", script, StringComparison.Ordinal);
             Assert.Contains("Detection candidates", script, StringComparison.Ordinal);
             Assert.Contains("Candidate passed sandbox two-phase validation", script, StringComparison.Ordinal);
             Assert.Contains("schemaVersion = 2", script, StringComparison.Ordinal);
-            Assert.Contains("operator = 'GreaterThanOrEqual'", script, StringComparison.Ordinal);
+            Assert.Contains("GreaterThanOrEqual", script, StringComparison.Ordinal);
             Assert.Contains("result.json", script, StringComparison.Ordinal);
         }
         finally
@@ -332,6 +337,148 @@ public sealed class SandboxProofServiceTests
             Assert.Equal(IntuneDetectionRuleType.File, result.BestCandidate.Rule.RuleType);
             Assert.True(result.BestCandidate.IsProven);
             Assert.Contains("1 proven", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenScoredNativeCandidatesExist_SelectsHighestScore()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "candidates": [
+                {
+                  "type": "Registry",
+                  "confidence": "High",
+                  "score": 90,
+                  "reason": "New uninstall entry with DisplayVersion after install.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox two-phase validation.",
+                    "negativePhase": { "success": true, "summary": "Registry entry was new.", "details": "" },
+                    "positivePhase": { "success": true, "summary": "Registry comparison passed.", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "Registry",
+                    "registry": {
+                      "hive": "HKEY_LOCAL_MACHINE",
+                      "keyPath": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Contoso",
+                      "valueName": "DisplayVersion",
+                      "operator": "GreaterThanOrEqual",
+                      "value": "1.0"
+                    }
+                  }
+                },
+                {
+                  "type": "File",
+                  "confidence": "High",
+                  "score": 94,
+                  "reason": "New shortcut target points to the installed application executable.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox two-phase validation.",
+                    "negativePhase": { "success": true, "summary": "Shortcut was new.", "details": "" },
+                    "positivePhase": { "success": true, "summary": "File comparison passed.", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "File",
+                    "file": {
+                      "path": "C:\\Program Files\\Contoso",
+                      "fileOrFolderName": "Contoso.exe",
+                      "operator": "GreaterThanOrEqual",
+                      "value": "1.0"
+                    }
+                  },
+                  "additionalRules": [
+                    {
+                      "ruleType": "Registry",
+                      "registry": {
+                        "hive": "HKEY_LOCAL_MACHINE",
+                        "keyPath": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Contoso",
+                        "valueName": "Publisher",
+                        "operator": "Equals",
+                        "value": "Contoso Ltd"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.NotNull(result.BestCandidate);
+            Assert.Equal(IntuneDetectionRuleType.File, result.BestCandidate.Rule.RuleType);
+            Assert.Equal(94, result.BestCandidate.Score);
+            Assert.Equal(@"C:\Program Files\Contoso", result.BestCandidate.Rule.File.Path);
+            Assert.Equal("Contoso.exe", result.BestCandidate.Rule.File.FileOrFolderName);
+            Assert.Single(result.BestCandidate.AdditionalRules);
+            Assert.Equal(IntuneDetectionRuleType.Registry, result.BestCandidate.AdditionalRules[0].RuleType);
+            Assert.Equal("Publisher", result.BestCandidate.AdditionalRules[0].Registry.ValueName);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenMsiProductCodeCandidateExists_ParsesMsiRule()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "candidates": [
+                {
+                  "type": "MsiProductCode",
+                  "confidence": "High",
+                  "score": 96,
+                  "reason": "New MSI ProductCode registered after install.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox two-phase validation.",
+                    "negativePhase": { "success": true, "summary": "MSI entry was new.", "details": "" },
+                    "positivePhase": { "success": true, "summary": "MSI version comparison passed.", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "MsiProductCode",
+                    "msi": {
+                      "productCode": "{11111111-2222-3333-4444-555555555555}",
+                      "productVersion": "2.0.0",
+                      "productVersionOperator": "GreaterThanOrEqual"
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.NotNull(result.BestCandidate);
+            Assert.Equal(IntuneDetectionRuleType.MsiProductCode, result.BestCandidate.Rule.RuleType);
+            Assert.Equal("{11111111-2222-3333-4444-555555555555}", result.BestCandidate.Rule.Msi.ProductCode);
+            Assert.Equal("2.0.0", result.BestCandidate.Rule.Msi.ProductVersion);
+            Assert.Equal(IntuneDetectionOperator.GreaterThanOrEqual, result.BestCandidate.Rule.Msi.ProductVersionOperator);
         }
         finally
         {

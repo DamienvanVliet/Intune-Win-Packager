@@ -2829,6 +2829,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         ApplyDetectionRule(result.BestCandidate.Rule);
+        _additionalDetectionRules = result.BestCandidate.AdditionalRules ?? [];
         SandboxProofStatus = TF(
             "Vm.SandboxProof.Status.DetectionApplied",
             result.BestCandidate.Rule.RuleType,
@@ -2851,12 +2852,16 @@ public partial class MainViewModel : ObservableObject
 
     private static string BuildSandboxCandidateSummary(SandboxProofDetectionCandidate candidate)
     {
+        var additionalRuleSummary = candidate.AdditionalRules.Count > 0
+            ? $" Additional detection rules: {candidate.AdditionalRules.Count}."
+            : string.Empty;
+
         if (!candidate.ProofAvailable || string.IsNullOrWhiteSpace(candidate.ProofSummary))
         {
-            return candidate.Reason;
+            return candidate.Reason + additionalRuleSummary;
         }
 
-        return $"{candidate.Reason} {candidate.ProofSummary}";
+        return $"{candidate.Reason} {candidate.ProofSummary}{additionalRuleSummary}";
     }
 
     private async Task TestDetectionAsync()

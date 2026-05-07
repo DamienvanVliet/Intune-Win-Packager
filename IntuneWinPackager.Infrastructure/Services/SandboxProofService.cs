@@ -218,7 +218,8 @@ public sealed class SandboxProofService : ISandboxProofService
                 ? candidates.Where(candidate => candidate.IsProven)
                 : candidates;
             var bestCandidate = selectableCandidates
-                .OrderByDescending(candidate => ConfidenceScore(candidate.Confidence))
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenByDescending(candidate => ConfidenceScore(candidate.Confidence))
                 .ThenBy(candidate => DetectionTypePriority(candidate.Rule.RuleType))
                 .FirstOrDefault();
 
@@ -296,17 +297,38 @@ public sealed class SandboxProofService : ISandboxProofService
             ? GetJsonString(positivePhase, "summary")
             : string.Empty;
 
+        var additionalRules = new List<IntuneDetectionRule>();
+        if (candidateElement.TryGetProperty("additionalRules", out var additionalRulesElement) &&
+            additionalRulesElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var additionalRuleElement in additionalRulesElement.EnumerateArray())
+            {
+                if (additionalRuleElement.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var additionalRule = ParseDetectionRule(additionalRuleElement);
+                if (additionalRule.RuleType != IntuneDetectionRuleType.None)
+                {
+                    additionalRules.Add(additionalRule);
+                }
+            }
+        }
+
         return new SandboxProofDetectionCandidate
         {
             Type = GetJsonString(candidateElement, "type"),
             Confidence = GetJsonString(candidateElement, "confidence"),
+            Score = GetJsonInt(candidateElement, "score"),
             Reason = GetJsonString(candidateElement, "reason"),
             ProofAvailable = proofAvailable,
             IsProven = proofAvailable && GetJsonBoolean(proofElement, "success"),
             ProofSummary = proofAvailable ? GetJsonString(proofElement, "summary") : string.Empty,
             NegativeProofSummary = negativeProofSummary,
             PositiveProofSummary = positiveProofSummary,
-            Rule = rule
+            Rule = rule,
+            AdditionalRules = additionalRules
         };
     }
 
@@ -458,6 +480,28 @@ public sealed class SandboxProofService : ISandboxProofService
             JsonValueKind.String => bool.TryParse(property.GetString(), out var parsed) && parsed,
             _ => false
         };
+    }
+
+    private static int GetJsonInt(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return 0;
+        }
+
+        if (property.ValueKind == JsonValueKind.Number &&
+            property.TryGetInt32(out var numericValue))
+        {
+            return numericValue;
+        }
+
+        if (property.ValueKind == JsonValueKind.String &&
+            int.TryParse(property.GetString(), out var stringValue))
+        {
+            return stringValue;
+        }
+
+        return 0;
     }
 
     private static bool TryGetObject(JsonElement element, string propertyName, out JsonElement property)
@@ -690,6 +734,19 @@ function ConvertTo-PlainObject {
     return $Value
 }
 
+function Resolve-MsiProductCodeFromKeyName {
+    param([string]$KeyName)
+    if ([string]::IsNullOrWhiteSpace($KeyName)) { return '' }
+
+    $guid = [guid]::Empty
+    $trimmed = $KeyName.Trim().Trim('{', '}')
+    if ([guid]::TryParse($trimmed, [ref]$guid)) {
+        return '{{{0}}}' -f $guid.ToString('D').ToUpperInvariant()
+    }
+
+    return ''
+}
+
 function Get-UninstallSnapshot {
     $roots = @(
         @{ Hive = 'HKLM'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'; KeyPrefix = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' },
@@ -709,6 +766,7 @@ function Get-UninstallSnapshot {
                     hive = $root.Hive
                     keyPath = $keyPath
                     keyName = $key.PSChildName
+                    productCode = Resolve-MsiProductCodeFromKeyName -KeyName $key.PSChildName
                     displayName = [string]$props.DisplayName
                     displayVersion = [string]$props.DisplayVersion
                     publisher = [string]$props.Publisher
@@ -729,7 +787,8 @@ function Get-UninstallSnapshot {
 }
 
 function Get-ProgramDirectorySnapshot {
-    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+    $localPrograms = if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { '' } else { Join-Path $env:LOCALAPPDATA 'Programs' }
+    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $localPrograms, $env:LOCALAPPDATA, $env:ProgramData) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
     $items = @()
     foreach ($root in $roots) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
@@ -747,14 +806,50 @@ function Get-ProgramDirectorySnapshot {
     return @($items)
 }
 
+function Get-ExecutableSnapshot {
+    $localPrograms = if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { '' } else { Join-Path $env:LOCALAPPDATA 'Programs' }
+    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $localPrograms, $env:ProgramData) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+    $items = @()
+    foreach ($root in $roots) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        try {
+            foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 5000)) {
+                $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
+                $version = [string]$versionInfo.ProductVersion
+                if ([string]::IsNullOrWhiteSpace($version)) { $version = [string]$versionInfo.FileVersion }
+                $items += [pscustomobject]@{
+                    id = $file.FullName.ToLowerInvariant()
+                    root = $root
+                    name = $file.Name
+                    fullName = $file.FullName
+                    directoryName = $file.DirectoryName
+                    length = $file.Length
+                    lastWriteTimeUtc = $file.LastWriteTimeUtc.ToString('o')
+                    version = $version
+                    productName = [string]$versionInfo.ProductName
+                    fileDescription = [string]$versionInfo.FileDescription
+                    companyName = [string]$versionInfo.CompanyName
+                }
+            }
+        }
+        catch {
+            Write-ProofLog "Executable snapshot failed for ${root}: $($_.Exception.Message)"
+        }
+    }
+
+    return @($items)
+}
+
 function Get-ServiceSnapshot {
     try {
-        return @(Get-Service | ForEach-Object {
+        return @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop | ForEach-Object {
             [pscustomobject]@{
                 id = $_.Name
                 name = $_.Name
                 displayName = $_.DisplayName
                 status = [string]$_.Status
+                pathName = [string]$_.PathName
+                startName = [string]$_.StartName
             }
         })
     }
@@ -767,11 +862,20 @@ function Get-ServiceSnapshot {
 function Get-TaskSnapshot {
     try {
         return @(Get-ScheduledTask -ErrorAction SilentlyContinue | ForEach-Object {
+            $actions = @($_.Actions | ForEach-Object {
+                [pscustomobject]@{
+                    execute = [string]$_.Execute
+                    arguments = [string]$_.Arguments
+                    workingDirectory = [string]$_.WorkingDirectory
+                }
+            })
+
             [pscustomobject]@{
                 id = '{0}{1}' -f $_.TaskPath, $_.TaskName
                 taskPath = $_.TaskPath
                 taskName = $_.TaskName
                 state = [string]$_.State
+                actions = $actions
             }
         })
     }
@@ -788,13 +892,39 @@ function Get-ShortcutSnapshot {
     )
 
     $items = @()
+    $shell = $null
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+    }
+    catch {
+        Write-ProofLog "Shortcut target resolution unavailable: $($_.Exception.Message)"
+    }
+
     foreach ($root in $roots) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         foreach ($shortcut in Get-ChildItem -LiteralPath $root -Filter '*.lnk' -Recurse -ErrorAction SilentlyContinue) {
+            $targetPath = ''
+            $arguments = ''
+            $workingDirectory = ''
+            if ($null -ne $shell) {
+                try {
+                    $link = $shell.CreateShortcut($shortcut.FullName)
+                    $targetPath = [string]$link.TargetPath
+                    $arguments = [string]$link.Arguments
+                    $workingDirectory = [string]$link.WorkingDirectory
+                }
+                catch {
+                    Write-ProofLog "Failed to resolve shortcut $($shortcut.FullName): $($_.Exception.Message)"
+                }
+            }
+
             $items += [pscustomobject]@{
                 id = $shortcut.FullName.ToLowerInvariant()
                 name = $shortcut.Name
                 fullName = $shortcut.FullName
+                targetPath = $targetPath
+                arguments = $arguments
+                workingDirectory = $workingDirectory
                 lastWriteTimeUtc = $shortcut.LastWriteTimeUtc.ToString('o')
             }
         }
@@ -811,6 +941,7 @@ function Get-Snapshot {
         capturedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
         uninstallEntries = @(Get-UninstallSnapshot)
         programDirectories = @(Get-ProgramDirectorySnapshot)
+        executables = @(Get-ExecutableSnapshot)
         services = @(Get-ServiceSnapshot)
         scheduledTasks = @(Get-TaskSnapshot)
         shortcuts = @(Get-ShortcutSnapshot)
@@ -1076,33 +1207,48 @@ function Invoke-ProofCommand {
 function Resolve-PathCandidate {
     param([string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
-    $trimmed = $Value.Trim()
+    $trimmed = [Environment]::ExpandEnvironmentVariables($Value.Trim())
     if ($trimmed -match '^\s*"([^"]+)"') { return $matches[1] }
-    if ($trimmed -match '([A-Za-z]:\\[^\s,]+\.exe)') { return $matches[1] }
-    if ($trimmed -match '([A-Za-z]:\\[^\s,]+\.msi)') { return $matches[1] }
+    if ($trimmed -match '([A-Za-z]:\\[^,]+?\.exe)') { return $matches[1].Trim() }
+    if ($trimmed -match '([A-Za-z]:\\[^,]+?\.msi)') { return $matches[1].Trim() }
+    $literal = $trimmed.Trim('"')
+    if (Test-Path -LiteralPath $literal -ErrorAction SilentlyContinue) { return $literal }
     return ''
 }
 
 function Split-FileDetectionTarget {
     param([string]$Target)
-    if ([string]::IsNullOrWhiteSpace($Target) -or -not (Test-Path -LiteralPath $Target)) { return $null }
-    $item = Get-Item -LiteralPath $Target -ErrorAction SilentlyContinue
+    $expanded = [Environment]::ExpandEnvironmentVariables(([string]$Target).Trim().Trim('"'))
+    if ([string]::IsNullOrWhiteSpace($expanded) -or -not (Test-Path -LiteralPath $expanded)) { return $null }
+    $item = Get-Item -LiteralPath $expanded -ErrorAction SilentlyContinue
     if ($null -eq $item) { return $null }
+    $version = ''
+    $productName = ''
+    $fileDescription = ''
+    $companyName = ''
+    if (-not $item.PSIsContainer) {
+        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($item.FullName)
+        $version = [string]$versionInfo.ProductVersion
+        if ([string]::IsNullOrWhiteSpace($version)) { $version = [string]$versionInfo.FileVersion }
+        $productName = [string]$versionInfo.ProductName
+        $fileDescription = [string]$versionInfo.FileDescription
+        $companyName = [string]$versionInfo.CompanyName
+    }
+
     return [pscustomobject]@{
+        fullName = $item.FullName
         path = if ($item.PSIsContainer) { $item.Parent.FullName } else { $item.DirectoryName }
         name = $item.Name
         isFile = -not $item.PSIsContainer
-        version = if (-not $item.PSIsContainer) {
-            $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($item.FullName)
-            $version = [string]$versionInfo.ProductVersion
-            if ([string]::IsNullOrWhiteSpace($version)) { $version = [string]$versionInfo.FileVersion }
-            $version
-        } else { '' }
+        version = $version
+        productName = $productName
+        fileDescription = $fileDescription
+        companyName = $companyName
     }
 }
 
 function New-Candidate {
-    param([string]$Type, [string]$Confidence, [string]$Reason, $Rule, $Evidence, $NegativePhase)
+    param([string]$Type, [string]$Confidence, [int]$Score, [string]$Reason, $Rule, $AdditionalRules, $Evidence, $NegativePhase)
     if ($null -eq $NegativePhase) {
         $NegativePhase = [pscustomobject]@{
             success = $true
@@ -1114,8 +1260,10 @@ function New-Candidate {
     return [pscustomobject]@{
         type = $Type
         confidence = $Confidence
+        score = $Score
         reason = $Reason
         rule = $Rule
+        additionalRules = @($AdditionalRules)
         evidence = $Evidence
         proof = [pscustomobject]@{
             success = $false
@@ -1127,6 +1275,36 @@ function New-Candidate {
                 details = ''
             }
         }
+    }
+}
+
+function Test-ProofDetectionRuleSet {
+    param($Candidate)
+    $rules = @($Candidate.rule)
+    if ($null -ne $Candidate.additionalRules) {
+        $rules += @($Candidate.additionalRules)
+    }
+
+    $results = @()
+    $index = 0
+    foreach ($rule in @($rules)) {
+        $index += 1
+        if ($null -eq $rule -or [string]$rule.ruleType -eq 'None') { continue }
+        $result = Test-ProofDetection -Rule $rule
+        $results += [pscustomobject]@{
+            index = $index
+            ruleType = [string]$rule.ruleType
+            success = [bool]$result.success
+            summary = [string]$result.summary
+            details = [string]$result.details
+        }
+    }
+
+    $failed = @($results | Where-Object { -not $_.success })
+    return [pscustomobject]@{
+        success = $results.Count -gt 0 -and $failed.Count -eq 0
+        summary = if ($failed.Count -eq 0 -and $results.Count -gt 0) { "Rule set validation passed for $($results.Count) rule(s)." } else { "Rule set validation failed for $($failed.Count) of $($results.Count) rule(s)." }
+        details = ($results | ForEach-Object { "Rule $($_.index) [$($_.ruleType)]: $($_.summary) $($_.details)" }) -join ' | '
     }
 }
 
@@ -1144,7 +1322,7 @@ function Complete-CandidateProof {
         }
     }
 
-    $positive = Test-ProofDetection -Rule $Candidate.rule
+    $positive = Test-ProofDetectionRuleSet -Candidate $Candidate
     $positivePhase = [pscustomobject]@{
         success = [bool]$positive.success
         summary = [string]$positive.summary
@@ -1160,57 +1338,299 @@ function Complete-CandidateProof {
     return $Candidate
 }
 
+function Normalize-DetectionText {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
+    return (($Value -replace '[^a-zA-Z0-9]+', ' ').Trim()).ToLowerInvariant()
+}
+
+function Test-DetectionTextMatch {
+    param([string]$First, [string]$Second)
+    $a = Normalize-DetectionText -Value $First
+    $b = Normalize-DetectionText -Value $Second
+    if ($a.Length -lt 3 -or $b.Length -lt 3) { return $false }
+    return $a.Contains($b) -or $b.Contains($a)
+}
+
+function New-FileDetectionRule {
+    param($FileTarget)
+    return [pscustomobject]@{
+        ruleType = 'File'
+        file = [pscustomobject]@{
+            path = $FileTarget.path
+            fileOrFolderName = $FileTarget.name
+            check32BitOn64System = $false
+            operator = if (-not [string]::IsNullOrWhiteSpace($FileTarget.version)) { 'GreaterThanOrEqual' } else { 'Exists' }
+            value = if (-not [string]::IsNullOrWhiteSpace($FileTarget.version)) { $FileTarget.version } else { '' }
+        }
+    }
+}
+
+function New-RegistryDetectionRule {
+    param($Entry, [string]$ValueName, [string]$Operator, [string]$Value)
+    return [pscustomobject]@{
+        ruleType = 'Registry'
+        registry = [pscustomobject]@{
+            hive = if ($Entry.hive -eq 'HKCU') { 'HKEY_CURRENT_USER' } else { 'HKEY_LOCAL_MACHINE' }
+            keyPath = $Entry.keyPath
+            valueName = $ValueName
+            check32BitOn64System = $false
+            operator = $Operator
+            value = $Value
+        }
+    }
+}
+
+function New-RegistryIdentityAdditionalRules {
+    param($Entry, [string]$PrimaryValueName)
+    $rules = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($entry.displayName) -and $PrimaryValueName -ne 'DisplayName') {
+        $rules += New-RegistryDetectionRule -Entry $Entry -ValueName 'DisplayName' -Operator 'Equals' -Value ([string]$entry.displayName)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($entry.publisher) -and $PrimaryValueName -ne 'Publisher') {
+        $rules += New-RegistryDetectionRule -Entry $Entry -ValueName 'Publisher' -Operator 'Equals' -Value ([string]$entry.publisher)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($entry.displayVersion) -and $PrimaryValueName -ne 'DisplayVersion') {
+        $rules += New-RegistryDetectionRule -Entry $Entry -ValueName 'DisplayVersion' -Operator 'GreaterThanOrEqual' -Value ([string]$entry.displayVersion)
+    }
+
+    return @($rules)
+}
+
+function New-MsiDetectionRule {
+    param($Entry)
+    return [pscustomobject]@{
+        ruleType = 'MsiProductCode'
+        msi = [pscustomobject]@{
+            productCode = $Entry.productCode
+            productVersion = [string]$Entry.displayVersion
+            productVersionOperator = 'GreaterThanOrEqual'
+        }
+    }
+}
+
+function Get-RuleIdentity {
+    param($Rule)
+    if ($null -eq $Rule) { return '' }
+
+    switch ([string]$Rule.ruleType) {
+        'MsiProductCode' {
+            return "msi|$($Rule.msi.productCode)|$($Rule.msi.productVersion)|$($Rule.msi.productVersionOperator)".ToLowerInvariant()
+        }
+        'File' {
+            return "file|$($Rule.file.path)|$($Rule.file.fileOrFolderName)|$($Rule.file.operator)|$($Rule.file.value)".ToLowerInvariant()
+        }
+        'Registry' {
+            return "registry|$($Rule.registry.hive)|$($Rule.registry.keyPath)|$($Rule.registry.valueName)|$($Rule.registry.operator)|$($Rule.registry.value)".ToLowerInvariant()
+        }
+        'Script' {
+            return "script|$($Rule.script.scriptBody)".ToLowerInvariant()
+        }
+        default {
+            return ([string]$Rule.ruleType).ToLowerInvariant()
+        }
+    }
+}
+
+function Test-DetectionRuleCandidateAllowed {
+    param($Rule)
+    if ($null -eq $Rule) { return $false }
+
+    if ([string]$Rule.ruleType -ne 'File') { return $true }
+    if ($null -eq $Rule.file) { return $false }
+
+    $target = Join-Path ([Environment]::ExpandEnvironmentVariables([string]$Rule.file.path)) ([string]$Rule.file.fileOrFolderName)
+    $windowsRoot = [Environment]::GetFolderPath('Windows')
+    foreach ($blockedRoot in @($windowsRoot, $ProofRoot, $SandboxSourceRoot)) {
+        if ([string]::IsNullOrWhiteSpace($blockedRoot)) { continue }
+        $normalizedRoot = $blockedRoot.TrimEnd('\')
+        if ($target.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Test-PathUnderAnyRoot {
+    param([string]$Path, $RootMap)
+    if ([string]::IsNullOrWhiteSpace($Path) -or $null -eq $RootMap) { return $false }
+    $normalizedPath = $Path.TrimEnd('\')
+    foreach ($root in $RootMap.Keys) {
+        if ([string]::IsNullOrWhiteSpace($root)) { continue }
+        if ($normalizedPath.Equals($root, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $normalizedPath.StartsWith("$root\", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function New-FileCandidateNegativePhase {
+    param($FileTarget, $NewExecutableMap, $NewProgramDirectoryMap, [string]$FallbackSummary, [string]$FallbackDetails)
+
+    if ($null -eq $FileTarget) {
+        return [pscustomobject]@{ success = $false; summary = 'File detection target could not be resolved.'; details = '' }
+    }
+
+    $fullName = [string]$FileTarget.fullName
+    $identity = $fullName.ToLowerInvariant()
+    if ($FileTarget.isFile -and $null -ne $NewExecutableMap -and $NewExecutableMap.ContainsKey($identity)) {
+        return [pscustomobject]@{
+            success = $true
+            summary = 'Executable target was absent before install and present after install.'
+            details = $fullName
+        }
+    }
+
+    if (Test-PathUnderAnyRoot -Path $fullName -RootMap $NewProgramDirectoryMap) {
+        return [pscustomobject]@{
+            success = $true
+            summary = 'Detection target is inside a newly created install directory.'
+            details = $fullName
+        }
+    }
+
+    if (-not $FileTarget.isFile -and $null -ne $NewProgramDirectoryMap -and $NewProgramDirectoryMap.ContainsKey($identity)) {
+        return [pscustomobject]@{
+            success = $true
+            summary = 'Install directory was absent before install and present after install.'
+            details = $fullName
+        }
+    }
+
+    return [pscustomobject]@{
+        success = $false
+        summary = 'Detection target was not proven absent before install.'
+        details = if ([string]::IsNullOrWhiteSpace($FallbackDetails)) { $fullName } else { "$fullName | $FallbackSummary $FallbackDetails" }
+    }
+}
+
+function Find-ExecutableDetectionTargets {
+    param(
+        [string]$Root,
+        [string]$DisplayName,
+        [string]$Publisher,
+        [string]$DisplayVersion
+    )
+
+    $rootTarget = Split-FileDetectionTarget -Target $Root
+    if ($null -eq $rootTarget) { return @() }
+    if ($rootTarget.isFile) {
+        return @([pscustomobject]@{ target = $rootTarget; rank = 100; depth = 0; fullName = $rootTarget.fullName })
+    }
+
+    $folder = Join-Path $rootTarget.path $rootTarget.name
+    if (-not (Test-Path -LiteralPath $folder -PathType Container)) { return @() }
+
+    $ranked = @()
+    foreach ($exe in @(Get-ChildItem -LiteralPath $folder -Filter '*.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 80)) {
+        $target = Split-FileDetectionTarget -Target $exe.FullName
+        if ($null -eq $target -or -not $target.isFile) { continue }
+
+        $rank = 10
+        if (-not [string]::IsNullOrWhiteSpace($target.version)) { $rank += 8 }
+        if (-not [string]::IsNullOrWhiteSpace($DisplayVersion) -and -not [string]::IsNullOrWhiteSpace($target.version) -and (Compare-ProofValue -Actual $target.version -Expected $DisplayVersion -Operator 'Equals')) { $rank += 22 }
+        if (Test-DetectionTextMatch -First $target.productName -Second $DisplayName) { $rank += 28 }
+        if (Test-DetectionTextMatch -First $target.fileDescription -Second $DisplayName) { $rank += 18 }
+        if (Test-DetectionTextMatch -First $target.companyName -Second $Publisher) { $rank += 16 }
+        if (Test-DetectionTextMatch -First ([IO.Path]::GetFileNameWithoutExtension($target.name)) -Second $DisplayName) { $rank += 14 }
+        if ($target.name -match '(?i)(unins|uninstall|setup|installer|update|crash|helper|bootstrap|repair)') { $rank -= 25 }
+
+        $relative = $target.fullName.Substring([Math]::Min($folder.Length, $target.fullName.Length)).TrimStart('\')
+        $depth = if ([string]::IsNullOrWhiteSpace($relative)) { 0 } else { ($relative -split '\\').Count }
+        $ranked += [pscustomobject]@{
+            target = $target
+            rank = $rank
+            depth = $depth
+            fullName = $target.fullName
+        }
+    }
+
+    return @($ranked |
+        Sort-Object -Property @{ Expression = { $_.rank }; Descending = $true }, @{ Expression = { $_.depth }; Ascending = $true }, @{ Expression = { $_.fullName }; Ascending = $true } |
+        Select-Object -First 5)
+}
+
 function Get-DetectionCandidates {
-    param($NewUninstallEntries, $NewProgramDirectories)
-    $candidates = @()
+    param($NewUninstallEntries, $NewProgramDirectories, $NewExecutables, $NewShortcuts, $NewServices, $NewScheduledTasks)
+    $candidates = New-Object System.Collections.ArrayList
+    $seen = @{}
+    $newExecutableMap = @{}
+    foreach ($executable in @($NewExecutables)) {
+        if (-not [string]::IsNullOrWhiteSpace($executable.fullName)) {
+            $executableKey = ([string]$executable.fullName).ToLowerInvariant()
+            $newExecutableMap[$executableKey] = $true
+        }
+    }
+
+    $newProgramDirectoryMap = @{}
+    foreach ($directory in @($NewProgramDirectories)) {
+        if (-not [string]::IsNullOrWhiteSpace($directory.fullName)) {
+            $directoryKey = (([string]$directory.fullName).TrimEnd('\')).ToLowerInvariant()
+            $newProgramDirectoryMap[$directoryKey] = $true
+        }
+    }
+
+    function Add-DetectionCandidate {
+        param([string]$Type, [string]$Confidence, [int]$Score, [string]$Reason, $Rule, $AdditionalRules, $Evidence, $NegativePhase)
+        if ($null -eq $Rule -or [string]::IsNullOrWhiteSpace([string]$Rule.ruleType)) { return }
+        if (-not (Test-DetectionRuleCandidateAllowed -Rule $Rule)) { return }
+
+        $identity = Get-RuleIdentity -Rule $Rule
+        if ([string]::IsNullOrWhiteSpace($identity) -or $seen.ContainsKey($identity)) { return }
+
+        $seen[$identity] = $true
+        [void]$candidates.Add((New-Candidate -Type $Type -Confidence $Confidence -Score $Score -Reason $Reason -Evidence $Evidence -Rule $Rule -AdditionalRules $AdditionalRules -NegativePhase $NegativePhase))
+    }
 
     foreach ($entry in @($NewUninstallEntries)) {
-        if (-not [string]::IsNullOrWhiteSpace($entry.displayName) -and -not [string]::IsNullOrWhiteSpace($entry.displayVersion)) {
-            $negative = [pscustomobject]@{
-                success = $true
-                summary = 'Uninstall registry entry was absent before install and present after install.'
-                details = "$($entry.hive)\$($entry.keyPath)"
-            }
-            $candidates += New-Candidate -Type 'Registry' -Confidence 'High' -Reason 'New uninstall entry with DisplayVersion after install.' -Evidence $entry -Rule ([pscustomobject]@{
-                ruleType = 'Registry'
-                registry = [pscustomobject]@{
-                    hive = if ($entry.hive -eq 'HKCU') { 'HKEY_CURRENT_USER' } else { 'HKEY_LOCAL_MACHINE' }
-                    keyPath = $entry.keyPath
-                    valueName = 'DisplayVersion'
-                    check32BitOn64System = $false
-                    operator = 'GreaterThanOrEqual'
-                    value = $entry.displayVersion
-                }
-            }) -NegativePhase $negative
+        $negative = [pscustomobject]@{
+            success = $true
+            summary = 'Uninstall registry entry was absent before install and present after install.'
+            details = "$($entry.hive)\$($entry.keyPath)"
         }
 
-        $targets = @($entry.displayIcon, $entry.uninstallString, $entry.quietUninstallString, $entry.installLocation)
-        foreach ($targetValue in $targets) {
-            $candidatePath = Resolve-PathCandidate -Value ([string]$targetValue)
-            if ([string]::IsNullOrWhiteSpace($candidatePath) -and (Test-Path -LiteralPath ([string]$targetValue) -ErrorAction SilentlyContinue)) {
-                $candidatePath = [string]$targetValue
-            }
+        if (-not [string]::IsNullOrWhiteSpace($entry.productCode)) {
+            Add-DetectionCandidate -Type 'MsiProductCode' -Confidence 'High' -Score 96 -Reason 'New MSI ProductCode registered after install.' -Evidence $entry -Rule (New-MsiDetectionRule -Entry $entry) -AdditionalRules @() -NegativePhase $negative
+        }
 
+        if (-not [string]::IsNullOrWhiteSpace($entry.displayName) -and -not [string]::IsNullOrWhiteSpace($entry.displayVersion)) {
+            Add-DetectionCandidate -Type 'Registry' -Confidence 'High' -Score 90 -Reason 'New uninstall entry with DisplayVersion after install.' -Evidence $entry -Rule (New-RegistryDetectionRule -Entry $entry -ValueName 'DisplayVersion' -Operator 'GreaterThanOrEqual' -Value ([string]$entry.displayVersion)) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName 'DisplayVersion') -NegativePhase $negative
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($entry.displayName)) {
+            Add-DetectionCandidate -Type 'Registry' -Confidence 'Medium' -Score 72 -Reason 'New uninstall entry with DisplayName after install.' -Evidence $entry -Rule (New-RegistryDetectionRule -Entry $entry -ValueName 'DisplayName' -Operator 'Equals' -Value ([string]$entry.displayName)) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName 'DisplayName') -NegativePhase $negative
+        }
+
+        $targets = @(
+            @{ Value = $entry.displayIcon; Source = 'DisplayIcon'; Score = 88; Confidence = 'High'; Reason = 'New uninstall entry DisplayIcon points to an installed executable.' },
+            @{ Value = $entry.installLocation; Source = 'InstallLocation'; Score = 84; Confidence = 'High'; Reason = 'New uninstall entry InstallLocation contains an executable install footprint.' },
+            @{ Value = $entry.uninstallString; Source = 'UninstallString'; Score = 68; Confidence = 'Medium'; Reason = 'New uninstall entry UninstallString points to an installed executable.' },
+            @{ Value = $entry.quietUninstallString; Source = 'QuietUninstallString'; Score = 66; Confidence = 'Medium'; Reason = 'New uninstall entry QuietUninstallString points to an installed executable.' }
+        )
+        foreach ($targetValue in $targets) {
+            $candidatePath = Resolve-PathCandidate -Value ([string]$targetValue.Value)
             $fileTarget = Split-FileDetectionTarget -Target $candidatePath
             if ($null -eq $fileTarget) { continue }
 
-            $rule = [pscustomobject]@{
-                ruleType = 'File'
-                file = [pscustomobject]@{
-                    path = $fileTarget.path
-                    fileOrFolderName = $fileTarget.name
-                    check32BitOn64System = $false
-                    operator = if (-not [string]::IsNullOrWhiteSpace($fileTarget.version)) { 'GreaterThanOrEqual' } else { 'Exists' }
-                    value = if (-not [string]::IsNullOrWhiteSpace($fileTarget.version)) { $fileTarget.version } else { '' }
-                }
+            if ($fileTarget.isFile) {
+                $fileNegative = New-FileCandidateNegativePhase -FileTarget $fileTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
+                Add-DetectionCandidate -Type 'File' -Confidence ([string]$targetValue.Confidence) -Score ([int]$targetValue.Score) -Reason ([string]$targetValue.Reason) -Evidence $entry -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName '') -NegativePhase $fileNegative
+                continue
             }
-            $negative = [pscustomobject]@{
-                success = $true
-                summary = 'Source uninstall registry entry was absent before install and present after install.'
-                details = "$($entry.hive)\$($entry.keyPath)"
+
+            foreach ($executable in @(Find-ExecutableDetectionTargets -Root $fileTarget.fullName -DisplayName ([string]$entry.displayName) -Publisher ([string]$entry.publisher) -DisplayVersion ([string]$entry.displayVersion) | Select-Object -First 3)) {
+                $score = [Math]::Min(92, ([int]$targetValue.Score + [Math]::Max(0, [int]($executable.rank / 10))))
+                $fileNegative = New-FileCandidateNegativePhase -FileTarget $executable.target -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
+                Add-DetectionCandidate -Type 'File' -Confidence ([string]$targetValue.Confidence) -Score $score -Reason ([string]$targetValue.Reason) -Evidence $entry -Rule (New-FileDetectionRule -FileTarget $executable.target) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName '') -NegativePhase $fileNegative
             }
-            $candidates += New-Candidate -Type 'File' -Confidence 'High' -Reason 'New uninstall entry points to an existing install footprint.' -Evidence $entry -Rule $rule -NegativePhase $negative
-            break
+
+            $folderNegative = New-FileCandidateNegativePhase -FileTarget $fileTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
+            Add-DetectionCandidate -Type 'File' -Confidence 'Low' -Score 46 -Reason 'New uninstall entry InstallLocation folder exists; executable target was not stronger than folder detection.' -Evidence $entry -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName '') -NegativePhase $folderNegative
         }
     }
 
@@ -1220,16 +1640,62 @@ function Get-DetectionCandidates {
             summary = 'Install directory was absent before install and present after install.'
             details = $directory.fullName
         }
-        $candidates += New-Candidate -Type 'File' -Confidence 'Medium' -Reason 'New top-level install directory appeared after install.' -Evidence $directory -Rule ([pscustomobject]@{
-            ruleType = 'File'
-            file = [pscustomobject]@{
-                path = $directory.root
-                fileOrFolderName = $directory.name
-                check32BitOn64System = $false
-                operator = 'Exists'
-                value = ''
+
+        foreach ($executable in @(Find-ExecutableDetectionTargets -Root ([string]$directory.fullName) -DisplayName ([string]$directory.name) -Publisher '' -DisplayVersion '' | Select-Object -First 3)) {
+            $score = [Math]::Min(86, 78 + [Math]::Max(0, [int]($executable.rank / 12)))
+            $fileNegative = New-FileCandidateNegativePhase -FileTarget $executable.target -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
+            Add-DetectionCandidate -Type 'File' -Confidence 'Medium' -Score $score -Reason 'New install directory contains an executable footprint.' -Evidence $directory -Rule (New-FileDetectionRule -FileTarget $executable.target) -AdditionalRules @() -NegativePhase $fileNegative
+        }
+
+        $folderTarget = Split-FileDetectionTarget -Target ([string]$directory.fullName)
+        if ($null -ne $folderTarget) {
+            $folderNegative = New-FileCandidateNegativePhase -FileTarget $folderTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
+            Add-DetectionCandidate -Type 'File' -Confidence 'Low' -Score 45 -Reason 'New top-level install directory appeared after install.' -Evidence $directory -Rule (New-FileDetectionRule -FileTarget $folderTarget) -AdditionalRules @() -NegativePhase $folderNegative
+        }
+    }
+
+    foreach ($shortcut in @($NewShortcuts)) {
+        $candidatePath = Resolve-PathCandidate -Value ([string]$shortcut.targetPath)
+        $fileTarget = Split-FileDetectionTarget -Target $candidatePath
+        if ($null -eq $fileTarget -or -not $fileTarget.isFile) { continue }
+
+        $negative = [pscustomobject]@{
+            success = $true
+            summary = 'Shortcut was absent before install and present after install.'
+            details = $shortcut.fullName
+        }
+        $fileNegative = New-FileCandidateNegativePhase -FileTarget $fileTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
+        Add-DetectionCandidate -Type 'File' -Confidence 'High' -Score 94 -Reason 'New shortcut target points to the installed application executable.' -Evidence $shortcut -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules @() -NegativePhase $fileNegative
+    }
+
+    foreach ($service in @($NewServices)) {
+        $candidatePath = Resolve-PathCandidate -Value ([string]$service.pathName)
+        $fileTarget = Split-FileDetectionTarget -Target $candidatePath
+        if ($null -eq $fileTarget -or -not $fileTarget.isFile) { continue }
+
+        $negative = [pscustomobject]@{
+            success = $true
+            summary = 'Service was absent before install and present after install.'
+            details = $service.name
+        }
+        $fileNegative = New-FileCandidateNegativePhase -FileTarget $fileTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
+        Add-DetectionCandidate -Type 'File' -Confidence 'High' -Score 86 -Reason 'New Windows service points to an installed executable.' -Evidence $service -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules @() -NegativePhase $fileNegative
+    }
+
+    foreach ($task in @($NewScheduledTasks)) {
+        foreach ($action in @($task.actions)) {
+            $candidatePath = Resolve-PathCandidate -Value ("$($action.execute) $($action.arguments)")
+            $fileTarget = Split-FileDetectionTarget -Target $candidatePath
+            if ($null -eq $fileTarget -or -not $fileTarget.isFile) { continue }
+
+            $negative = [pscustomobject]@{
+                success = $true
+                summary = 'Scheduled task was absent before install and present after install.'
+                details = "$($task.taskPath)$($task.taskName)"
             }
-        }) -NegativePhase $negative
+            $fileNegative = New-FileCandidateNegativePhase -FileTarget $fileTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
+            Add-DetectionCandidate -Type 'File' -Confidence 'Medium' -Score 82 -Reason 'New scheduled task action points to an installed executable.' -Evidence $task -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules @() -NegativePhase $fileNegative
+        }
     }
 
     return @($candidates)
@@ -1260,11 +1726,35 @@ function Write-Report {
         $lines += "- $($directory.fullName)"
     }
     $lines += ''
+    $lines += "New executables: $(@($Result.diff.newExecutables).Count)"
+    foreach ($executable in @($Result.diff.newExecutables | Select-Object -First 20)) {
+        $versionLabel = if ([string]::IsNullOrWhiteSpace($executable.version)) { '' } else { " [$($executable.version)]" }
+        $lines += "- $($executable.fullName)$versionLabel"
+    }
+    $lines += ''
+    $lines += "New shortcuts: $(@($Result.diff.newShortcuts).Count)"
+    foreach ($shortcut in @($Result.diff.newShortcuts | Select-Object -First 12)) {
+        $lines += "- $($shortcut.fullName) -> $($shortcut.targetPath)"
+    }
+    $lines += ''
+    $lines += "New services: $(@($Result.diff.newServices).Count)"
+    foreach ($service in @($Result.diff.newServices | Select-Object -First 12)) {
+        $lines += "- $($service.name): $($service.pathName)"
+    }
+    $lines += ''
+    $lines += "New scheduled tasks: $(@($Result.diff.newScheduledTasks).Count)"
+    foreach ($task in @($Result.diff.newScheduledTasks | Select-Object -First 12)) {
+        $lines += "- $($task.taskPath)$($task.taskName)"
+    }
+    $lines += ''
     $lines += "Detection candidates: $(@($Result.candidates).Count)"
     $lines += "Proven candidates: $(@($Result.candidates | Where-Object { $_.proof.success }).Count)"
     foreach ($candidate in @($Result.candidates | Select-Object -First 12)) {
         $proofLabel = if ($candidate.proof.success) { 'PROVEN' } else { 'UNPROVEN' }
-        $lines += "- [$($candidate.confidence)] [$proofLabel] $($candidate.type): $($candidate.reason)"
+        $lines += "- [$($candidate.confidence), score $($candidate.score)] [$proofLabel] $($candidate.type): $($candidate.reason)"
+        if (@($candidate.additionalRules).Count -gt 0) {
+            $lines += "  Additional rules: $(@($candidate.additionalRules).Count)"
+        }
         $lines += "  Proof: $($candidate.proof.summary)"
         $lines += "  Rule: $($candidate.rule | ConvertTo-Json -Compress -Depth 8)"
     }
@@ -1293,12 +1783,13 @@ try {
     $diff = [pscustomobject]@{
         newUninstallEntries = @(Compare-ById -Before $baseline.uninstallEntries -After $postInstall.uninstallEntries)
         newProgramDirectories = @(Compare-ById -Before $baseline.programDirectories -After $postInstall.programDirectories)
+        newExecutables = @(Compare-ById -Before $baseline.executables -After $postInstall.executables)
         newServices = @(Compare-ById -Before $baseline.services -After $postInstall.services)
         newScheduledTasks = @(Compare-ById -Before $baseline.scheduledTasks -After $postInstall.scheduledTasks)
         newShortcuts = @(Compare-ById -Before $baseline.shortcuts -After $postInstall.shortcuts)
     }
 
-    $candidates = @(Get-DetectionCandidates -NewUninstallEntries $diff.newUninstallEntries -NewProgramDirectories $diff.newProgramDirectories)
+    $candidates = @(Get-DetectionCandidates -NewUninstallEntries $diff.newUninstallEntries -NewProgramDirectories $diff.newProgramDirectories -NewExecutables $diff.newExecutables -NewShortcuts $diff.newShortcuts -NewServices $diff.newServices -NewScheduledTasks $diff.newScheduledTasks)
     $candidates = @($candidates | ForEach-Object { Complete-CandidateProof -Candidate $_ })
 
     $result = [pscustomobject]@{
