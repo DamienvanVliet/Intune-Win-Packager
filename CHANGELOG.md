@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.0.6] - 2026-05-13
+
+### Changed
+- Use official winget-pkgs manifest metadata when local WinGet details are incomplete.
+- Prefer factual installer variants with URL, SHA256, architecture, scope, silent switches, and detection metadata.
+- Treat WinGet `wix` installers as MSI packages so MSI-based apps use `msiexec` instead of EXE silent switches.
+- Keep EXE packages in review when catalog metadata lacks a factual detection identity, letting Sandbox Proof validate them.
+
+### Fixed
+- Prevent MSI-backed WinGet packages such as 7-Zip, Notepad++, and GitHub Desktop from receiving invalid EXE arguments.
+- Verify direct fallback downloads against manifest SHA256 before marking downloaded installers as hash verified.
+- Add regression coverage for manifest fallback, real file detection checks, and preflight tool/output probes.
+
 ## [3.0.5] - 2026-05-13
 
 ### Changed

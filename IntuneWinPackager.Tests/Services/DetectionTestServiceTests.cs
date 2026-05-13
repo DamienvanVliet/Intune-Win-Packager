@@ -114,6 +114,70 @@ public sealed class DetectionTestServiceTests
     }
 
     [Fact]
+    public async Task TestAsync_FileDetection_PerformsRealFileSystemCheck()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-detect-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var probeFile = Path.Combine(tempRoot, "ContosoAgent.exe");
+        await File.WriteAllTextAsync(probeFile, "probe");
+
+        try
+        {
+            var sut = new DetectionTestService(new FakeProcessRunner(new ProcessRunResult(), []));
+            var result = await sut.TestAsync(
+                InstallerType.Exe,
+                new IntuneDetectionRule
+                {
+                    RuleType = IntuneDetectionRuleType.File,
+                    File = new FileDetectionRule
+                    {
+                        Path = tempRoot,
+                        FileOrFolderName = "ContosoAgent.exe",
+                        Operator = IntuneDetectionOperator.Exists
+                    }
+                });
+
+            Assert.True(result.Success, result.Summary);
+            Assert.Contains(probeFile, result.Details, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task TestAsync_FileDetection_Fails_WhenTargetDoesNotExist()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-detect-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var sut = new DetectionTestService(new FakeProcessRunner(new ProcessRunResult(), []));
+            var result = await sut.TestAsync(
+                InstallerType.Exe,
+                new IntuneDetectionRule
+                {
+                    RuleType = IntuneDetectionRuleType.File,
+                    File = new FileDetectionRule
+                    {
+                        Path = tempRoot,
+                        FileOrFolderName = "MissingAgent.exe",
+                        Operator = IntuneDetectionOperator.Exists
+                    }
+                });
+
+            Assert.False(result.Success);
+            Assert.Contains("not found", result.Summary, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ProveAsync_PassiveMode_ReturnsSuccessfulTwoPhaseProof()
     {
         var sut = new DetectionTestService(new ScriptAwareProcessRunner());

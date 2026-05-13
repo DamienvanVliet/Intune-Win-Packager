@@ -114,6 +114,62 @@ public class PreflightServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_ExecutesToolProbeAndRemovesOutputWriteProbe()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "installer.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        var request = new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.Exe,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "\"installer.exe\" /quiet",
+                UninstallCommand = "\"installer.exe\" /uninstall /quiet",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.File,
+                        File = new FileDetectionRule
+                        {
+                            Path = @"%ProgramFiles%\\Contoso",
+                            FileOrFolderName = "ContosoAgent.exe",
+                            Operator = IntuneDetectionOperator.Exists
+                        }
+                    }
+                }
+            }
+        };
+
+        var runner = new FakeProcessRunner(0);
+        var sut = new PreflightService(runner);
+
+        var result = await sut.RunAsync(request);
+
+        Assert.False(result.HasErrors);
+        Assert.Contains(runner.Requests, processRequest =>
+            processRequest.FileName.Equals(toolPath, StringComparison.OrdinalIgnoreCase) &&
+            processRequest.Arguments.Equals("-?", StringComparison.Ordinal));
+        Assert.Empty(Directory.EnumerateFiles(outputFolder, ".iwp-preflight-*.tmp", SearchOption.TopDirectoryOnly));
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
     public async Task RunAsync_DoesNotBlockMsiProductCodeDetection_ForExeInstaller()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
@@ -488,6 +544,7 @@ public class PreflightServiceTests
     private sealed class FakeProcessRunner : IProcessRunner
     {
         private readonly int _exitCode;
+        public List<ProcessRunRequest> Requests { get; } = [];
 
         public FakeProcessRunner(int exitCode)
         {
@@ -499,6 +556,7 @@ public class PreflightServiceTests
             IProgress<ProcessOutputLine>? outputProgress = null,
             CancellationToken cancellationToken = default)
         {
+            Requests.Add(request);
             return Task.FromResult(new ProcessRunResult
             {
                 ExitCode = _exitCode,

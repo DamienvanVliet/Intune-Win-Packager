@@ -521,6 +521,206 @@ public sealed class PackageCatalogServiceTests
     }
 
     [Fact]
+    public async Task GetDetailsAsync_WingetNoApplicableInstaller_UsesManifestFallback()
+    {
+        const string productCode = "{12345678-1234-1234-1234-123456789ABC}";
+        var processRunner = new StubProcessRunner(
+        [
+            new StubProcessResult(0,
+            [
+                "Found Contoso Wix App [Contoso.WixApp]",
+                "Version: 1.2.3",
+                "Publisher: Contoso Ltd",
+                "Installer:",
+                "  No applicable installer found; see logs for more details."
+            ])
+        ]);
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.EndsWith("Contoso.WixApp.installer.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"""
+                    PackageIdentifier: Contoso.WixApp
+                    PackageVersion: 1.2.3
+                    Installers:
+                    - Architecture: x64
+                      InstallerType: wix
+                      Scope: machine
+                      InstallerUrl: https://download.example.test/contoso-1.2.3.msi
+                      InstallerSha256: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+                      ProductCode: '{productCode}'
+                    - Architecture: x64
+                      InstallerType: nullsoft
+                      Scope: machine
+                      InstallerUrl: https://download.example.test/contoso-1.2.3.exe
+                      InstallerSha256: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+                      ProductCode: Contoso Wix App
+                    ManifestType: installer
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.WixApp.locale.en-US.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.WixApp
+                    PackageVersion: 1.2.3
+                    PackageLocale: en-US
+                    Publisher: Contoso Ltd
+                    PackageName: Contoso Wix App
+                    PackageUrl: https://contoso.example/app
+                    ManifestType: defaultLocale
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.WixApp.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.WixApp
+                    PackageVersion: 1.2.3
+                    DefaultLocale: en-US
+                    ManifestType: version
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var entry = new PackageCatalogEntry
+        {
+            Source = PackageCatalogSource.Winget,
+            SourceDisplayName = "WinGet",
+            SourceChannel = "winget",
+            PackageId = "Contoso.WixApp",
+            Name = "Contoso Wix App",
+            Version = "1.2.3"
+        };
+
+        var details = await sut.GetDetailsAsync(entry);
+
+        Assert.NotNull(details);
+        Assert.Equal(InstallerType.Msi, details!.InstallerType);
+        Assert.EndsWith(".msi", details.InstallerDownloadUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", details.InstallerSha256);
+        Assert.True(details.InstallerVariantCount >= 2);
+        var msi = Assert.Single(details.InstallerVariants.Where(variant => variant.InstallerType == InstallerType.Msi));
+        Assert.Equal(IntuneDetectionRuleType.MsiProductCode, msi.DetectionRule.RuleType);
+        Assert.Equal(productCode, msi.DetectionRule.Msi.ProductCode);
+        Assert.Contains("msiexec", msi.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetDetailsAsync_WingetManifestExe_UsesManifestSwitchesAndRegistryDetection()
+    {
+        var processRunner = new StubProcessRunner(
+        [
+            new StubProcessResult(0,
+            [
+                "Found Contoso Exe App [Contoso.ExeApp]",
+                "Version: 4.5.6",
+                "Publisher: Contoso Ltd",
+                "Installer:",
+                "  No applicable installer found; see logs for more details."
+            ])
+        ]);
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.EndsWith("Contoso.ExeApp.installer.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.ExeApp
+                    PackageVersion: 4.5.6
+                    InstallerType: nullsoft
+                    InstallerSwitches:
+                      Silent: /S /NoRestart
+                    Installers:
+                    - Architecture: x64
+                      Scope: machine
+                      InstallerUrl: https://download.example.test/contoso-4.5.6.exe
+                      InstallerSha256: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+                      ProductCode: Contoso Exe App
+                    ManifestType: installer
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.ExeApp.locale.en-US.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.ExeApp
+                    PackageVersion: 4.5.6
+                    PackageLocale: en-US
+                    Publisher: Contoso Ltd
+                    PackageName: Contoso Exe App
+                    ManifestType: defaultLocale
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.ExeApp.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.ExeApp
+                    PackageVersion: 4.5.6
+                    DefaultLocale: en-US
+                    ManifestType: version
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var entry = new PackageCatalogEntry
+        {
+            Source = PackageCatalogSource.Winget,
+            SourceDisplayName = "WinGet",
+            SourceChannel = "winget",
+            PackageId = "Contoso.ExeApp",
+            Name = "Contoso Exe App",
+            Version = "4.5.6"
+        };
+
+        var details = await sut.GetDetailsAsync(entry);
+
+        Assert.NotNull(details);
+        var variant = Assert.Single(details!.InstallerVariants);
+        Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Contains("/NoRestart", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(IntuneDetectionRuleType.Registry, variant.DetectionRule.RuleType);
+        Assert.Equal(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Contoso Exe App", variant.DetectionRule.Registry.KeyPath);
+        Assert.Equal("DisplayVersion", variant.DetectionRule.Registry.ValueName);
+        Assert.Equal(IntuneDetectionOperator.Equals, variant.DetectionRule.Registry.Operator);
+        Assert.Equal("4.5.6", variant.DetectionRule.Registry.Value);
+    }
+
+    [Fact]
     public async Task SearchAsync_WingetExeVariant_WithExactUninstallKey_UsesRegistryEqualityDetection()
     {
         const string uninstallKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Contoso Agent";

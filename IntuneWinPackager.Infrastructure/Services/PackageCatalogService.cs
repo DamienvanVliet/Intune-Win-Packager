@@ -60,6 +60,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private static readonly TimeSpan CacheFreshWindow = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan CacheExpirationWindow = TimeSpan.FromHours(6);
     private static readonly TimeSpan ProcessCaptureTimeout = TimeSpan.FromSeconds(75);
+    private const string WingetManifestRawBaseUrl = "https://raw.githubusercontent.com/microsoft/winget-pkgs/master/manifests";
 
     public PackageCatalogService(IProcessRunner processRunner, HttpClient? httpClient = null)
     {
@@ -381,6 +382,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             InstallerType = variant.InstallerType,
             InstallerTypeRaw = Coalesce(variant.InstallerTypeRaw, entry.InstallerTypeRaw),
             InstallerDownloadUrl = Coalesce(variant.InstallerDownloadUrl, entry.InstallerDownloadUrl),
+            InstallerSha256 = Coalesce(variant.InstallerSha256, entry.InstallerSha256),
+            HashVerifiedBySource = variant.HashVerifiedBySource || entry.HashVerifiedBySource,
             SuggestedInstallCommand = Coalesce(variant.SuggestedInstallCommand, entry.SuggestedInstallCommand),
             SuggestedUninstallCommand = Coalesce(variant.SuggestedUninstallCommand, entry.SuggestedUninstallCommand),
             DetectionGuidance = Coalesce(variant.DetectionGuidance, entry.DetectionGuidance),
@@ -1159,54 +1162,73 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
 
         var packageId = Coalesce(map.GetValueOrDefault("Package Identifier"), entry.PackageId);
-        var packageName = Coalesce(detailName, map.GetValueOrDefault("Package Name"), entry.Name);
-        var publisher = Coalesce(map.GetValueOrDefault("Publisher"), entry.Publisher);
         var version = Coalesce(map.GetValueOrDefault("Version"), entry.Version, entry.BuildVersion);
+        var manifest = await TryGetWingetManifestInfoAsync(packageId, version, cancellationToken);
+        var preferredManifestInstaller = manifest?.Installers
+            .OrderByDescending(WingetManifestInstallerPreferenceScore)
+            .FirstOrDefault();
+        var packageName = Coalesce(detailName, map.GetValueOrDefault("Package Name"), manifest?.PackageName, entry.Name);
+        var publisher = Coalesce(map.GetValueOrDefault("Publisher"), manifest?.Publisher, entry.Publisher);
+        version = Coalesce(manifest?.PackageVersion, version);
         var productName = Coalesce(
             map.GetValueOrDefault("ProductName"),
             map.GetValueOrDefault("Product Name"),
+            manifest?.PackageName,
             packageName);
         var companyName = Coalesce(
             map.GetValueOrDefault("CompanyName"),
             map.GetValueOrDefault("Company Name"),
+            manifest?.Publisher,
             publisher);
         var productVersion = Coalesce(
             map.GetValueOrDefault("ProductVersion"),
             map.GetValueOrDefault("Product Version"),
             map.GetValueOrDefault("DisplayVersion"),
             map.GetValueOrDefault("Display Version"),
+            manifest?.PackageVersion,
             version);
         var signer = Coalesce(
             map.GetValueOrDefault("Signer"),
             map.GetValueOrDefault("Signer Subject"),
             map.GetValueOrDefault("Signature"));
-        var installerRaw = map.GetValueOrDefault("Installer Type", entry.InstallerTypeRaw);
+        var installerRaw = Coalesce(preferredManifestInstaller?.InstallerTypeRaw, map.GetValueOrDefault("Installer Type"), entry.InstallerTypeRaw);
         var installerType = InferInstallerType(installerRaw, map.GetValueOrDefault("Description"));
-        var architecture = Coalesce(map.GetValueOrDefault("Architecture"), InferArchitecture(packageName, packageId, version, installerRaw));
-        var scope = Coalesce(map.GetValueOrDefault("Scope"), InferScope(sourceName, packageName, packageId));
-        var installerSha256 = NormalizeSha256(Coalesce(map.GetValueOrDefault("Installer SHA256")));
-        var msiProductCode = NormalizeMsiProductCode(Coalesce(map.GetValueOrDefault("ProductCode"), map.GetValueOrDefault("Product Code")));
+        if (preferredManifestInstaller is not null)
+        {
+            installerType = InferInstallerType(installerRaw, preferredManifestInstaller.InstallerUrl);
+        }
+
+        var architecture = Coalesce(preferredManifestInstaller?.Architecture, map.GetValueOrDefault("Architecture"), InferArchitecture(packageName, packageId, version, installerRaw));
+        var scope = Coalesce(preferredManifestInstaller?.Scope, map.GetValueOrDefault("Scope"), InferScope(sourceName, packageName, packageId));
+        var installerSha256 = NormalizeSha256(Coalesce(preferredManifestInstaller?.InstallerSha256, map.GetValueOrDefault("Installer SHA256")));
+        var rawProductCode = Coalesce(preferredManifestInstaller?.ProductCode, map.GetValueOrDefault("ProductCode"), map.GetValueOrDefault("Product Code"));
+        var msiProductCode = NormalizeMsiProductCode(rawProductCode);
         var appxIdentity = Coalesce(map.GetValueOrDefault("Package Family Name"), map.GetValueOrDefault("Package Name"));
         var uninstallRegistryKeyPath = Coalesce(
             map.GetValueOrDefault("UninstallRegistryKey"),
             map.GetValueOrDefault("Uninstall Registry Key"),
             map.GetValueOrDefault("RegistryKey"),
-            map.GetValueOrDefault("Registry Key"));
+            map.GetValueOrDefault("Registry Key"),
+            installerType == InstallerType.Exe ? BuildUninstallRegistryPathFromProductCode(rawProductCode) : string.Empty);
         var uninstallDisplayName = Coalesce(
             map.GetValueOrDefault("DisplayName"),
             map.GetValueOrDefault("Display Name"),
             map.GetValueOrDefault("AppsAndFeaturesEntries.DisplayName"),
+            preferredManifestInstaller?.DisplayName,
             productName);
         var uninstallPublisher = Coalesce(
             map.GetValueOrDefault("AppsAndFeaturesEntries.Publisher"),
             map.GetValueOrDefault("Publisher"),
+            preferredManifestInstaller?.Publisher,
             companyName);
         var uninstallDisplayVersion = Coalesce(
             map.GetValueOrDefault("DisplayVersion"),
             map.GetValueOrDefault("Display Version"),
             map.GetValueOrDefault("AppsAndFeaturesEntries.DisplayVersion"),
+            preferredManifestInstaller?.DisplayVersion,
             productVersion);
         var installLocation = Coalesce(
+            preferredManifestInstaller?.DefaultInstallLocation,
             map.GetValueOrDefault("InstallLocation"),
             map.GetValueOrDefault("Install Location"));
         var displayIcon = Coalesce(
@@ -1220,7 +1242,9 @@ public sealed class PackageCatalogService : IPackageCatalogService
             fileDetectionName = parsedIconName;
         }
         var template = BuildTemplate(packageId, installerType, installerRaw);
-        var installCommand = template.InstallCommand;
+        var installCommand = Coalesce(
+            BuildManifestInstallCommand(installerType, preferredManifestInstaller),
+            template.InstallCommand);
         var uninstallCommand = ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode, appxIdentity);
         var detection = BuildDeterministicDetectionRule(
             installerType,
@@ -1238,31 +1262,53 @@ public sealed class PackageCatalogService : IPackageCatalogService
             fileDetectionName: fileDetectionName,
             fileDetectionVersion: uninstallDisplayVersion,
             appxPublisher: publisher);
-        var homepage = Coalesce(map.GetValueOrDefault("Homepage"), map.GetValueOrDefault("Publisher Url"), entry.HomepageUrl);
-        var installerUrl = Coalesce(map.GetValueOrDefault("Installer Url"), entry.InstallerDownloadUrl);
-        var variant = BuildInstallerVariant(
-            entry.Source,
-            entry.SourceDisplayName,
-            sourceName,
-            packageId,
-            version,
-            Coalesce(version, entry.BuildVersion),
-            installerType,
-            installerRaw,
-            architecture,
-            scope,
-            installerUrl,
-            installerSha256,
-            hashVerifiedBySource: false,
-            vendorSigned: false,
-            signerSubject: string.Empty,
-            suggestedInstallCommand: installCommand,
-            suggestedUninstallCommand: uninstallCommand,
-            detectionRule: detection.Rule,
-            detectionGuidance: detection.Guidance,
-            isDeterministicDetection: detection.IsDeterministic,
-            confidenceScore: template.ConfidenceScore,
-            publishedAtUtc: null);
+        var homepage = Coalesce(map.GetValueOrDefault("Homepage"), map.GetValueOrDefault("Publisher Url"), manifest?.HomepageUrl, entry.HomepageUrl);
+        var installerUrl = Coalesce(preferredManifestInstaller?.InstallerUrl, map.GetValueOrDefault("Installer Url"), entry.InstallerDownloadUrl);
+        IReadOnlyList<CatalogInstallerVariant> variants = manifest is null
+            ? []
+            : BuildWingetManifestInstallerVariants(
+                manifest,
+                entry.Source,
+                entry.SourceDisplayName,
+                sourceName,
+                packageId,
+                packageName,
+                publisher,
+                version,
+                appxIdentity);
+        if (variants.Count == 0)
+        {
+            variants =
+            [
+                BuildInstallerVariant(
+                    entry.Source,
+                    entry.SourceDisplayName,
+                    sourceName,
+                    packageId,
+                    version,
+                    Coalesce(version, entry.BuildVersion),
+                    installerType,
+                    installerRaw,
+                    architecture,
+                    scope,
+                    installerUrl,
+                    installerSha256,
+                    hashVerifiedBySource: false,
+                    vendorSigned: false,
+                    signerSubject: string.Empty,
+                    suggestedInstallCommand: installCommand,
+                    suggestedUninstallCommand: uninstallCommand,
+                    detectionRule: detection.Rule,
+                    detectionGuidance: detection.Guidance,
+                    isDeterministicDetection: detection.IsDeterministic,
+                    confidenceScore: template.ConfidenceScore,
+                    publishedAtUtc: null)
+            ];
+        }
+
+        var preferredVariant = variants
+            .OrderByDescending(VariantPreferenceScore)
+            .First();
 
         DateTimeOffset? releaseDate = null;
         if (DateTimeOffset.TryParse(map.GetValueOrDefault("Release Date"), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
@@ -1280,21 +1326,606 @@ public sealed class PackageCatalogService : IPackageCatalogService
             Description = Coalesce(map.GetValueOrDefault("Description"), entry.Description),
             HomepageUrl = homepage,
             IconUrl = ResolveIconUrl(map.GetValueOrDefault("Icon"), homepage, packageId),
-            InstallerDownloadUrl = installerUrl,
-            InstallerType = installerType,
-            InstallerTypeRaw = installerRaw,
-            SuggestedInstallCommand = installCommand,
-            SuggestedUninstallCommand = uninstallCommand,
-            DetectionGuidance = detection.Guidance,
-            ConfidenceScore = template.ConfidenceScore,
+            InstallerDownloadUrl = Coalesce(preferredVariant.InstallerDownloadUrl, installerUrl),
+            InstallerSha256 = Coalesce(preferredVariant.InstallerSha256, installerSha256),
+            InstallerType = preferredVariant.InstallerType,
+            InstallerTypeRaw = Coalesce(preferredVariant.InstallerTypeRaw, installerRaw),
+            SuggestedInstallCommand = Coalesce(preferredVariant.SuggestedInstallCommand, installCommand),
+            SuggestedUninstallCommand = Coalesce(preferredVariant.SuggestedUninstallCommand, uninstallCommand),
+            DetectionGuidance = Coalesce(preferredVariant.DetectionGuidance, detection.Guidance),
+            ConfidenceScore = Math.Max(template.ConfidenceScore, preferredVariant.ConfidenceScore),
             MetadataNotes = string.IsNullOrWhiteSpace(map.GetValueOrDefault("Installer Url"))
-                ? $"Detailed metadata from WinGet source '{sourceName}'."
+                ? manifest is null
+                    ? $"Detailed metadata from WinGet source '{sourceName}'."
+                    : $"Detailed metadata from WinGet source '{sourceName}' and winget-pkgs manifest."
                 : $"Installer URL: {map["Installer Url"]}. Metadata: ProductName='{productName}', CompanyName='{companyName}', ProductVersion='{productVersion}'" +
                   (string.IsNullOrWhiteSpace(signer) ? string.Empty : $", Signer='{signer}'."),
             PublishedAtUtc = releaseDate,
             HasDetailedMetadata = true,
-            InstallerVariants = [variant]
+            InstallerVariants = variants
         };
+    }
+
+    private async Task<WingetManifestInfo?> TryGetWingetManifestInfoAsync(
+        string packageId,
+        string version,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(packageId) || string.IsNullOrWhiteSpace(version))
+        {
+            return null;
+        }
+
+        try
+        {
+            var installerYaml = await TryDownloadTextAsync(
+                BuildWingetManifestRawUrl(packageId, version, "installer"),
+                providerId: "winget-manifest",
+                sourceChannel: "winget-pkgs",
+                cancellationToken);
+            if (string.IsNullOrWhiteSpace(installerYaml))
+            {
+                return null;
+            }
+
+            var localeYaml = await TryDownloadTextAsync(
+                BuildWingetManifestRawUrl(packageId, version, "locale.en-US"),
+                providerId: "winget-manifest",
+                sourceChannel: "winget-pkgs",
+                cancellationToken);
+            var versionYaml = await TryDownloadTextAsync(
+                BuildWingetManifestRawUrl(packageId, version, string.Empty),
+                providerId: "winget-manifest",
+                sourceChannel: "winget-pkgs",
+                cancellationToken);
+
+            return ParseWingetManifestInfo(installerYaml, localeYaml, versionYaml);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<string> TryDownloadTextAsync(
+        string url,
+        string providerId,
+        string sourceChannel,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return string.Empty;
+        }
+
+        using var response = await SendHttpWithRetryAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, url),
+            providerId,
+            sourceChannel,
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return string.Empty;
+        }
+
+        return await response.Content.ReadAsStringAsync(cancellationToken);
+    }
+
+    private static string BuildWingetManifestRawUrl(string packageId, string version, string manifestSuffix)
+    {
+        var trimmedId = packageId.Trim();
+        var trimmedVersion = version.Trim();
+        if (trimmedId.Length == 0 || trimmedVersion.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var first = char.ToLowerInvariant(trimmedId[0]).ToString();
+        var pathSegments = trimmedId
+            .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(Uri.EscapeDataString);
+        var fileName = string.IsNullOrWhiteSpace(manifestSuffix)
+            ? $"{trimmedId}.yaml"
+            : $"{trimmedId}.{manifestSuffix}.yaml";
+        return string.Join(
+            "/",
+            WingetManifestRawBaseUrl,
+            Uri.EscapeDataString(first),
+            string.Join("/", pathSegments),
+            Uri.EscapeDataString(trimmedVersion),
+            Uri.EscapeDataString(fileName));
+    }
+
+    private static WingetManifestInfo ParseWingetManifestInfo(
+        string installerYaml,
+        string localeYaml,
+        string versionYaml)
+    {
+        var installerRoot = ParseYamlTopLevelScalars(installerYaml, stopAtInstallers: true);
+        var localeRoot = ParseYamlTopLevelScalars(localeYaml, stopAtInstallers: false);
+        var versionRoot = ParseYamlTopLevelScalars(versionYaml, stopAtInstallers: false);
+        var globalSwitches = ParseWingetGlobalInstallerSwitches(installerYaml);
+        var installers = ParseWingetManifestInstallers(installerYaml, installerRoot, globalSwitches);
+
+        return new WingetManifestInfo(
+            PackageIdentifier: Coalesce(
+                installerRoot.GetValueOrDefault("PackageIdentifier"),
+                versionRoot.GetValueOrDefault("PackageIdentifier")),
+            PackageVersion: Coalesce(
+                installerRoot.GetValueOrDefault("PackageVersion"),
+                versionRoot.GetValueOrDefault("PackageVersion")),
+            PackageName: Coalesce(localeRoot.GetValueOrDefault("PackageName"), installerRoot.GetValueOrDefault("PackageName")),
+            Publisher: Coalesce(localeRoot.GetValueOrDefault("Publisher"), installerRoot.GetValueOrDefault("Publisher")),
+            HomepageUrl: Coalesce(
+                localeRoot.GetValueOrDefault("PackageUrl"),
+                localeRoot.GetValueOrDefault("PublisherUrl"),
+                localeRoot.GetValueOrDefault("PublisherSupportUrl")),
+            ReleaseDate: Coalesce(installerRoot.GetValueOrDefault("ReleaseDate"), versionRoot.GetValueOrDefault("ReleaseDate")),
+            Installers: installers);
+    }
+
+    private static IReadOnlyList<WingetManifestInstallerInfo> ParseWingetManifestInstallers(
+        string yaml,
+        IReadOnlyDictionary<string, string> root,
+        IReadOnlyDictionary<string, string> globalSwitches)
+    {
+        var builders = new List<WingetManifestInstallerBuilder>();
+        var inInstallers = false;
+        var installersIndent = -1;
+        WingetManifestInstallerBuilder? current = null;
+        var section = string.Empty;
+        var sectionIndent = -1;
+
+        foreach (var raw in SplitYamlLines(yaml))
+        {
+            if (IsIgnorableYamlLine(raw))
+            {
+                continue;
+            }
+
+            var indent = CountLeadingSpaces(raw);
+            var trimmed = raw.Trim();
+            if (!inInstallers)
+            {
+                if (trimmed.Equals("Installers:", StringComparison.OrdinalIgnoreCase))
+                {
+                    inInstallers = true;
+                    installersIndent = indent;
+                }
+
+                continue;
+            }
+
+            if (indent <= installersIndent && !trimmed.StartsWith("- ", StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            if (trimmed.StartsWith("- ", StringComparison.Ordinal) &&
+                (string.IsNullOrWhiteSpace(section) || indent <= sectionIndent))
+            {
+                current = new WingetManifestInstallerBuilder();
+                builders.Add(current);
+                section = string.Empty;
+                sectionIndent = -1;
+                var inline = trimmed[2..].Trim();
+                if (TryReadYamlKeyValue(inline, out var inlineKey, out var inlineValue))
+                {
+                    current.Values[inlineKey] = inlineValue;
+                }
+
+                continue;
+            }
+
+            if (current is null)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(section) && indent > sectionIndent)
+            {
+                var nested = trimmed.StartsWith("- ", StringComparison.Ordinal)
+                    ? trimmed[2..].Trim()
+                    : trimmed;
+                if (TryReadYamlKeyValue(nested, out var nestedKey, out var nestedValue))
+                {
+                    var target = section switch
+                    {
+                        "switches" => current.Switches,
+                        "apps" => current.AppsAndFeatures,
+                        "metadata" => current.InstallationMetadata,
+                        _ => current.Values
+                    };
+                    if (!target.ContainsKey(nestedKey))
+                    {
+                        target[nestedKey] = nestedValue;
+                    }
+                }
+
+                continue;
+            }
+
+            section = string.Empty;
+            sectionIndent = -1;
+            if (!TryReadYamlKeyValue(trimmed, out var key, out var value))
+            {
+                continue;
+            }
+
+            if (key.Equals("InstallerSwitches", StringComparison.OrdinalIgnoreCase))
+            {
+                section = "switches";
+                sectionIndent = indent;
+                continue;
+            }
+
+            if (key.Equals("AppsAndFeaturesEntries", StringComparison.OrdinalIgnoreCase))
+            {
+                section = "apps";
+                sectionIndent = indent;
+                continue;
+            }
+
+            if (key.Equals("InstallationMetadata", StringComparison.OrdinalIgnoreCase))
+            {
+                section = "metadata";
+                sectionIndent = indent;
+                continue;
+            }
+
+            current.Values[key] = value;
+        }
+
+        if (builders.Count == 0)
+        {
+            var rootInstaller = new WingetManifestInstallerBuilder();
+            foreach (var pair in root)
+            {
+                rootInstaller.Values[pair.Key] = pair.Value;
+            }
+
+            if (!string.IsNullOrWhiteSpace(rootInstaller.Values.GetValueOrDefault("InstallerUrl")))
+            {
+                builders.Add(rootInstaller);
+            }
+        }
+
+        return builders
+            .Select(builder => BuildWingetManifestInstallerInfo(builder, root, globalSwitches))
+            .Where(installer => !string.IsNullOrWhiteSpace(installer.InstallerUrl))
+            .ToList();
+    }
+
+    private static WingetManifestInstallerInfo BuildWingetManifestInstallerInfo(
+        WingetManifestInstallerBuilder builder,
+        IReadOnlyDictionary<string, string> root,
+        IReadOnlyDictionary<string, string> globalSwitches)
+    {
+        var switches = new Dictionary<string, string>(globalSwitches, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in builder.Switches)
+        {
+            switches[pair.Key] = pair.Value;
+        }
+
+        return new WingetManifestInstallerInfo(
+            InstallerTypeRaw: Coalesce(builder.Values.GetValueOrDefault("InstallerType"), root.GetValueOrDefault("InstallerType")),
+            Architecture: Coalesce(builder.Values.GetValueOrDefault("Architecture"), root.GetValueOrDefault("Architecture")),
+            Scope: Coalesce(builder.Values.GetValueOrDefault("Scope"), root.GetValueOrDefault("Scope")),
+            InstallerUrl: Coalesce(builder.Values.GetValueOrDefault("InstallerUrl"), root.GetValueOrDefault("InstallerUrl")),
+            InstallerSha256: NormalizeSha256(Coalesce(builder.Values.GetValueOrDefault("InstallerSha256"), root.GetValueOrDefault("InstallerSha256"))),
+            ProductCode: Coalesce(
+                builder.Values.GetValueOrDefault("ProductCode"),
+                builder.AppsAndFeatures.GetValueOrDefault("ProductCode"),
+                root.GetValueOrDefault("ProductCode")),
+            SilentSwitch: Coalesce(switches.GetValueOrDefault("Silent")),
+            SilentWithProgressSwitch: Coalesce(switches.GetValueOrDefault("SilentWithProgress")),
+            InstallLocationSwitch: Coalesce(switches.GetValueOrDefault("InstallLocation")),
+            DefaultInstallLocation: Coalesce(
+                builder.InstallationMetadata.GetValueOrDefault("DefaultInstallLocation"),
+                builder.Values.GetValueOrDefault("DefaultInstallLocation"),
+                root.GetValueOrDefault("DefaultInstallLocation")),
+            DisplayName: Coalesce(builder.AppsAndFeatures.GetValueOrDefault("DisplayName")),
+            Publisher: Coalesce(builder.AppsAndFeatures.GetValueOrDefault("Publisher")),
+            DisplayVersion: Coalesce(builder.AppsAndFeatures.GetValueOrDefault("DisplayVersion")));
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseYamlTopLevelScalars(string yaml, bool stopAtInstallers)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in SplitYamlLines(yaml))
+        {
+            if (IsIgnorableYamlLine(raw))
+            {
+                continue;
+            }
+
+            if (CountLeadingSpaces(raw) != 0)
+            {
+                continue;
+            }
+
+            var trimmed = raw.Trim();
+            if (stopAtInstallers && trimmed.Equals("Installers:", StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            if (TryReadYamlKeyValue(trimmed, out var key, out var value) && !string.IsNullOrWhiteSpace(value))
+            {
+                map[key] = value;
+            }
+        }
+
+        return map;
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseWingetGlobalInstallerSwitches(string yaml)
+    {
+        var switches = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var inSwitches = false;
+        var switchesIndent = -1;
+        foreach (var raw in SplitYamlLines(yaml))
+        {
+            if (IsIgnorableYamlLine(raw))
+            {
+                continue;
+            }
+
+            var indent = CountLeadingSpaces(raw);
+            var trimmed = raw.Trim();
+            if (trimmed.Equals("Installers:", StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            if (inSwitches && indent > switchesIndent)
+            {
+                if (TryReadYamlKeyValue(trimmed, out var key, out var value))
+                {
+                    switches[key] = value;
+                }
+
+                continue;
+            }
+
+            inSwitches = false;
+            if (trimmed.Equals("InstallerSwitches:", StringComparison.OrdinalIgnoreCase))
+            {
+                inSwitches = true;
+                switchesIndent = indent;
+            }
+        }
+
+        return switches;
+    }
+
+    private static IReadOnlyList<CatalogInstallerVariant> BuildWingetManifestInstallerVariants(
+        WingetManifestInfo manifest,
+        PackageCatalogSource source,
+        string sourceDisplayName,
+        string sourceChannel,
+        string packageId,
+        string packageName,
+        string publisher,
+        string version,
+        string appxIdentity)
+    {
+        var variants = new List<CatalogInstallerVariant>();
+        foreach (var installer in manifest.Installers)
+        {
+            if (!IsPotentialInstallerAsset(installer.InstallerUrl))
+            {
+                continue;
+            }
+
+            var installerType = InferInstallerType(installer.InstallerTypeRaw, installer.InstallerUrl);
+            var template = BuildTemplate(packageId, installerType, installer.InstallerTypeRaw);
+            var rawProductCode = installer.ProductCode;
+            var msiProductCode = NormalizeMsiProductCode(rawProductCode);
+            var uninstallRegistryKeyPath = installerType == InstallerType.Exe
+                ? BuildUninstallRegistryPathFromProductCode(rawProductCode)
+                : string.Empty;
+            var detection = BuildDeterministicDetectionRule(
+                installerType,
+                packageId,
+                packageName,
+                publisher,
+                version,
+                msiProductCode,
+                appxIdentity,
+                uninstallRegistryKeyPath: uninstallRegistryKeyPath,
+                uninstallDisplayName: Coalesce(installer.DisplayName, packageName),
+                uninstallPublisher: Coalesce(installer.Publisher, publisher),
+                uninstallDisplayVersion: Coalesce(installer.DisplayVersion, version),
+                fileDetectionPath: installer.DefaultInstallLocation,
+                fileDetectionName: string.Empty,
+                fileDetectionVersion: Coalesce(installer.DisplayVersion, version),
+                appxPublisher: publisher);
+            var installCommand = Coalesce(BuildManifestInstallCommand(installerType, installer), template.InstallCommand);
+            var uninstallCommand = ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode, appxIdentity);
+            var confidence = Math.Min(100, template.ConfidenceScore + 8);
+
+            variants.Add(BuildInstallerVariant(
+                source,
+                sourceDisplayName,
+                sourceChannel,
+                packageId,
+                version,
+                version,
+                installerType,
+                installer.InstallerTypeRaw,
+                installer.Architecture,
+                installer.Scope,
+                installer.InstallerUrl,
+                installer.InstallerSha256,
+                hashVerifiedBySource: false,
+                vendorSigned: false,
+                signerSubject: string.Empty,
+                suggestedInstallCommand: installCommand,
+                suggestedUninstallCommand: uninstallCommand,
+                detectionRule: detection.Rule,
+                detectionGuidance: detection.Guidance,
+                isDeterministicDetection: detection.IsDeterministic,
+                confidenceScore: confidence,
+                publishedAtUtc: DateTimeOffset.TryParse(manifest.ReleaseDate, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var releaseDate)
+                    ? releaseDate.ToUniversalTime()
+                    : null));
+        }
+
+        return variants
+            .GroupBy(variant => variant.VariantKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(VariantPreferenceScore).First())
+            .OrderByDescending(VariantPreferenceScore)
+            .ToList();
+    }
+
+    private static string BuildManifestInstallCommand(InstallerType installerType, WingetManifestInstallerInfo? installer)
+    {
+        if (installer is null || installerType == InstallerType.Msi)
+        {
+            return string.Empty;
+        }
+
+        var silentSwitch = Coalesce(installer.SilentSwitch, installer.SilentWithProgressSwitch);
+        return string.IsNullOrWhiteSpace(silentSwitch)
+            ? string.Empty
+            : $"\"<installer-file>\" {silentSwitch}";
+    }
+
+    private static int WingetManifestInstallerPreferenceScore(WingetManifestInstallerInfo installer)
+    {
+        var installerType = InferInstallerType(installer.InstallerTypeRaw, installer.InstallerUrl);
+        var score = installerType switch
+        {
+            InstallerType.Msi => 55,
+            InstallerType.AppxMsix => 48,
+            InstallerType.Exe => 40,
+            InstallerType.Script => 18,
+            _ => 0
+        };
+
+        if (installerType == InstallerType.Msi && GuidCodeRegex.IsMatch(NormalizeMsiProductCode(installer.ProductCode)))
+        {
+            score += 30;
+        }
+
+        if (installerType == InstallerType.Exe && !string.IsNullOrWhiteSpace(BuildUninstallRegistryPathFromProductCode(installer.ProductCode)))
+        {
+            score += 18;
+        }
+
+        if (installer.Architecture.Equals("x64", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 12;
+        }
+        else if (installer.Architecture.Equals("neutral", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 6;
+        }
+
+        if (installer.Scope.Equals("machine", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 8;
+        }
+
+        if (!string.IsNullOrWhiteSpace(installer.InstallerSha256))
+        {
+            score += 6;
+        }
+
+        if (installer.InstallerUrl.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            score -= 24;
+        }
+
+        return score;
+    }
+
+    private static string BuildUninstallRegistryPathFromProductCode(string productCode)
+    {
+        var value = productCode.Trim().Trim('\'', '"');
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        if (value.StartsWith("HKEY_LOCAL_MACHINE\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return value["HKEY_LOCAL_MACHINE\\".Length..];
+        }
+
+        if (value.StartsWith("HKLM\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return value["HKLM\\".Length..];
+        }
+
+        if (value.Contains(@"SOFTWARE\", StringComparison.OrdinalIgnoreCase))
+        {
+            return value;
+        }
+
+        return $@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{value}";
+    }
+
+    private static IEnumerable<string> SplitYamlLines(string yaml)
+    {
+        return (yaml ?? string.Empty)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n');
+    }
+
+    private static bool IsIgnorableYamlLine(string line)
+    {
+        return string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#", StringComparison.Ordinal);
+    }
+
+    private static int CountLeadingSpaces(string value)
+    {
+        var count = 0;
+        while (count < value.Length && value[count] == ' ')
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    private static bool TryReadYamlKeyValue(string value, out string key, out string parsedValue)
+    {
+        key = string.Empty;
+        parsedValue = string.Empty;
+        var idx = value.IndexOf(':');
+        if (idx <= 0)
+        {
+            return false;
+        }
+
+        key = value[..idx].Trim();
+        parsedValue = UnquoteYamlScalar(value[(idx + 1)..].Trim());
+        return !string.IsNullOrWhiteSpace(key);
+    }
+
+    private static string UnquoteYamlScalar(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length >= 2 &&
+            ((trimmed[0] == '\'' && trimmed[^1] == '\'') ||
+             (trimmed[0] == '"' && trimmed[^1] == '"')))
+        {
+            trimmed = trimmed[1..^1];
+        }
+
+        return trimmed.Replace("''", "'", StringComparison.Ordinal);
     }
 
     private async Task<IReadOnlyList<PackageCatalogEntry>> SearchChocolateyAsync(string term, int limit, CancellationToken cancellationToken)
@@ -2854,6 +3485,17 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 var installerFromUrlFallback = await ResolveDownloadedInstallerPathAsync(fallbackTargetPath, workingFolder, progress, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(installerFromUrlFallback))
                 {
+                    var expectedSha = NormalizeSha256(entry.InstallerSha256);
+                    if (!string.IsNullOrWhiteSpace(expectedSha) && !FileHashMatches(installerFromUrlFallback, expectedSha))
+                    {
+                        return new PackageCatalogDownloadResult
+                        {
+                            Success = false,
+                            Message = "Downloaded installer hash did not match the WinGet manifest SHA256.",
+                            WorkingFolderPath = workingFolder
+                        };
+                    }
+
                     var fallbackMessage = hashMismatchDetected
                         ? "WinGet reported a hash mismatch. Downloaded installer from WinGet output URL, but source hash was not verified for this build."
                         : "Downloaded installer from WinGet output URL. Source hash was not verified by WinGet for this build.";
@@ -2861,7 +3503,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
                         installerFromUrlFallback,
                         Path.GetDirectoryName(installerFromUrlFallback) ?? workingFolder,
                         fallbackMessage,
-                        hashVerifiedBySource: false);
+                        hashVerifiedBySource: !string.IsNullOrWhiteSpace(expectedSha));
                 }
             }
             catch (OperationCanceledException)
@@ -2901,11 +3543,22 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var resolvedInstaller = await ResolveDownloadedInstallerPathAsync(targetPath, workingFolder, progress, cancellationToken);
         if (!string.IsNullOrWhiteSpace(resolvedInstaller))
         {
+            var expectedSha = NormalizeSha256(details.InstallerSha256);
+            if (!string.IsNullOrWhiteSpace(expectedSha) && !FileHashMatches(resolvedInstaller, expectedSha))
+            {
+                return new PackageCatalogDownloadResult
+                {
+                    Success = false,
+                    Message = "Downloaded installer hash did not match the WinGet manifest SHA256.",
+                    WorkingFolderPath = workingFolder
+                };
+            }
+
             return BuildSuccessfulDownloadResult(
                 resolvedInstaller,
                 Path.GetDirectoryName(resolvedInstaller) ?? workingFolder,
                 "Downloaded installer from WinGet metadata URL.",
-                hashVerifiedByWinget);
+                hashVerifiedByWinget || !string.IsNullOrWhiteSpace(expectedSha));
         }
 
         return new PackageCatalogDownloadResult
@@ -4667,8 +5320,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
     {
         var value = $"{raw} {fallback}".ToLowerInvariant();
         if (value.Contains("msix", StringComparison.Ordinal) || value.Contains("appx", StringComparison.Ordinal)) return InstallerType.AppxMsix;
-        if (value.Contains("msi", StringComparison.Ordinal)) return InstallerType.Msi;
-        if (value.Contains("inno", StringComparison.Ordinal) || value.Contains("nsis", StringComparison.Ordinal) || value.Contains("nullsoft", StringComparison.Ordinal) || value.Contains("installshield", StringComparison.Ordinal) || value.Contains("wix", StringComparison.Ordinal) || value.Contains("burn", StringComparison.Ordinal) || value.Contains("exe", StringComparison.Ordinal)) return InstallerType.Exe;
+        if (value.Contains("msi", StringComparison.Ordinal) || value.Contains("wix", StringComparison.Ordinal)) return InstallerType.Msi;
+        if (value.Contains("inno", StringComparison.Ordinal) || value.Contains("nsis", StringComparison.Ordinal) || value.Contains("nullsoft", StringComparison.Ordinal) || value.Contains("installshield", StringComparison.Ordinal) || value.Contains("burn", StringComparison.Ordinal) || value.Contains("exe", StringComparison.Ordinal)) return InstallerType.Exe;
         if (value.Contains("script", StringComparison.Ordinal) || value.Contains("powershell", StringComparison.Ordinal)) return InstallerType.Script;
         return InstallerType.Unknown;
     }
@@ -4857,6 +5510,36 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private sealed record TemplateSuggestion(string InstallCommand, string UninstallCommand, string DetectionGuidance, int ConfidenceScore);
     private sealed record CachedSearchResult(IReadOnlyList<PackageCatalogEntry> Results, bool IsFresh);
     private sealed record WingetSourceInfo(string Name, bool IsExplicit);
+    private sealed record WingetManifestInfo(
+        string PackageIdentifier,
+        string PackageVersion,
+        string PackageName,
+        string Publisher,
+        string HomepageUrl,
+        string ReleaseDate,
+        IReadOnlyList<WingetManifestInstallerInfo> Installers);
+    private sealed record WingetManifestInstallerInfo(
+        string InstallerTypeRaw,
+        string Architecture,
+        string Scope,
+        string InstallerUrl,
+        string InstallerSha256,
+        string ProductCode,
+        string SilentSwitch,
+        string SilentWithProgressSwitch,
+        string InstallLocationSwitch,
+        string DefaultInstallLocation,
+        string DisplayName,
+        string Publisher,
+        string DisplayVersion);
+    private sealed class WingetManifestInstallerBuilder
+    {
+        public Dictionary<string, string> Values { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> Switches { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> AppsAndFeatures { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> InstallationMetadata { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
     private sealed record ChocolateySourceInfo(string Name, string ApiUrl, bool IsEnabled);
     private sealed record ScoopSearchRow(string Name, string Version, string Bucket);
     private sealed record ScoopManifestInfo(
@@ -4898,6 +5581,18 @@ public sealed class PackageCatalogService : IPackageCatalogService
         {
             return string.Empty;
         }
+    }
+
+    private static bool FileHashMatches(string filePath, string expectedSha256)
+    {
+        var expected = NormalizeSha256(expectedSha256);
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
+
+        var actual = NormalizeSha256(ComputeFileSha256(filePath));
+        return actual.Equals(expected, StringComparison.OrdinalIgnoreCase);
     }
 
     private static (bool IsSigned, string Subject) TryGetSignature(string filePath)
