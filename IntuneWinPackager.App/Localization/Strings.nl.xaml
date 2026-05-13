@@ -186,7 +186,8 @@
     <sys:String x:Key="Ui.Store.Badge.Verified">Geverifieerd profiel</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Likely">Waarschijnlijk klaar</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Manual">Handmatige controle</sys:String>
-    <sys:String x:Key="Ui.Store.Readiness.Ready">Klaar</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.Ready">Gevalideerd</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.CatalogReady">Catalogus klaar</sys:String>
     <sys:String x:Key="Ui.Store.Readiness.NeedsReview">Controle nodig</sys:String>
     <sys:String x:Key="Ui.Store.Readiness.Blocked">Geblokkeerd</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Upgrade">Upgrade vanaf</sys:String>

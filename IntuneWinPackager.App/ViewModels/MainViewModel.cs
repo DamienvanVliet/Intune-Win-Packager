@@ -4271,17 +4271,21 @@ public partial class MainViewModel : ObservableObject
             .ThenByDescending(profile => profile.LastVerifiedAtUtc ?? DateTimeOffset.MinValue)
             .FirstOrDefault();
 
-        var confidence = exactProfile?.Confidence ?? CatalogProfileConfidence.ManualReview;
+        var isCatalogReady = IsCatalogEntryReady(entry);
+        var confidence = exactProfile?.Confidence ?? (isCatalogReady
+            ? CatalogProfileConfidence.Likely
+            : CatalogProfileConfidence.ManualReview);
         var confidenceText = confidence switch
         {
             CatalogProfileConfidence.Verified => T("Ui.Store.Badge.Verified"),
             CatalogProfileConfidence.Likely => T("Ui.Store.Badge.Likely"),
             _ => T("Ui.Store.Badge.Manual")
         };
-        var readiness = DetermineCatalogReadinessState(exactProfile);
+        var readiness = DetermineCatalogReadinessState(exactProfile, entry);
         var readinessText = readiness switch
         {
             CatalogReadinessState.Ready => T("Ui.Store.Readiness.Ready"),
+            CatalogReadinessState.CatalogReady => T("Ui.Store.Readiness.CatalogReady"),
             CatalogReadinessState.Blocked => T("Ui.Store.Readiness.Blocked"),
             _ => T("Ui.Store.Readiness.NeedsReview")
         };
@@ -4311,11 +4315,15 @@ public partial class MainViewModel : ObservableObject
         };
     }
 
-    private static CatalogReadinessState DetermineCatalogReadinessState(CatalogPackageProfile? profile)
+    private static CatalogReadinessState DetermineCatalogReadinessState(
+        CatalogPackageProfile? profile,
+        PackageCatalogEntry entry)
     {
         if (profile is null)
         {
-            return CatalogReadinessState.NeedsReview;
+            return IsCatalogEntryReady(entry)
+                ? CatalogReadinessState.CatalogReady
+                : CatalogReadinessState.NeedsReview;
         }
 
         var hasInstaller = !string.IsNullOrWhiteSpace(profile.InstallerPath) && File.Exists(profile.InstallerPath);
@@ -4332,6 +4340,27 @@ public partial class MainViewModel : ObservableObject
         return profile.Confidence == CatalogProfileConfidence.Verified
             ? CatalogReadinessState.Ready
             : CatalogReadinessState.NeedsReview;
+    }
+
+    private static bool IsCatalogEntryReady(PackageCatalogEntry entry)
+    {
+        var detectionReady = entry.DetectionReady ||
+                             entry.InstallerVariants.Any(variant =>
+                                 variant.IsDeterministicDetection ||
+                                 variant.DetectionRule.RuleType != IntuneDetectionRuleType.None);
+        var hasInstallSource = !string.IsNullOrWhiteSpace(entry.InstallerDownloadUrl) ||
+                               !string.IsNullOrWhiteSpace(entry.PackageId) ||
+                               entry.InstallerVariants.Any(variant =>
+                                   !string.IsNullOrWhiteSpace(variant.InstallerDownloadUrl) ||
+                                   !string.IsNullOrWhiteSpace(variant.PackageId));
+        var hasPlaceholders =
+            ContainsCatalogTemplatePlaceholder(entry.SuggestedInstallCommand) ||
+            ContainsCatalogTemplatePlaceholder(entry.SuggestedUninstallCommand) ||
+            entry.InstallerVariants.Any(variant =>
+                ContainsCatalogTemplatePlaceholder(variant.SuggestedInstallCommand) ||
+                ContainsCatalogTemplatePlaceholder(variant.SuggestedUninstallCommand));
+
+        return detectionReady && hasInstallSource && !hasPlaceholders;
     }
 
     private void RefreshCatalogEntriesFromProfiles()
@@ -4414,7 +4443,9 @@ public partial class MainViewModel : ObservableObject
             return false;
         }
 
-        if (StoreReadyOnlyFilter && entry.ReadinessState != CatalogReadinessState.Ready)
+        if (StoreReadyOnlyFilter &&
+            entry.ReadinessState != CatalogReadinessState.Ready &&
+            entry.ReadinessState != CatalogReadinessState.CatalogReady)
         {
             return false;
         }
@@ -4439,7 +4470,8 @@ public partial class MainViewModel : ObservableObject
     {
         return readinessState switch
         {
-            CatalogReadinessState.Ready => 3,
+            CatalogReadinessState.Ready => 4,
+            CatalogReadinessState.CatalogReady => 3,
             CatalogReadinessState.NeedsReview => 2,
             CatalogReadinessState.Blocked => 1,
             _ => 0

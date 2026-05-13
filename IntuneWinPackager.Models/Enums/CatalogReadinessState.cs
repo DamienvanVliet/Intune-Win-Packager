@@ -3,6 +3,7 @@ namespace IntuneWinPackager.Models.Enums;
 public enum CatalogReadinessState
 {
     NeedsReview = 0,
-    Ready = 1,
-    Blocked = 2
+    CatalogReady = 1,
+    Ready = 2,
+    Blocked = 3
 }

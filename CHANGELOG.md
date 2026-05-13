@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.4] - 2026-05-13
+
+### Fixed
+- Clarify Store readiness labels so catalog metadata no longer looks like every app failed validation.
+- Show catalog-backed packages as "Catalog ready" when install source and detection metadata are usable.
+- Reserve "Validated" for packages that have a locally verified profile from a successful test/package flow.
+
 ## [3.0.3] - 2026-05-13
 
 ### Changed

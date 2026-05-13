@@ -186,8 +186,9 @@
     <sys:String x:Key="Ui.Store.Badge.Verified">Verified profile</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Likely">Likely ready</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Manual">Manual review</sys:String>
-    <sys:String x:Key="Ui.Store.Readiness.Ready">Ready</sys:String>
-    <sys:String x:Key="Ui.Store.Readiness.NeedsReview">Needs review</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.Ready">Validated</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.CatalogReady">Catalog ready</sys:String>
+    <sys:String x:Key="Ui.Store.Readiness.NeedsReview">Review needed</sys:String>
     <sys:String x:Key="Ui.Store.Readiness.Blocked">Blocked</sys:String>
     <sys:String x:Key="Ui.Store.Badge.Upgrade">Upgrade from</sys:String>
     <sys:String x:Key="Ui.Store.Badge.PreparedLocal">Prepared locally</sys:String>
