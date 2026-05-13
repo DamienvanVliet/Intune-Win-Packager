@@ -41,6 +41,7 @@ public partial class App : System.Windows.Application
                 {
                     services.AddSingleton<IValidationService, PackagingValidationService>();
                     services.AddSingleton<IInstallerCommandService, InstallerCommandService>();
+                    services.AddSingleton<IEvidenceScoringService, EvidenceScoringService>();
                     services.AddSingleton<IDetectionTestService, DetectionTestService>();
                     services.AddSingleton<IIntuneImeFeedbackService, IntuneImeFeedbackService>();
                     services.AddSingleton<ICuratedDetectionProfileService, CuratedDetectionProfileService>();

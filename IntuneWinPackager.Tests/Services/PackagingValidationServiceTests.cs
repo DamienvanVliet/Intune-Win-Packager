@@ -168,6 +168,56 @@ public class PackagingValidationServiceTests
     }
 
     [Fact]
+    public void Validate_ReturnsSuccess_ForExeWithMsiProductCodeDetection()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "app.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        var request = new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.Exe,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "\"app.exe\" /quiet",
+                UninstallCommand = "msiexec /x {12345678-1234-1234-1234-123456789ABC} /qn",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.MsiProductCode,
+                        Msi = new MsiDetectionRule
+                        {
+                            ProductCode = "{12345678-1234-1234-1234-123456789ABC}"
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PackagingValidationService();
+
+        var result = sut.Validate(request);
+
+        Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
     public void Validate_ReturnsError_WhenDetectionRuleIsMissing()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");

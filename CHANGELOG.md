@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.3] - 2026-05-13
+
+### Changed
+- Improve the main interface on smaller screens with safer column widths and a wrapping update banner.
+- Make Sandbox Proof wording clearer by applying only proven/evidence-scored detection candidates.
+- Allow MSI ProductCode detection for EXE wrapper installs when sandbox or user-confirmed evidence proves the MSI product registration.
+
+### Fixed
+- Route sandbox detection candidates through generic evidence scoring before applying them automatically.
+- Remove the hard block that treated MSI ProductCode detection as MSI-file-only in validation and preflight checks.
+
 ## [3.0.2] - 2026-05-07
 
 ### Added

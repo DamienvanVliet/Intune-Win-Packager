@@ -34,6 +34,12 @@
     <sys:String x:Key="Ui.SimpleModeHint">Simple view is active: only essential fields stay visible.</sys:String>
     <sys:String x:Key="Ui.AdvancedSettings.Title">Advanced Settings (optional)</sys:String>
     <sys:String x:Key="Ui.AdvancedSettings.Description">Open this only when you need custom EXE switches or advanced Intune requirements.</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.Title">Packaging Coach</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.Description">A short, evidence-focused summary of what to do next. The detailed controls below still work exactly the same.</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.NextStep">Next step</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.Proof">Proof</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.Tip">Tip</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.ShowDetails">Show technical summary</sys:String>
 
     <sys:String x:Key="Ui.IntuneInstallRules.Title">Intune Install Rules</sys:String>
     <sys:String x:Key="Ui.InstallContext">Install Context</sys:String>
@@ -128,7 +134,7 @@
     <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ProofAndPackage">Proof &amp; Package</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ProofAndPackageShort">Proof &amp; Package</sys:String>
-    <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Apply Best Detection</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Apply Proven Detection</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Run Folder</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Report</sys:String>
 
@@ -261,6 +267,21 @@
     <sys:String x:Key="Vm.NextStep.PreflightRunAgain">Run preflight again to verify packaging readiness.</sys:String>
     <sys:String x:Key="Vm.NextStep.PreflightBlocked">Preflight blocked: {0}. {1}</sys:String>
     <sys:String x:Key="Vm.NextStep.ReadyToPackage">Everything is ready. Click Start Packaging.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.NeedsSetup">Needs setup</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.NeedsDetection">Needs detection</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.NeedsSwitchReview">Needs switch proof</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.Blocked">Blocked</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.ReadyWarning">Ready with warnings</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.Ready">Ready</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Proof.None">No proof yet. Run Sandbox Proof or choose a deterministic detection rule.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Proof.Configured">Detection is configured. Run Test Detection or Sandbox Proof when you want stronger evidence.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.ProofAvailable">Sandbox Proof found detection evidence. Apply the proven detection before packaging.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.RunProof">Run Sandbox Proof when you are unsure where the app installs or which detection rule is safest.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.Msi">MSI packages are strongest with Product Code detection. Keep version checks exact unless this is an update package.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.Exe">For EXE packages, prefer proven registry, file, or MSI ProductCode evidence from Sandbox Proof over guessed installer behavior.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.Appx">For APPX/MSIX, use exact package identity and version detection when available.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.Script">Script packages should return exit code 0 and write output only when the app is detected.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.General">Keep the generated commands unless you have vendor documentation or sandbox evidence that proves another command is better.</sys:String>
 
     <sys:String x:Key="Vm.Preflight.SummaryNone">No preflight checks were executed.</sys:String>
     <sys:String x:Key="Vm.Preflight.SummaryErrors">{0}/{1} checks passed. {2} blocking issue(s), {3} warning(s).</sys:String>
@@ -307,12 +328,12 @@
     <sys:String x:Key="Vm.SwitchStatus.ManualVerified">Silent switches marked as verified by you. This will be saved locally after successful packaging.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.NotVerified">Silent switches are not verified yet. Test once, then tick the verification checkbox.</sys:String>
     <sys:String x:Key="Vm.Detection.SelectionHint.Unknown">Recommendation: load a setup file first, then choose the suggested rule.</sys:String>
-    <sys:String x:Key="Vm.Detection.SelectionHint.Msi">Recommendation for this installer: MSI Product Code (most reliable for MSI).</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Msi">Recommendation for this installer: MSI Product Code when the ProductCode is available.</sys:String>
     <sys:String x:Key="Vm.Detection.SelectionHint.Exe">Recommendation for this installer: native Registry or File detection when an exact uninstall entry, install folder, or uninstaller path is known.</sys:String>
     <sys:String x:Key="Vm.Detection.SelectionHint.Appx">Recommendation for this installer: Script detection with exact package identity + version.</sys:String>
     <sys:String x:Key="Vm.Detection.SelectionHint.Script">Recommendation for this installer: Script detection.</sys:String>
-    <sys:String x:Key="Vm.Detection.Guidance.None">Pick a detection type before packaging. If unsure, use Registry for EXE or MSI Product Code for MSI.</sys:String>
-    <sys:String x:Key="Vm.Detection.Guidance.Msi">Best for MSI installers. Use this when Product Code is available (most reliable).</sys:String>
+    <sys:String x:Key="Vm.Detection.Guidance.None">Pick a detection type before packaging. If unsure, use Sandbox Proof to find a proven rule.</sys:String>
+    <sys:String x:Key="Vm.Detection.Guidance.Msi">Use when a real MSI ProductCode is available, including EXE wrappers proven to register an MSI product.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.File">Use when the app creates a unique, stable install folder, main executable, or uninstaller path.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Registry">Recommended for EXE when available: use an exact uninstall key and compare DisplayVersion with Equals.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Script">Manual last resort only. Use script detection only when native MSI, Registry, or File detection cannot be supplied.</sys:String>
@@ -425,7 +446,7 @@
     <sys:String x:Key="Vm.SandboxProof.Status.Running">Preparing Windows Sandbox proof run...</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ReportPending">The sandbox report is not ready yet. Wait for the sandbox run to finish, then try again.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.WaitingForResult">Waiting for the sandbox to finish and write result.json...</sys:String>
-    <sys:String x:Key="Vm.SandboxProof.Status.ResultReady">Sandbox proof found {0} detection candidate(s). Click Apply Best Detection to use one.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.ResultReady">Sandbox proof found {0} detection candidate(s). Apply only candidates that pass evidence scoring.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.DetectionApplied">Applied sandbox proof detection: {0} ({1}, {2} candidate(s) found).</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultMissing">Sandbox proof result.json is not available yet.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultTimedOut">Sandbox proof did not finish within the expected time. Open the run folder to inspect logs.</sys:String>
@@ -478,7 +499,7 @@
     <sys:String x:Key="Core.Validation.MaxRunTimeInvalid">Maximum run time must be between 1 and 1440 minutes.</sys:String>
     <sys:String x:Key="Core.Validation.ExeSwitchVerificationRequired">Silent install/uninstall switches must be verified for this EXE installer profile.</sys:String>
     <sys:String x:Key="Core.Validation.DetectionRuleRequired">A detection rule is required for reliable Intune deployment.</sys:String>
-    <sys:String x:Key="Core.Validation.MsiDetectionInstallerMismatch">MSI product code detection can only be used for MSI installers.</sys:String>
+    <sys:String x:Key="Core.Validation.MsiDetectionInstallerMismatch">MSI product code detection should be backed by installer metadata, sandbox proof, or user-confirmed evidence.</sys:String>
     <sys:String x:Key="Core.Validation.MsiDetectionProductCodeRequired">MSI detection requires a product code.</sys:String>
     <sys:String x:Key="Core.Validation.MsiDetectionProductCodeFormat">MSI product code format is invalid. Expected format: {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}.</sys:String>
     <sys:String x:Key="Core.Validation.FileDetectionPathRequired">File detection requires a folder path.</sys:String>
@@ -559,7 +580,7 @@
     <sys:String x:Key="Core.Preflight.Message.IntuneRuntimeInvalid">Max run time must be between 1 and 1440 minutes.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ExeSwitchReviewRequired">This EXE profile requires switch verification. Review vendor switches and confirm before packaging.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.DetectionRuleMissing">No detection rule configured. Configure MSI, file, registry, or script detection.</sys:String>
-    <sys:String x:Key="Core.Preflight.Message.MsiDetectionInstallerMismatch">MSI product code detection can only be used for MSI installers.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.MsiDetectionInstallerMismatch">MSI product code detection should be backed by installer metadata, sandbox proof, or user-confirmed evidence.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.MsiDetectionProductCodeRequired">Product code is required for MSI detection.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.MsiDetectionProductCodeFormat">MSI product code format is invalid.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.FileDetectionPathOrNameRequired">File detection requires both path and file/folder name.</sys:String>

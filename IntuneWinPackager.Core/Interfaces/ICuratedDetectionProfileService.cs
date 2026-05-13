@@ -8,4 +8,3 @@ public interface ICuratedDetectionProfileService
         DetectionProfileQuery query,
         CancellationToken cancellationToken = default);
 }
-

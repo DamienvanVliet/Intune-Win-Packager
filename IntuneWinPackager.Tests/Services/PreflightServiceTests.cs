@@ -114,6 +114,55 @@ public class PreflightServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_DoesNotBlockMsiProductCodeDetection_ForExeInstaller()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(sourceFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(sourceFolder, "installer.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        File.WriteAllText(setupFilePath, "dummy");
+        File.WriteAllText(toolPath, "dummy");
+
+        var request = new PackagingRequest
+        {
+            IntuneWinAppUtilPath = toolPath,
+            InstallerType = InstallerType.Exe,
+            Configuration = new PackageConfiguration
+            {
+                SourceFolder = sourceFolder,
+                SetupFilePath = setupFilePath,
+                OutputFolder = outputFolder,
+                InstallCommand = "\"installer.exe\" /quiet",
+                UninstallCommand = "msiexec /x {12345678-1234-1234-1234-123456789ABC} /qn",
+                IntuneRules = new IntuneWin32AppRules
+                {
+                    DetectionRule = new IntuneDetectionRule
+                    {
+                        RuleType = IntuneDetectionRuleType.MsiProductCode,
+                        Msi = new MsiDetectionRule
+                        {
+                            ProductCode = "{12345678-1234-1234-1234-123456789ABC}"
+                        }
+                    }
+                }
+            }
+        };
+
+        var sut = new PreflightService(new FakeProcessRunner(0));
+
+        var result = await sut.RunAsync(request);
+
+        Assert.DoesNotContain(result.Checks, check => check.Key == "detection-msi-installer");
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
     public async Task RunAsync_ReturnsError_WhenOutputFolderIsInsideSourceAndSmartStagingIsDisabled()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");

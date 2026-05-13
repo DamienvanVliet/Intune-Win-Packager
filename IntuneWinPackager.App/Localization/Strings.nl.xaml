@@ -34,6 +34,12 @@
     <sys:String x:Key="Ui.SimpleModeHint">Eenvoudige weergave is actief: alleen de belangrijkste velden zijn zichtbaar.</sys:String>
     <sys:String x:Key="Ui.AdvancedSettings.Title">Geavanceerde Instellingen (optioneel)</sys:String>
     <sys:String x:Key="Ui.AdvancedSettings.Description">Open dit alleen als je aangepaste EXE-switches of geavanceerde Intune-requirements nodig hebt.</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.Title">Packaging Coach</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.Description">Een korte, evidence-gerichte samenvatting van wat je nu het beste kunt doen. De details eronder blijven precies hetzelfde werken.</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.NextStep">Volgende stap</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.Proof">Bewijs</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.Tip">Tip</sys:String>
+    <sys:String x:Key="Ui.PackagingCoach.ShowDetails">Toon technische samenvatting</sys:String>
 
     <sys:String x:Key="Ui.IntuneInstallRules.Title">Intune Installatieregels</sys:String>
     <sys:String x:Key="Ui.InstallContext">Installatiecontext</sys:String>
@@ -128,7 +134,7 @@
     <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ProofAndPackage">Proof &amp; Package</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ProofAndPackageShort">Proof &amp; Package</sys:String>
-    <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Beste detectie toepassen</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Bewezen detectie toepassen</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Runmap</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Rapport</sys:String>
 
@@ -261,6 +267,21 @@
     <sys:String x:Key="Vm.NextStep.PreflightRunAgain">Run preflight opnieuw om packaging readiness te verifieren.</sys:String>
     <sys:String x:Key="Vm.NextStep.PreflightBlocked">Preflight geblokkeerd: {0}. {1}</sys:String>
     <sys:String x:Key="Vm.NextStep.ReadyToPackage">Alles staat klaar. Klik op Start Packaging.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.NeedsSetup">Setup nodig</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.NeedsDetection">Detectie nodig</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.NeedsSwitchReview">Switch proof nodig</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.Blocked">Geblokkeerd</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.ReadyWarning">Klaar met waarschuwingen</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Badge.Ready">Klaar</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Proof.None">Nog geen bewijs. Run Sandbox Proof of kies een deterministische detectieregel.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Proof.Configured">Detectie is ingesteld. Run Test Detectie of Sandbox Proof als je sterker bewijs wilt.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.ProofAvailable">Sandbox Proof heeft detectie-evidence gevonden. Pas de bewezen detectie toe voordat je gaat packagen.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.RunProof">Run Sandbox Proof als je niet zeker weet waar de app installeert of welke detectieregel het veiligst is.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.Msi">MSI-packages zijn het sterkst met Product Code-detectie. Houd versiechecks exact, behalve bij updatepackages.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.Exe">Gebruik bij EXE-packages liever bewezen registry-, file- of MSI ProductCode-evidence uit Sandbox Proof dan gegokt installergedrag.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.Appx">Gebruik bij APPX/MSIX exacte package-identiteit en versiedetectie wanneer beschikbaar.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.Script">Scriptpackages moeten exitcode 0 geven en alleen output schrijven wanneer de app echt is gedetecteerd.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Tip.General">Laat de gegenereerde commando's staan, tenzij vendor-documentatie of sandbox-evidence bewijst dat een ander commando beter is.</sys:String>
 
     <sys:String x:Key="Vm.Preflight.SummaryNone">Er zijn geen preflight-controles uitgevoerd.</sys:String>
     <sys:String x:Key="Vm.Preflight.SummaryErrors">{0}/{1} controles geslaagd. {2} blokkerende issue(s), {3} waarschuwing(en).</sys:String>
@@ -307,12 +328,12 @@
     <sys:String x:Key="Vm.SwitchStatus.ManualVerified">Silent switches zijn door jou als geverifieerd gemarkeerd. Dit wordt lokaal opgeslagen na succesvolle packaging.</sys:String>
     <sys:String x:Key="Vm.SwitchStatus.NotVerified">Silent switches zijn nog niet geverifieerd. Test een keer en vink daarna de verificatie aan.</sys:String>
     <sys:String x:Key="Vm.Detection.SelectionHint.Unknown">Aanbeveling: laad eerst een setup-bestand en kies daarna de voorgestelde regel.</sys:String>
-    <sys:String x:Key="Vm.Detection.SelectionHint.Msi">Aanbeveling voor deze installer: MSI Product Code (meest betrouwbaar voor MSI).</sys:String>
+    <sys:String x:Key="Vm.Detection.SelectionHint.Msi">Aanbeveling voor deze installer: MSI Product Code wanneer de ProductCode beschikbaar is.</sys:String>
     <sys:String x:Key="Vm.Detection.SelectionHint.Exe">Aanbeveling voor deze installer: native Registry- of File-detectie wanneer een exacte uninstall entry, installatiemap of uninstallerpad bekend is.</sys:String>
     <sys:String x:Key="Vm.Detection.SelectionHint.Appx">Aanbeveling voor deze installer: Script-detectie met exacte package-identiteit + versie.</sys:String>
     <sys:String x:Key="Vm.Detection.SelectionHint.Script">Aanbeveling voor deze installer: Script-detectie.</sys:String>
-    <sys:String x:Key="Vm.Detection.Guidance.None">Kies een detectietype voor packaging. Twijfel je? Gebruik Registry voor EXE of MSI Product Code voor MSI.</sys:String>
-    <sys:String x:Key="Vm.Detection.Guidance.Msi">Beste keuze voor MSI-installers. Gebruik dit wanneer Product Code beschikbaar is (meest betrouwbaar).</sys:String>
+    <sys:String x:Key="Vm.Detection.Guidance.None">Kies een detectietype voor packaging. Twijfel je? Gebruik Sandbox Proof om een bewezen regel te vinden.</sys:String>
+    <sys:String x:Key="Vm.Detection.Guidance.Msi">Gebruik dit wanneer een echte MSI ProductCode beschikbaar is, ook bij EXE-wrappers die bewezen een MSI-product registreren.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.File">Gebruik dit wanneer de app een unieke, stabiele installatiemap, hoofd-executable of uninstallerpad maakt.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Registry">Aanbevolen voor EXE wanneer beschikbaar: gebruik een exacte uninstall key en vergelijk DisplayVersion met Equals.</sys:String>
     <sys:String x:Key="Vm.Detection.Guidance.Script">Alleen handmatig als laatste redmiddel. Gebruik script-detectie alleen wanneer native MSI-, Registry- of File-detectie niet kan.</sys:String>
@@ -328,7 +349,7 @@
     <sys:String x:Key="Vm.SandboxProof.Status.Running">Windows Sandbox proof-run wordt voorbereid...</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ReportPending">Het sandboxrapport is nog niet klaar. Wacht tot de sandbox-run klaar is en probeer opnieuw.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.WaitingForResult">Wachten tot de sandbox klaar is en result.json wegschrijft...</sys:String>
-    <sys:String x:Key="Vm.SandboxProof.Status.ResultReady">Sandbox proof heeft {0} detectiekandidaat/kandidaten gevonden. Klik op Beste detectie toepassen om er een te gebruiken.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.ResultReady">Sandbox proof heeft {0} detectiekandidaat/kandidaten gevonden. Alleen kandidaten die door de evidence-score komen worden toegepast.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.DetectionApplied">Sandbox proof-detectie toegepast: {0} ({1}, {2} kandidaat/kandidaten gevonden).</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultMissing">Sandbox proof result.json is nog niet beschikbaar.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultTimedOut">Sandbox proof is niet binnen de verwachte tijd afgerond. Open de runmap om logs te bekijken.</sys:String>
@@ -478,7 +499,7 @@
     <sys:String x:Key="Core.Validation.MaxRunTimeInvalid">Maximale looptijd moet tussen 1 en 1440 minuten liggen.</sys:String>
     <sys:String x:Key="Core.Validation.ExeSwitchVerificationRequired">Silent install/uninstall switches moeten worden geverifieerd voor dit EXE-installerprofiel.</sys:String>
     <sys:String x:Key="Core.Validation.DetectionRuleRequired">Een detectieregel is vereist voor betrouwbare Intune-uitrol.</sys:String>
-    <sys:String x:Key="Core.Validation.MsiDetectionInstallerMismatch">MSI-productcode-detectie kan alleen worden gebruikt voor MSI-installers.</sys:String>
+    <sys:String x:Key="Core.Validation.MsiDetectionInstallerMismatch">MSI-productcode-detectie moet onderbouwd zijn door installermetadata, sandbox proof of door de gebruiker bevestigde evidence.</sys:String>
     <sys:String x:Key="Core.Validation.MsiDetectionProductCodeRequired">MSI-detectie vereist een productcode.</sys:String>
     <sys:String x:Key="Core.Validation.MsiDetectionProductCodeFormat">MSI-productcodeformaat is ongeldig. Verwacht formaat: {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}.</sys:String>
     <sys:String x:Key="Core.Validation.FileDetectionPathRequired">Bestandsdetectie vereist een mappad.</sys:String>
@@ -559,7 +580,7 @@
     <sys:String x:Key="Core.Preflight.Message.IntuneRuntimeInvalid">Maximale looptijd moet tussen 1 en 1440 minuten liggen.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ExeSwitchReviewRequired">Dit EXE-profiel vereist switch-verificatie. Controleer leveranciersswitches en bevestig voor packaging.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.DetectionRuleMissing">Geen detectieregel geconfigureerd. Configureer MSI-, bestand-, register- of scriptdetectie.</sys:String>
-    <sys:String x:Key="Core.Preflight.Message.MsiDetectionInstallerMismatch">MSI-productcode-detectie kan alleen worden gebruikt voor MSI-installers.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.MsiDetectionInstallerMismatch">MSI-productcode-detectie moet onderbouwd zijn door installermetadata, sandbox proof of door de gebruiker bevestigde evidence.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.MsiDetectionProductCodeRequired">Productcode is vereist voor MSI-detectie.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.MsiDetectionProductCodeFormat">MSI-productcodeformaat is ongeldig.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.FileDetectionPathOrNameRequired">Bestandsdetectie vereist zowel pad als bestands-/mapnaam.</sys:String>

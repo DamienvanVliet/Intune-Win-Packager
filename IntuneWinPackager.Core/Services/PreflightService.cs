@@ -469,16 +469,6 @@ public sealed class PreflightService : IPreflightService
         switch (detection.RuleType)
         {
             case IntuneDetectionRuleType.MsiProductCode:
-                if (installerType != InstallerType.Msi)
-                {
-                    checks.Add(Error(
-                        "detection-msi-installer",
-                        "MSI Detection",
-                        "MSI product code detection can only be used for MSI installers.",
-                        titleKey: "Core.Preflight.Title.MsiDetection",
-                        messageKey: "Core.Preflight.Message.MsiDetectionInstallerMismatch"));
-                }
-
                 if (string.IsNullOrWhiteSpace(detection.Msi.ProductCode))
                 {
                     checks.Add(Error(

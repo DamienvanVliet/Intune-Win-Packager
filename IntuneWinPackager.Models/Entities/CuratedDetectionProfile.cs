@@ -24,4 +24,3 @@ public sealed record CuratedDetectionProfile
 
     public bool IsSignedProfile { get; init; } = true;
 }
-

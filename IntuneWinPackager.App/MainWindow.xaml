@@ -11,7 +11,7 @@
         Height="900"
         Width="1450"
         MinHeight="700"
-        MinWidth="1020"
+        MinWidth="980"
         WindowStartupLocation="CenterScreen"
         Foreground="{DynamicResource WindowForegroundBrush}"
         Background="{DynamicResource PageBackgroundBrush}">
@@ -86,27 +86,33 @@
                     </Style.Triggers>
                 </Style>
             </Border.Style>
-            <DockPanel LastChildFill="True">
-                <Button DockPanel.Dock="Right"
-                        Content="{DynamicResource Ui.InstallUpdate}"
-                        Style="{StaticResource PrimaryButtonStyle}"
-                        Margin="10,0,0,0"
-                        Command="{Binding InstallUpdateCommand}" />
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE946;"
                                Foreground="{DynamicResource UpdateNoticeForegroundBrush}"
                                Margin="0,0,8,0"
                                VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding UpdateNotificationText}"
-                               Foreground="{DynamicResource UpdateNoticeForegroundBrush}"
-                               FontFamily="Segoe UI Variable Text"
-                               FontSize="12"
-                               FontWeight="SemiBold"
-                               VerticalAlignment="Center"
-                               TextWrapping="Wrap" />
                 </StackPanel>
-            </DockPanel>
+                <TextBlock Grid.Column="1"
+                           Text="{Binding UpdateNotificationText}"
+                           Foreground="{DynamicResource UpdateNoticeForegroundBrush}"
+                           FontFamily="Segoe UI Variable Text"
+                           FontSize="12"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap" />
+                <Button Grid.Column="2"
+                        Content="{DynamicResource Ui.InstallUpdate}"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        Margin="10,0,0,0"
+                        Command="{Binding InstallUpdateCommand}" />
+            </Grid>
         </Border>
 
         <TabControl Grid.Row="2" SelectedIndex="{Binding SelectedMainTabIndex}">
@@ -120,9 +126,9 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="1.05*" MinWidth="460" />
+                            <ColumnDefinition Width="1.05*" MinWidth="380" />
                             <ColumnDefinition Width="8" />
-                            <ColumnDefinition Width="1.35*" MinWidth="540" />
+                            <ColumnDefinition Width="1.35*" MinWidth="440" />
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="0" Margin="0,0,10,0">
@@ -312,9 +318,9 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="1.7*" MinWidth="620" />
+                            <ColumnDefinition Width="1.7*" MinWidth="540" />
                             <ColumnDefinition Width="8" />
-                            <ColumnDefinition Width="1.3*" MinWidth="420" />
+                            <ColumnDefinition Width="1.3*" MinWidth="360" />
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="0" Margin="0,0,10,0">
@@ -391,6 +397,92 @@
                                                 Content="{DynamicResource Ui.Browse}"
                                                 Command="{Binding BrowseOutputFolderCommand}" />
                                     </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <DockPanel LastChildFill="True" Margin="0,0,0,8">
+                                        <TextBlock Text="{DynamicResource Ui.PackagingCoach.Title}" Style="{StaticResource SectionTitleTextStyle}" />
+                                        <Border DockPanel.Dock="Right"
+                                                CornerRadius="10"
+                                                Padding="10,4"
+                                                Background="{DynamicResource PanelBackgroundBrush}"
+                                                BorderBrush="{DynamicResource PanelBorderBrush}"
+                                                BorderThickness="1">
+                                            <TextBlock Text="{Binding PackagingCoachBadgeText}"
+                                                       FontFamily="Segoe UI Variable Text"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding PackagingCoachBadgeBrush}" />
+                                        </Border>
+                                    </DockPanel>
+
+                                    <TextBlock Text="{DynamicResource Ui.PackagingCoach.Description}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,12" />
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="104" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0"
+                                                   Text="{DynamicResource Ui.PackagingCoach.NextStep}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,10,8" />
+                                        <TextBlock Grid.Row="0" Grid.Column="1"
+                                                   Text="{Binding NextStepHint}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,8" />
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0"
+                                                   Text="{DynamicResource Ui.PackagingCoach.Proof}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,10,8" />
+                                        <TextBlock Grid.Row="1" Grid.Column="1"
+                                                   Text="{Binding PackagingCoachProofSummary}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,8" />
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0"
+                                                   Text="{DynamicResource Ui.PackagingCoach.Tip}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,10,0" />
+                                        <TextBlock Grid.Row="2" Grid.Column="1"
+                                                   Text="{Binding PackagingCoachTip}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   TextWrapping="Wrap" />
+                                    </Grid>
+
+                                    <CheckBox Content="{DynamicResource Ui.PackagingCoach.ShowDetails}"
+                                              IsChecked="{Binding ShowPackagingCoachDetails}"
+                                              Margin="0,0,0,8" />
+
+                                    <Border CornerRadius="10"
+                                            Background="{DynamicResource PanelBackgroundBrush}"
+                                            BorderBrush="{DynamicResource PanelBorderBrush}"
+                                            BorderThickness="1"
+                                            Padding="10"
+                                            Visibility="{Binding ShowPackagingCoachDetails, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <TextBlock Text="{Binding PackagingCoachSummary}"
+                                                   FontFamily="Segoe UI Variable Text"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </Border>
                                 </StackPanel>
                             </Border>
 

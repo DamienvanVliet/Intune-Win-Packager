@@ -186,11 +186,6 @@ public sealed class PackagingValidationService : IValidationService
         switch (detection.RuleType)
         {
             case IntuneDetectionRuleType.MsiProductCode:
-                if (installerType != InstallerType.Msi)
-                {
-                    AddIssue(issues, "Core.Validation.MsiDetectionInstallerMismatch", "MSI product code detection can only be used for MSI installers.");
-                }
-
                 if (string.IsNullOrWhiteSpace(detection.Msi.ProductCode))
                 {
                     AddIssue(issues, "Core.Validation.MsiDetectionProductCodeRequired", "MSI detection requires a product code.");

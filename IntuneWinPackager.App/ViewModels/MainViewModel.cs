@@ -40,6 +40,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IPackageProfileStoreService _packageProfileStoreService;
     private readonly IDetectionTestService _detectionTestService;
     private readonly ISandboxProofService _sandboxProofService;
+    private readonly IEvidenceScoringService _evidenceScoringService;
     private readonly IDialogService _dialogService;
     private readonly ILocalizationService _localizationService;
     private readonly IThemeService _themeService;
@@ -358,6 +359,9 @@ public partial class MainViewModel : ObservableObject
     private bool showStoreAdvancedDetails;
 
     [ObservableProperty]
+    private bool showPackagingCoachDetails;
+
+    [ObservableProperty]
     private int storeSortMode;
 
     [ObservableProperty]
@@ -418,6 +422,7 @@ public partial class MainViewModel : ObservableObject
         IPackageProfileStoreService packageProfileStoreService,
         IDetectionTestService detectionTestService,
         ISandboxProofService sandboxProofService,
+        IEvidenceScoringService evidenceScoringService,
         IDialogService dialogService,
         ILocalizationService localizationService,
         IThemeService themeService,
@@ -438,6 +443,7 @@ public partial class MainViewModel : ObservableObject
         _packageProfileStoreService = packageProfileStoreService;
         _detectionTestService = detectionTestService;
         _sandboxProofService = sandboxProofService;
+        _evidenceScoringService = evidenceScoringService;
         _dialogService = dialogService;
         _localizationService = localizationService;
         _themeService = themeService;
@@ -463,6 +469,7 @@ public partial class MainViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(HasValidationErrors));
             OnPropertyChanged(nameof(IsConfigurationValid));
+            NotifyPackagingCoachChanged();
             if (PackageCommand is not null)
             {
                 PackageCommand.NotifyCanExecuteChanged();
@@ -474,6 +481,7 @@ public partial class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(HasPreflightErrors));
             OnPropertyChanged(nameof(HasPreflightWarnings));
             OnPropertyChanged(nameof(IsPreflightReady));
+            NotifyPackagingCoachChanged();
         };
 
         PackageCatalogResults.CollectionChanged += (_, _) =>
@@ -840,6 +848,134 @@ public partial class MainViewModel : ObservableObject
             return T("Vm.NextStep.ReadyToPackage");
         }
     }
+
+    public string PackagingCoachBadgeText
+    {
+        get
+        {
+            if (HasPreflightRun && HasPreflightErrors)
+            {
+                return T("Vm.PackagingCoach.Badge.Blocked");
+            }
+
+            if (!IsToolPathValid || !IsSetupFileValid || !IsSourceFolderValid || !IsOutputFolderValid || HasValidationErrors)
+            {
+                return T("Vm.PackagingCoach.Badge.NeedsSetup");
+            }
+
+            if (DetectionRuleType == IntuneDetectionRuleType.None)
+            {
+                return T("Vm.PackagingCoach.Badge.NeedsDetection");
+            }
+
+            if (IsSilentSwitchReviewVisible && !SilentSwitchesVerified)
+            {
+                return T("Vm.PackagingCoach.Badge.NeedsSwitchReview");
+            }
+
+            if (HasPreflightRun && HasPreflightWarnings)
+            {
+                return T("Vm.PackagingCoach.Badge.ReadyWarning");
+            }
+
+            return T("Vm.PackagingCoach.Badge.Ready");
+        }
+    }
+
+    public WpfBrush PackagingCoachBadgeBrush
+    {
+        get
+        {
+            if (HasPreflightRun && HasPreflightErrors)
+            {
+                return new WpfSolidColorBrush(WpfColor.FromRgb(176, 42, 55));
+            }
+
+            if (!IsToolPathValid || !IsSetupFileValid || !IsSourceFolderValid || !IsOutputFolderValid || HasValidationErrors)
+            {
+                return new WpfSolidColorBrush(WpfColor.FromRgb(120, 76, 12));
+            }
+
+            if (DetectionRuleType == IntuneDetectionRuleType.None ||
+                (IsSilentSwitchReviewVisible && !SilentSwitchesVerified) ||
+                (HasPreflightRun && HasPreflightWarnings))
+            {
+                return new WpfSolidColorBrush(WpfColor.FromRgb(33, 92, 176));
+            }
+
+            return new WpfSolidColorBrush(WpfColor.FromRgb(15, 122, 87));
+        }
+    }
+
+    public string PackagingCoachTip
+    {
+        get
+        {
+            if (!IsToolPathValid || !IsSetupFileValid || !IsSourceFolderValid || !IsOutputFolderValid || HasValidationErrors || HasPreflightErrors)
+            {
+                return NextStepHint;
+            }
+
+            if (DetectionRuleType == IntuneDetectionRuleType.None && CanApplySandboxProofDetection())
+            {
+                return T("Vm.PackagingCoach.Tip.ProofAvailable");
+            }
+
+            if (DetectionRuleType == IntuneDetectionRuleType.None)
+            {
+                return T("Vm.PackagingCoach.Tip.RunProof");
+            }
+
+            if (IsSilentSwitchReviewVisible && !SilentSwitchesVerified)
+            {
+                return T("Vm.NextStep.SwitchVerify");
+            }
+
+            return InstallerType switch
+            {
+                InstallerType.Msi => T("Vm.PackagingCoach.Tip.Msi"),
+                InstallerType.Exe => T("Vm.PackagingCoach.Tip.Exe"),
+                InstallerType.AppxMsix => T("Vm.PackagingCoach.Tip.Appx"),
+                InstallerType.Script => T("Vm.PackagingCoach.Tip.Script"),
+                _ => T("Vm.PackagingCoach.Tip.General")
+            };
+        }
+    }
+
+    public string PackagingCoachProofSummary
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(SandboxProofCandidateSummary))
+            {
+                return SandboxProofCandidateSummary;
+            }
+
+            if (!string.IsNullOrWhiteSpace(SandboxProofStatus) &&
+                !string.Equals(SandboxProofStatus, T("Vm.SandboxProof.Status.Idle"), StringComparison.Ordinal))
+            {
+                return SandboxProofStatus;
+            }
+
+            if (!string.IsNullOrWhiteSpace(DetectionTestStatus) &&
+                !string.Equals(DetectionTestStatus, T("Vm.Detection.TestStatus.Idle"), StringComparison.Ordinal))
+            {
+                return DetectionTestStatus;
+            }
+
+            return DetectionRuleType == IntuneDetectionRuleType.None
+                ? T("Vm.PackagingCoach.Proof.None")
+                : T("Vm.PackagingCoach.Proof.Configured");
+        }
+    }
+
+    public string PackagingCoachSummary => string.Join(
+        Environment.NewLine,
+        $"{T("Ui.SetupFile")}: {Path.GetFileName(SetupFilePath)}",
+        $"{T("Ui.Store.FilterInstallerType")}: {InstallerTypeDisplay}",
+        $"{T("Vm.Readiness.DetectionRule")}: {DetectionRuleType}",
+        $"{T("Vm.Readiness.SmartStaging")}: {(UseSmartSourceStaging ? T("Vm.Readiness.Enabled") : T("Vm.Readiness.Disabled"))}",
+        $"{T("Ui.Preflight.Title")}: {PreflightSummary}");
 
     public string PackagingProgressLabel => IsPackagingProgressIndeterminate
         ? PackagingProgressStep
@@ -1442,6 +1578,7 @@ public partial class MainViewModel : ObservableObject
     partial void OnOperationStateChanged(OperationState value)
     {
         OnPropertyChanged(nameof(StatusBrush));
+        NotifyPackagingCoachChanged();
     }
 
     partial void OnIsBusyChanged(bool value)
@@ -1489,11 +1626,13 @@ public partial class MainViewModel : ObservableObject
     partial void OnSandboxProofRunFolderChanged(string value)
     {
         OpenSandboxProofFolderCommand.NotifyCanExecuteChanged();
+        NotifyPackagingCoachChanged();
     }
 
     partial void OnSandboxProofReportPathChanged(string value)
     {
         OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
+        NotifyPackagingCoachChanged();
     }
 
     partial void OnSandboxProofResultPathChanged(string value)
@@ -1501,6 +1640,22 @@ public partial class MainViewModel : ObservableObject
         ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
         ProofAndPackageCommand.NotifyCanExecuteChanged();
         TestDetectionCommand.NotifyCanExecuteChanged();
+        NotifyPackagingCoachChanged();
+    }
+
+    partial void OnSandboxProofStatusChanged(string value)
+    {
+        NotifyPackagingCoachChanged();
+    }
+
+    partial void OnSandboxProofCandidateSummaryChanged(string value)
+    {
+        NotifyPackagingCoachChanged();
+    }
+
+    partial void OnDetectionTestStatusChanged(string value)
+    {
+        NotifyPackagingCoachChanged();
     }
 
     partial void OnResultChecklistPathChanged(string value)
@@ -1538,6 +1693,17 @@ public partial class MainViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(IsPreflightReady));
         OnPropertyChanged(nameof(NextStepHint));
+        NotifyPackagingCoachChanged();
+    }
+
+    partial void OnPreflightSummaryChanged(string value)
+    {
+        NotifyPackagingCoachChanged();
+    }
+
+    partial void OnHasPackagingRunChanged(bool value)
+    {
+        NotifyPackagingCoachChanged();
     }
 
     partial void OnUseLowImpactModeChanged(bool value)
@@ -2814,29 +2980,49 @@ public partial class MainViewModel : ObservableObject
             return false;
         }
 
-        if (result.BestCandidate is null)
+        var bestCandidate = SelectSandboxProofCandidate(result, out var evidenceDecision);
+        if (bestCandidate is null)
         {
-            SandboxProofStatus = result.Message;
+            SandboxProofStatus = evidenceDecision?.Summary ?? result.Message;
             if (showStatus)
             {
                 SetStatus(
                     OperationState.Error,
                     T("Vm.Status.SandboxProofFailedTitle"),
-                    result.Message);
+                    SandboxProofStatus);
             }
 
             return false;
         }
 
-        ApplyDetectionRule(result.BestCandidate.Rule);
-        _additionalDetectionRules = result.BestCandidate.AdditionalRules ?? [];
+        if (evidenceDecision?.BestCandidate?.Score.Status == EvidenceDecisionStatus.NeedsReview)
+        {
+            SandboxProofStatus = evidenceDecision.Summary;
+            if (showStatus)
+            {
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.SandboxProofFailedTitle"),
+                    SandboxProofStatus);
+            }
+
+            return false;
+        }
+
+        ApplyDetectionRule(bestCandidate.Rule);
+        _additionalDetectionRules = bestCandidate.AdditionalRules ?? [];
         SandboxProofStatus = TF(
             "Vm.SandboxProof.Status.DetectionApplied",
-            result.BestCandidate.Rule.RuleType,
-            result.BestCandidate.Confidence,
+            bestCandidate.Rule.RuleType,
+            bestCandidate.Confidence,
             result.CandidateCount);
-        SandboxProofCandidateSummary = BuildSandboxCandidateSummary(result.BestCandidate);
-        AppendLog($"Applied sandbox proof detection candidate: {result.BestCandidate.Rule.RuleType} ({result.BestCandidate.Confidence}). {SandboxProofCandidateSummary}");
+        SandboxProofCandidateSummary = BuildSandboxCandidateSummary(bestCandidate);
+        if (evidenceDecision?.BestCandidate is not null)
+        {
+            SandboxProofCandidateSummary = $"{SandboxProofCandidateSummary} Evidence score: {evidenceDecision.BestCandidate.Score.Value}/100 ({evidenceDecision.BestCandidate.Score.Status}).";
+        }
+
+        AppendLog($"Applied sandbox proof detection candidate: {bestCandidate.Rule.RuleType} ({bestCandidate.Confidence}). {SandboxProofCandidateSummary}");
 
         if (showStatus)
         {
@@ -2848,6 +3034,57 @@ public partial class MainViewModel : ObservableObject
 
         UpdateValidation();
         return true;
+    }
+
+    private SandboxProofDetectionCandidate? SelectSandboxProofCandidate(
+        SandboxProofDetectionResult result,
+        out EvidenceDecision? evidenceDecision)
+    {
+        evidenceDecision = null;
+        if (result.Candidates.Count == 0)
+        {
+            return result.BestCandidate;
+        }
+
+        var candidates = result.Candidates
+            .Select((candidate, index) => new EvidenceCandidate
+            {
+                CandidateId = index.ToString(CultureInfo.InvariantCulture),
+                DisplayName = string.IsNullOrWhiteSpace(candidate.Type)
+                    ? candidate.Rule.RuleType.ToString()
+                    : candidate.Type,
+                Kind = EvidenceCandidateKind.DetectionRule,
+                Source = EvidenceSourceType.SandboxSnapshot,
+                DetectionRule = candidate.Rule,
+                AdditionalDetectionRules = candidate.AdditionalRules ?? [],
+                BaseScore = candidate.Score,
+                ProofAvailable = candidate.ProofAvailable,
+                IsProven = candidate.IsProven,
+                RequiresUserReview = !candidate.IsProven,
+                Reason = candidate.Reason
+            })
+            .ToList();
+
+        evidenceDecision = _evidenceScoringService.Score(new EvidenceScoringRequest
+        {
+            InstallerType = InstallerType,
+            DetectionIntent = _detectionIntent,
+            Candidates = candidates
+        });
+
+        if (evidenceDecision.BestCandidate is null ||
+            evidenceDecision.BestCandidate.Score.Status == EvidenceDecisionStatus.Rejected)
+        {
+            return null;
+        }
+
+        return int.TryParse(
+            evidenceDecision.BestCandidate.Candidate.CandidateId,
+            NumberStyles.None,
+            CultureInfo.InvariantCulture,
+            out var selectedIndex)
+            ? result.Candidates.ElementAtOrDefault(selectedIndex)
+            : result.BestCandidate;
     }
 
     private static string BuildSandboxCandidateSummary(SandboxProofDetectionCandidate candidate)
@@ -5526,7 +5763,17 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsOutputFolderValid));
         OnPropertyChanged(nameof(ReadinessSummary));
         OnPropertyChanged(nameof(NextStepHint));
+        NotifyPackagingCoachChanged();
         NotifySetupWizardChanged();
+    }
+
+    private void NotifyPackagingCoachChanged()
+    {
+        OnPropertyChanged(nameof(PackagingCoachBadgeText));
+        OnPropertyChanged(nameof(PackagingCoachBadgeBrush));
+        OnPropertyChanged(nameof(PackagingCoachTip));
+        OnPropertyChanged(nameof(PackagingCoachProofSummary));
+        OnPropertyChanged(nameof(PackagingCoachSummary));
     }
 
     private void NotifySetupWizardChanged()
@@ -5641,6 +5888,7 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(DetectionRegistryValueNameLabel));
         OnPropertyChanged(nameof(ReadinessSummary));
         OnPropertyChanged(nameof(NextStepHint));
+        NotifyPackagingCoachChanged();
         OnPropertyChanged(nameof(CurrentVersionDisplay));
         OnPropertyChanged(nameof(LatestVersionDisplay));
         OnPropertyChanged(nameof(UpdateNotificationText));
