@@ -16,6 +16,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using IntuneWinPackager.App.Services;
 using IntuneWinPackager.Core.Interfaces;
+using IntuneWinPackager.Core.Services;
 using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Infrastructure.Support;
 using IntuneWinPackager.Models.Entities;
@@ -3931,8 +3932,7 @@ public partial class MainViewModel : ObservableObject
         }
         else if (InstallerType == InstallerType.Exe && !string.IsNullOrWhiteSpace(preferredInstallCommand))
         {
-            UninstallCommand = BuildCatalogAdaptiveUninstallCommand(entry);
-            AppendLog("Catalog automation generated uninstall command from installed app registry metadata.");
+            AppendLog("Catalog metadata did not include a verified EXE uninstall command; keeping uninstall command in review.");
         }
 
         var catalogDetectionRule = selectedVariant?.DetectionRule ?? new IntuneDetectionRule();
@@ -4117,48 +4117,8 @@ public partial class MainViewModel : ObservableObject
 
             if (installHasPlaceholder || uninstallHasPlaceholder)
             {
-                var fallbackPreset = _installerCommandService
-                    .GetExeSilentPresets()
-                    .FirstOrDefault(preset =>
-                        !ContainsCatalogTemplatePlaceholder(preset.InstallArguments) &&
-                        !ContainsCatalogTemplatePlaceholder(preset.UninstallArguments));
-
-                if (fallbackPreset is not null &&
-                    !string.IsNullOrWhiteSpace(SetupFilePath) &&
-                    File.Exists(SetupFilePath))
-                {
-                    var fallbackSuggestion = _installerCommandService.CreateSuggestion(
-                        SetupFilePath,
-                        InstallerType.Exe,
-                        preset: fallbackPreset,
-                        detectionIntent: _detectionIntent,
-                        sourceChannelHint: _sourceChannelHint,
-                        installerArchitectureHint: _installerArchitectureHint);
-
-                    if (installHasPlaceholder && !ContainsCatalogTemplatePlaceholder(fallbackSuggestion.InstallCommand))
-                    {
-                        InstallCommand = fallbackSuggestion.InstallCommand;
-                    }
-
-                    if (uninstallHasPlaceholder && !ContainsCatalogTemplatePlaceholder(fallbackSuggestion.UninstallCommand))
-                    {
-                        UninstallCommand = fallbackSuggestion.UninstallCommand;
-                    }
-
-                    if (DetectionRuleType == IntuneDetectionRuleType.None &&
-                        fallbackSuggestion.SuggestedRules.DetectionRule.RuleType != IntuneDetectionRuleType.None)
-                    {
-                        ApplyDetectionRule(fallbackSuggestion.SuggestedRules.DetectionRule);
-                    }
-
-                    autoFixes.Add("Catalog automation replaced EXE command placeholders.");
-                }
-            }
-
-            if (ContainsCatalogTemplatePlaceholder(UninstallCommand))
-            {
-                UninstallCommand = BuildCatalogAdaptiveUninstallCommand(entry);
-                autoFixes.Add("Catalog automation generated uninstall command from registry uninstall entries.");
+                autoFixes.Add(
+                    "Catalog automation kept EXE command placeholders for review because no verified silent-switch evidence was available.");
             }
 
             if (RequireSilentSwitchReview &&
@@ -4184,63 +4144,6 @@ public partial class MainViewModel : ObservableObject
         {
             AppendLog(autoFix);
         }
-    }
-
-    private static string BuildCatalogAdaptiveUninstallCommand(PackageCatalogEntry entry)
-    {
-        var patterns = BuildCatalogMatchPatterns(entry);
-        var patternValues = string.Join(", ", patterns.Select(pattern => $"'{EscapePowerShellSingleQuoted(pattern)}'"));
-
-        var script = string.Join(
-            "; ",
-            $"$patterns=@({patternValues})",
-            "$roots=@('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')",
-            "$app=Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue | Where-Object { $displayName=$_.DisplayName; if([string]::IsNullOrWhiteSpace($displayName)){ $false } else { ($patterns | Where-Object { $displayName -like ('*'+$_+'*') } | Measure-Object).Count -gt 0 } } | Select-Object -First 1",
-            "if($null -eq $app){ exit 0 }",
-            "$command = if(-not [string]::IsNullOrWhiteSpace($app.QuietUninstallString)){ $app.QuietUninstallString } else { $app.UninstallString }",
-            "if([string]::IsNullOrWhiteSpace($command)){ exit 1 }",
-            "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $command -WindowStyle Hidden -Wait",
-            "exit $LASTEXITCODE");
-
-        return $"powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -Command \"{script}\"";
-    }
-
-    private static List<string> BuildCatalogMatchPatterns(PackageCatalogEntry entry)
-    {
-        var patterns = new List<string>();
-
-        if (!string.IsNullOrWhiteSpace(entry.Name))
-        {
-            patterns.Add(entry.Name.Trim());
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.PackageId))
-        {
-            patterns.Add(entry.PackageId.Trim());
-
-            var shortId = entry.PackageId
-                .Split(['.', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .LastOrDefault();
-            if (!string.IsNullOrWhiteSpace(shortId))
-            {
-                patterns.Add(shortId);
-            }
-        }
-
-        if (patterns.Count == 0)
-        {
-            patterns.Add("Package");
-        }
-
-        return patterns
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .ToList();
-    }
-
-    private static string EscapePowerShellSingleQuoted(string value)
-    {
-        return value.Replace("'", "''", StringComparison.Ordinal);
     }
 
     private async Task ReloadCatalogProfilesAsync(CancellationToken cancellationToken = default)
@@ -4271,7 +4174,8 @@ public partial class MainViewModel : ObservableObject
             .ThenByDescending(profile => profile.LastVerifiedAtUtc ?? DateTimeOffset.MinValue)
             .FirstOrDefault();
 
-        var isCatalogReady = IsCatalogEntryReady(entry);
+        var readinessEvaluation = CatalogReadinessEvaluator.Evaluate(entry, exactProfile);
+        var isCatalogReady = readinessEvaluation.State == CatalogReadinessState.CatalogReady;
         var confidence = exactProfile?.Confidence ?? (isCatalogReady
             ? CatalogProfileConfidence.Likely
             : CatalogProfileConfidence.ManualReview);
@@ -4281,7 +4185,7 @@ public partial class MainViewModel : ObservableObject
             CatalogProfileConfidence.Likely => T("Ui.Store.Badge.Likely"),
             _ => T("Ui.Store.Badge.Manual")
         };
-        var readiness = DetermineCatalogReadinessState(exactProfile, entry);
+        var readiness = readinessEvaluation.State;
         var readinessText = readiness switch
         {
             CatalogReadinessState.Ready => T("Ui.Store.Readiness.Ready"),
@@ -4301,6 +4205,7 @@ public partial class MainViewModel : ObservableObject
             ConfidenceBadgeText = confidenceText,
             ReadinessState = readiness,
             ReadinessBadgeText = readinessText,
+            ReadinessEvidenceText = readinessEvaluation.Summary,
             IsUpgradeAvailable = isUpgradeAvailable,
             UpgradeFromVersion = isUpgradeAvailable ? latestPreparedProfile?.Version ?? string.Empty : string.Empty,
             HashVerifiedBySource = exactProfile?.HashVerifiedBySource ?? entry.HashVerifiedBySource,
@@ -4313,54 +4218,6 @@ public partial class MainViewModel : ObservableObject
             LastPreparedAtUtc = effectiveProfile?.LastPreparedAtUtc ?? entry.LastPreparedAtUtc,
             LastVerifiedAtUtc = effectiveProfile?.LastVerifiedAtUtc ?? entry.LastVerifiedAtUtc
         };
-    }
-
-    private static CatalogReadinessState DetermineCatalogReadinessState(
-        CatalogPackageProfile? profile,
-        PackageCatalogEntry entry)
-    {
-        if (profile is null)
-        {
-            return IsCatalogEntryReady(entry)
-                ? CatalogReadinessState.CatalogReady
-                : CatalogReadinessState.NeedsReview;
-        }
-
-        var hasInstaller = !string.IsNullOrWhiteSpace(profile.InstallerPath) && File.Exists(profile.InstallerPath);
-        var detectionReady = profile.DetectionReady && profile.DetectionRuleType != IntuneDetectionRuleType.None;
-        var hasPlaceholders =
-            ContainsCatalogTemplatePlaceholder(profile.InstallCommand) ||
-            ContainsCatalogTemplatePlaceholder(profile.UninstallCommand);
-
-        if (!hasInstaller || !detectionReady || hasPlaceholders)
-        {
-            return CatalogReadinessState.Blocked;
-        }
-
-        return profile.Confidence == CatalogProfileConfidence.Verified
-            ? CatalogReadinessState.Ready
-            : CatalogReadinessState.NeedsReview;
-    }
-
-    private static bool IsCatalogEntryReady(PackageCatalogEntry entry)
-    {
-        var detectionReady = entry.DetectionReady ||
-                             entry.InstallerVariants.Any(variant =>
-                                 variant.IsDeterministicDetection ||
-                                 variant.DetectionRule.RuleType != IntuneDetectionRuleType.None);
-        var hasInstallSource = !string.IsNullOrWhiteSpace(entry.InstallerDownloadUrl) ||
-                               !string.IsNullOrWhiteSpace(entry.PackageId) ||
-                               entry.InstallerVariants.Any(variant =>
-                                   !string.IsNullOrWhiteSpace(variant.InstallerDownloadUrl) ||
-                                   !string.IsNullOrWhiteSpace(variant.PackageId));
-        var hasPlaceholders =
-            ContainsCatalogTemplatePlaceholder(entry.SuggestedInstallCommand) ||
-            ContainsCatalogTemplatePlaceholder(entry.SuggestedUninstallCommand) ||
-            entry.InstallerVariants.Any(variant =>
-                ContainsCatalogTemplatePlaceholder(variant.SuggestedInstallCommand) ||
-                ContainsCatalogTemplatePlaceholder(variant.SuggestedUninstallCommand));
-
-        return detectionReady && hasInstallSource && !hasPlaceholders;
     }
 
     private void RefreshCatalogEntriesFromProfiles()

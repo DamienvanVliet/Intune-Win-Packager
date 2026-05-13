@@ -148,6 +148,7 @@
     <sys:String x:Key="Ui.RecentPackages.Description">Most recent local packaging runs.</sys:String>
     <sys:String x:Key="Ui.Store.Title">Package Store (Catalog)</sys:String>
     <sys:String x:Key="Ui.Store.Description">Search WinGet, Chocolatey, GitHub Releases, Scoop, and NuGet to quickly see app name, build version, source, and ready-to-review packaging hints.</sys:String>
+    <sys:String x:Key="Ui.Store.ReadinessHint">Validated means locally proven. Catalog ready means source metadata includes a direct installer and complete deterministic detection. Review needed means facts are still missing.</sys:String>
     <sys:String x:Key="Ui.Store.SearchButton">Search Store</sys:String>
     <sys:String x:Key="Ui.Store.SourceWinget">WinGet Source</sys:String>
     <sys:String x:Key="Ui.Store.SourceChocolatey">Chocolatey Source</sys:String>

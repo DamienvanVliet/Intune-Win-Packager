@@ -62,6 +62,8 @@ public sealed record PackageCatalogEntry
 
     public string ReadinessBadgeText { get; init; } = string.Empty;
 
+    public string ReadinessEvidenceText { get; init; } = string.Empty;
+
     public bool IsUpgradeAvailable { get; init; }
 
     public string UpgradeFromVersion { get; init; } = string.Empty;

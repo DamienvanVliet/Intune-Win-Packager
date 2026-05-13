@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.5] - 2026-05-13
+
+### Changed
+- Added fact-based catalog readiness evaluation for MSI, file/folder, registry, and script detection rules.
+- Catalog results no longer treat a package id as installer evidence; "Catalog ready" now requires a direct installer source and complete deterministic detection metadata.
+- Store details now explain why an item is validated, catalog-ready, blocked, or still needs review.
+- Removed automatic generic EXE silent-switch fallback from catalog imports when no verified source or sandbox evidence is available.
+
+### Fixed
+- Added regression tests for readiness evidence so incomplete catalog or local profile metadata cannot be marked ready.
+
 ## [3.0.4] - 2026-05-13
 
 ### Fixed
