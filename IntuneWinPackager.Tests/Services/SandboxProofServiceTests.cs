@@ -121,6 +121,49 @@ public sealed class SandboxProofServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_WhenSourceIsDownloads_MapsOnlySetupFolder()
+    {
+        var tempRoot = CreateTempDirectory();
+        var downloadsFolder = Path.Combine(tempRoot, "Downloads");
+        var setupFolder = Path.Combine(downloadsFolder, "cMTViewer_V22329");
+        Directory.CreateDirectory(setupFolder);
+
+        var setupPath = Path.Combine(setupFolder, "cMTViewer-2.23.29.exe");
+        await File.WriteAllTextAsync(setupPath, "not a real exe");
+        await File.WriteAllTextAsync(Path.Combine(downloadsFolder, "OtherInstaller.exe"), "unrelated");
+
+        var sut = new SandboxProofService();
+
+        var session = await sut.StartAsync(new SandboxProofRequest
+        {
+            InstallerType = InstallerType.Exe,
+            SourceFolder = downloadsFolder,
+            SetupFilePath = setupPath,
+            InstallCommand = $"\"{setupPath}\" /S",
+            DetectionRule = BuildFileDetectionRule(),
+            LaunchSandbox = false
+        });
+
+        try
+        {
+            Assert.True(session.Success);
+
+            var input = await ReadInputAsync(session.InputPath);
+            Assert.Equal(setupFolder, input.RootElement.GetProperty("hostSourceFolder").GetString());
+            Assert.Equal(@"C:\IwpSandboxSource\cMTViewer-2.23.29.exe", input.RootElement.GetProperty("sandboxSetupFilePath").GetString());
+
+            var wsb = await File.ReadAllTextAsync(session.WsbPath);
+            Assert.Contains(setupFolder, wsb, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(downloadsFolder + "</HostFolder>", wsb, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(session.RunDirectory);
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
     public async Task StartAsync_WhenSetupMissing_ReturnsFailure()
     {
         var sut = new SandboxProofService();

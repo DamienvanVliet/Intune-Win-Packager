@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.0.10] - 2026-05-20
+
+### Fixed
+- Sandbox Proof launch validation no longer crashes when uninstall metadata contains a non-executable or malformed path.
+- Packaging and Sandbox Proof now treat broad `Downloads`/desktop source folders as unsafe roots and automatically narrow to the selected setup file folder.
+- Sandbox detection candidate generation now skips dependency uninstall entries such as Microsoft Visual C++ Redistributable and WebView2 Runtime so they cannot become the primary app detection rule.
+- Verified knowledge cache now refuses EXE app entries whose primary detection is a dependency MSI ProductCode, preventing stale runtime detection from being reused for the real app.
+- Removed one bad local cMTViewer knowledge-cache entry that pointed detection at a Visual C++ runtime product code.
+
 ## [3.0.9] - 2026-05-20
 
 ### Fixed

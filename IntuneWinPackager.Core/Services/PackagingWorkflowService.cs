@@ -494,6 +494,14 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
     {
         try
         {
+            var sourceFolderName = Path.GetFileName(sourceFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (sourceFolderName.Equals("Downloads", StringComparison.OrdinalIgnoreCase) ||
+                sourceFolderName.Equals("Desktop", StringComparison.OrdinalIgnoreCase) ||
+                sourceFolderName.Equals("Bureaublad", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
             var knownWorkspaceDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "Input",
@@ -520,6 +528,20 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                 .ToArray();
 
             if (directoryNames.Count(name => knownWorkspaceDirectories.Contains(name!)) >= 2)
+            {
+                return true;
+            }
+
+            var installerLikeFiles = Directory
+                .EnumerateFiles(sourceFolder, "*", SearchOption.TopDirectoryOnly)
+                .Count(static file =>
+                {
+                    var extension = Path.GetExtension(file);
+                    return extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+                           extension.Equals(".msi", StringComparison.OrdinalIgnoreCase) ||
+                           extension.Equals(".intunewin", StringComparison.OrdinalIgnoreCase);
+                });
+            if (installerLikeFiles >= 3)
             {
                 return true;
             }

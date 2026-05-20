@@ -346,6 +346,10 @@ public sealed class InstallerCommandService : IInstallerCommandService
             ? DetectExeFrameworkTemplate(setupFilePath)
             : null;
         var persistedRules = NormalizeVerifiedCacheRules(installerType, intuneRules);
+        if (IsDependencyDetectionKnowledgeEntry(installerType, persistedRules, lookupContext.ProductName))
+        {
+            return;
+        }
 
         var now = DateTimeOffset.UtcNow;
         lock (_knowledgeLock)
@@ -917,16 +921,19 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 candidate.ProductVersion.Equals(lookupContext.ProductVersion, StringComparison.OrdinalIgnoreCase) &&
                 candidate.SignerThumbprint.Equals(lookupContext.SignerThumbprint, StringComparison.OrdinalIgnoreCase) &&
                 candidate.SourceChannel.Equals(lookupContext.SourceChannel, StringComparison.OrdinalIgnoreCase) &&
-                candidate.InstallerArchitecture.Equals(lookupContext.InstallerArchitecture, StringComparison.OrdinalIgnoreCase))
+                candidate.InstallerArchitecture.Equals(lookupContext.InstallerArchitecture, StringComparison.OrdinalIgnoreCase) &&
+                !IsDependencyDetectionKnowledgeEntry(candidate.InstallerType, candidate.IntuneRules, candidate.ProductName))
                 ?? _knowledgeStore.Entries.FirstOrDefault(candidate =>
                     candidate.InstallerType == lookupContext.InstallerType &&
                     candidate.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase) &&
                     candidate.ProductVersion.Equals(lookupContext.ProductVersion, StringComparison.OrdinalIgnoreCase) &&
-                    IsLegacyKnowledgeKey(candidate))
+                    IsLegacyKnowledgeKey(candidate) &&
+                    !IsDependencyDetectionKnowledgeEntry(candidate.InstallerType, candidate.IntuneRules, candidate.ProductName))
                 ?? _knowledgeStore.Entries.FirstOrDefault(candidate =>
                     candidate.InstallerType == lookupContext.InstallerType &&
                     candidate.InstallerSha256.Equals(lookupContext.Sha256, StringComparison.OrdinalIgnoreCase) &&
-                    IsLegacyKnowledgeKey(candidate))
+                    IsLegacyKnowledgeKey(candidate) &&
+                    !IsDependencyDetectionKnowledgeEntry(candidate.InstallerType, candidate.IntuneRules, candidate.ProductName))
                 ?? new InstallerKnowledgeEntry();
 
             if (string.IsNullOrWhiteSpace(entry.InstallerSha256))
@@ -1903,6 +1910,42 @@ public sealed class InstallerCommandService : IInstallerCommandService
         }
 
         return rules;
+    }
+
+    private static bool IsDependencyDetectionKnowledgeEntry(
+        InstallerType installerType,
+        IntuneWin32AppRules rules,
+        string productName)
+    {
+        if (installerType != InstallerType.Exe ||
+            rules.DetectionRule.RuleType != IntuneDetectionRuleType.MsiProductCode)
+        {
+            return false;
+        }
+
+        if (LooksLikeRuntimeDependencyName(productName))
+        {
+            return false;
+        }
+
+        var productVersion = rules.DetectionRule.Msi.ProductVersion;
+        return productVersion.StartsWith("14.", StringComparison.OrdinalIgnoreCase) ||
+               productVersion.StartsWith("10.", StringComparison.OrdinalIgnoreCase) ||
+               productVersion.StartsWith("11.", StringComparison.OrdinalIgnoreCase) ||
+               productVersion.StartsWith("12.", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeRuntimeDependencyName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("Visual C++", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("Redistributable", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("WebView2", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains(".NET Runtime", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FirstNonEmpty(params string?[] values)

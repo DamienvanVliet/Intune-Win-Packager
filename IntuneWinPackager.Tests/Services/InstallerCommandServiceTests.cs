@@ -316,6 +316,52 @@ public class InstallerCommandServiceTests
     }
 
     [Fact]
+    public void CreateSuggestion_DoesNotReuseDependencyMsiDetectionKnowledge_ForExeApp()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-knowledge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+
+        var cachePath = Path.Combine(tempRoot, "installer-knowledge.json");
+        var setupFile = Path.Combine(tempRoot, "cMTViewer-2.23.29.exe");
+        File.WriteAllText(setupFile, "dummy-exe-content");
+
+        try
+        {
+            var sut = new InstallerCommandService(cachePath);
+            var dependencyRules = new IntuneWin32AppRules
+            {
+                SilentSwitchesVerified = true,
+                DetectionRule = new IntuneDetectionRule
+                {
+                    RuleType = IntuneDetectionRuleType.MsiProductCode,
+                    Msi = new MsiDetectionRule
+                    {
+                        ProductCode = "{2F69FB2B-2C48-491C-B249-22C1BDCE1117}",
+                        ProductVersion = "14.26.28720",
+                        ProductVersionOperator = IntuneDetectionOperator.Equals
+                    }
+                }
+            };
+
+            sut.SaveVerifiedKnowledge(
+                setupFilePath: setupFile,
+                installerType: InstallerType.Exe,
+                installCommand: "\"cMTViewer-2.23.29.exe\" /VERYSILENT",
+                uninstallCommand: "\"cMTViewer-2.23.29.exe\" /VERYSILENT",
+                intuneRules: dependencyRules);
+
+            var suggestion = sut.CreateSuggestion(setupFile, InstallerType.Exe);
+
+            Assert.False(suggestion.UsedKnowledgeCache);
+            Assert.NotEqual(IntuneDetectionRuleType.MsiProductCode, suggestion.SuggestedRules.DetectionRule.RuleType);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateSuggestion_ForMsiUpdateIntent_UsesGreaterThanOrEqualVersionOperator()
     {
         var sut = new InstallerCommandService();

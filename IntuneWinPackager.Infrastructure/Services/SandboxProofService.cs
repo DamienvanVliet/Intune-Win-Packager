@@ -43,7 +43,7 @@ public sealed class SandboxProofService : ISandboxProofService
         Directory.CreateDirectory(DataPathProvider.SandboxProofRunsDirectory);
 
         var setupPath = Path.GetFullPath(request.SetupFilePath);
-        var sourceFolder = ResolveSourceFolder(request.SourceFolder, setupPath);
+        var sourceFolder = ResolveEffectiveSourceFolder(ResolveSourceFolder(request.SourceFolder, setupPath), setupPath);
         var runDirectory = BuildRunDirectory(setupPath);
         var inputDirectory = Path.Combine(runDirectory, "input");
         var logsDirectory = Path.Combine(runDirectory, "logs");
@@ -574,6 +574,91 @@ public sealed class SandboxProofService : ISandboxProofService
         }
 
         return Path.GetDirectoryName(setupPath) ?? Environment.CurrentDirectory;
+    }
+
+    private static string ResolveEffectiveSourceFolder(string sourceFolder, string setupPath)
+    {
+        var setupDirectory = Path.GetDirectoryName(setupPath);
+        if (string.IsNullOrWhiteSpace(setupDirectory))
+        {
+            return sourceFolder;
+        }
+
+        var normalizedSource = Path.GetFullPath(sourceFolder);
+        var normalizedSetupDirectory = Path.GetFullPath(setupDirectory);
+        if (normalizedSource.Equals(normalizedSetupDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            return normalizedSource;
+        }
+
+        var relative = Path.GetRelativePath(normalizedSource, normalizedSetupDirectory);
+        if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+        {
+            return normalizedSource;
+        }
+
+        return LooksLikeBroadSourceRoot(normalizedSource)
+            ? normalizedSetupDirectory
+            : normalizedSource;
+    }
+
+    private static bool LooksLikeBroadSourceRoot(string sourceFolder)
+    {
+        try
+        {
+            var sourceFolderName = Path.GetFileName(sourceFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (sourceFolderName.Equals("Downloads", StringComparison.OrdinalIgnoreCase) ||
+                sourceFolderName.Equals("Desktop", StringComparison.OrdinalIgnoreCase) ||
+                sourceFolderName.Equals("Bureaublad", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var knownWorkspaceDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Input",
+                "Output",
+                "Logs",
+                "Tools",
+                "Updates",
+                "Sandbox",
+                "SandboxProof",
+                "Sandbox-Proof",
+                "CatalogDownloads",
+                "Catalog-Downloads",
+                "CatalogIcons",
+                "Catalog-Icons",
+                "Profiles",
+                "Temp",
+                "Cache"
+            };
+
+            var directoryNames = Directory
+                .EnumerateDirectories(sourceFolder)
+                .Select(Path.GetFileName)
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .ToArray();
+            if (directoryNames.Count(name => knownWorkspaceDirectories.Contains(name!)) >= 2)
+            {
+                return true;
+            }
+
+            var installerLikeFiles = Directory
+                .EnumerateFiles(sourceFolder, "*", SearchOption.TopDirectoryOnly)
+                .Count(static file =>
+                {
+                    var extension = Path.GetExtension(file);
+                    return extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+                           extension.Equals(".msi", StringComparison.OrdinalIgnoreCase) ||
+                           extension.Equals(".intunewin", StringComparison.OrdinalIgnoreCase);
+                });
+
+            return installerLikeFiles >= 3;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string BuildRunDirectory(string setupPath)
@@ -1412,6 +1497,23 @@ function New-RegistryIdentityAdditionalRules {
     return @($rules)
 }
 
+function Test-UninstallEntryLooksLikeDependency {
+    param($Entry)
+    $displayName = [string]$Entry.displayName
+    $publisher = [string]$Entry.publisher
+    if ([string]::IsNullOrWhiteSpace($displayName)) { return $false }
+
+    if ($displayName -match '(?i)microsoft\s+visual\s+c\+\+.*redistributable') { return $true }
+    if ($displayName -match '(?i)visual\s+c\+\+.*runtime') { return $true }
+    if ($displayName -match '(?i)microsoft\s+edge\s+webview2\s+runtime') { return $true }
+    if ($displayName -match '(?i)microsoft\s+edge\s+update') { return $true }
+    if ($displayName -match '(?i)\.net\s+(desktop\s+)?runtime') { return $true }
+    if ($displayName -match '(?i)windows\s+desktop\s+runtime') { return $true }
+    if ($publisher -match '(?i)^microsoft' -and $displayName -match '(?i)(redistributable|runtime|webview2)') { return $true }
+
+    return $false
+}
+
 function New-MsiDetectionRule {
     param($Entry)
     return [pscustomobject]@{
@@ -1601,6 +1703,11 @@ function Get-DetectionCandidates {
     }
 
     foreach ($entry in @($NewUninstallEntries)) {
+        if (Test-UninstallEntryLooksLikeDependency -Entry $entry) {
+            Write-ProofLog "Skipping dependency uninstall entry as primary app detection: $($entry.displayName) $($entry.displayVersion)"
+            continue
+        }
+
         $negative = [pscustomobject]@{
             success = $true
             summary = 'Uninstall registry entry was absent before install and present after install.'
@@ -1731,6 +1838,14 @@ function Get-LaunchTargets {
         $candidatePath = Resolve-PathCandidate -Value $Path
         if ([string]::IsNullOrWhiteSpace($candidatePath) -or -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) { return }
         if ([IO.Path]::GetExtension($candidatePath) -ine '.exe') { return }
+        if ([string]::IsNullOrWhiteSpace($WorkingDirectory) -or -not (Test-Path -LiteralPath $WorkingDirectory -PathType Container)) {
+            try {
+                $WorkingDirectory = [IO.Path]::GetDirectoryName($candidatePath)
+            }
+            catch {
+                $WorkingDirectory = ''
+            }
+        }
         $key = $candidatePath.ToLowerInvariant()
         if ($seen.ContainsKey($key)) { return }
         $seen[$key] = $true
@@ -1752,12 +1867,12 @@ function Get-LaunchTargets {
             $candidatePath = Resolve-PathCandidate -Value $value
             if ([string]::IsNullOrWhiteSpace($candidatePath) -and -not [string]::IsNullOrWhiteSpace($value) -and (Test-Path -LiteralPath $value -PathType Container)) {
                 foreach ($exe in @(Find-ExecutableDetectionTargets -Root $value -DisplayName ([string]$entry.displayName) -Publisher ([string]$entry.publisher) -DisplayVersion ([string]$entry.displayVersion) | Select-Object -First 1)) {
-                    Add-LaunchTarget -Path ([string]$exe.fullName) -Arguments '' -WorkingDirectory ([IO.Path]::GetDirectoryName([string]$exe.fullName)) -Source "Uninstall entry: $($entry.displayName)" -Score 92
+                    Add-LaunchTarget -Path ([string]$exe.fullName) -Arguments '' -WorkingDirectory '' -Source "Uninstall entry: $($entry.displayName)" -Score 92
                 }
                 continue
             }
 
-            Add-LaunchTarget -Path $candidatePath -Arguments '' -WorkingDirectory ([IO.Path]::GetDirectoryName($candidatePath)) -Source "Uninstall entry: $($entry.displayName)" -Score 90
+            Add-LaunchTarget -Path $candidatePath -Arguments '' -WorkingDirectory '' -Source "Uninstall entry: $($entry.displayName)" -Score 90
         }
     }
 
