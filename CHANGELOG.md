@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.11] - 2026-05-20
+
+### Fixed
+- App startup now renders the main window before running heavier initialization, avoiding the long blank white window during launch.
+- Startup no longer restores the previous source folder or setup file, so the app opens in a clean state instead of appearing to resume the last package.
+- Settings persistence no longer writes selected package source/setup state between sessions; workspace, output, tool path, update, language, theme, and density preferences are still preserved.
+- Catalog profile loading now runs in the background after initial startup instead of blocking first render.
+
 ## [3.0.10] - 2026-05-20
 
 ### Fixed

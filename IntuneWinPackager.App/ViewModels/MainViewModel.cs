@@ -1080,7 +1080,8 @@ public partial class MainViewModel : ObservableObject
         await RunStartupStepAsync("LoadSettings", LoadSettingsAsync);
         await RunStartupStepAsync("RefreshProfiles", RefreshProfileListAsync);
         await RunStartupStepAsync("RefreshHistory", RefreshHistoryAsync);
-        await RunStartupStepAsync("ReloadCatalogProfiles", () => ReloadCatalogProfilesAsync());
+
+        _ = RunStartupStepAsync("ReloadCatalogProfiles", () => ReloadCatalogProfilesAsync());
 
         UpdateValidation();
 
@@ -1831,8 +1832,8 @@ public partial class MainViewModel : ObservableObject
             IntuneWinAppUtilPath = settings.IntuneWinAppUtilPath;
             WorkspaceRoot = settings.WorkspaceRoot;
             DataPathProvider.ConfigureWorkspaceRoot(WorkspaceRoot);
-            SourceFolder = settings.LastSourceFolder;
-            OutputFolder = settings.LastOutputFolder;
+            SourceFolder = ResolveFreshStartupSourceFolder();
+            OutputFolder = ResolveFreshStartupOutputFolder(settings.LastOutputFolder);
             UseLowImpactMode = settings.UseLowImpactMode;
             EnableSilentAppUpdates = settings.EnableSilentAppUpdates;
             ShowStoreAdvancedDetails = settings.StoreShowAdvancedDetails;
@@ -1847,11 +1848,6 @@ public partial class MainViewModel : ObservableObject
                 UpdateStatus = TF("Vm.Update.NotificationFormat", LatestVersion, CurrentVersion);
             }
 
-            if (File.Exists(settings.LastSetupFilePath))
-            {
-                await SelectSetupFileAsync(settings.LastSetupFilePath, updateOutputWhenEmpty: false);
-            }
-
             if (string.IsNullOrWhiteSpace(IntuneWinAppUtilPath) || !File.Exists(IntuneWinAppUtilPath))
             {
                 IntuneWinAppUtilPath = _toolLocatorService.LocateToolPath() ?? string.Empty;
@@ -1863,6 +1859,31 @@ public partial class MainViewModel : ObservableObject
         {
             _isLoadingSettings = false;
         }
+    }
+
+    private string ResolveFreshStartupSourceFolder()
+    {
+        if (!string.IsNullOrWhiteSpace(WorkspaceRoot) && Directory.Exists(WorkspaceInputFolder))
+        {
+            return WorkspaceInputFolder;
+        }
+
+        return string.Empty;
+    }
+
+    private string ResolveFreshStartupOutputFolder(string persistedOutputFolder)
+    {
+        if (!string.IsNullOrWhiteSpace(persistedOutputFolder))
+        {
+            return persistedOutputFolder;
+        }
+
+        if (!string.IsNullOrWhiteSpace(WorkspaceRoot))
+        {
+            return WorkspaceOutputFolder;
+        }
+
+        return string.Empty;
     }
 
     private async Task RefreshProfileListAsync()
@@ -5406,10 +5427,10 @@ public partial class MainViewModel : ObservableObject
         var settings = new AppSettings
         {
             IntuneWinAppUtilPath = IntuneWinAppUtilPath,
-            LastSourceFolder = SourceFolder,
+            LastSourceFolder = string.Empty,
             LastOutputFolder = OutputFolder,
             WorkspaceRoot = WorkspaceRoot,
-            LastSetupFilePath = SetupFilePath,
+            LastSetupFilePath = string.Empty,
             UseLowImpactMode = UseLowImpactMode,
             EnableSilentAppUpdates = EnableSilentAppUpdates,
             StoreShowAdvancedDetails = ShowStoreAdvancedDetails,

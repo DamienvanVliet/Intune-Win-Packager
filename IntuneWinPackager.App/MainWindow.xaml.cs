@@ -19,10 +19,20 @@ public partial class MainWindow : System.Windows.Window
         Loaded += MainWindow_Loaded;
     }
 
-    private async void MainWindow_Loaded(object sender, System.Windows.RoutedEventArgs e)
+    private void MainWindow_Loaded(object sender, System.Windows.RoutedEventArgs e)
+    {
+        Loaded -= MainWindow_Loaded;
+        _ = InitializeAfterFirstRenderAsync();
+    }
+
+    private async Task InitializeAfterFirstRenderAsync()
     {
         try
         {
+            await Dispatcher.InvokeAsync(
+                static () => { },
+                System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+
             await _viewModel.InitializeAsync();
         }
         catch (Exception ex)
