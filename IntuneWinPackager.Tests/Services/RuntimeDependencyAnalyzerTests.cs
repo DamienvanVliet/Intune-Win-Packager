@@ -95,6 +95,28 @@ public sealed class RuntimeDependencyAnalyzerTests
         }
     }
 
+    [Fact]
+    public void Analyze_DetectsWebView2Signals_WhenInstallerMentionsWebView2()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-runtime-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var exePath = Path.Combine(tempRoot, "Setup.exe");
+        File.WriteAllText(exePath, "embedded payload mentions WebView2Loader.dll and Microsoft.Web.WebView2");
+
+        try
+        {
+            var analysis = RuntimeDependencyAnalyzer.Analyze(exePath, tempRoot);
+
+            Assert.True(analysis.RequiresWebView2Runtime);
+            Assert.False(analysis.HasWebView2RuntimeInstaller);
+            Assert.Contains("webview2loader.dll", analysis.DetectedWebView2Signals, StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
     private static byte[] BuildPeWithImports(params string[] importNames)
     {
         using var stream = new MemoryStream(new byte[4096], writable: true);

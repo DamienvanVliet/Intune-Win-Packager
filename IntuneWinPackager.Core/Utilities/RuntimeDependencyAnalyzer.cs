@@ -24,6 +24,16 @@ public static class RuntimeDependencyAnalyzer
         "vcomp140.dll"
     };
 
+    private static readonly string[] WebView2Signals =
+    [
+        "webview2loader.dll",
+        "microsoft.web.webview2",
+        "msedgewebview2.exe",
+        "webview2 runtime",
+        "evergreen webview2",
+        "ebwebview"
+    ];
+
     public static RuntimeDependencyAnalysis Analyze(string? setupFilePath, string? sourceFolder)
     {
         if (string.IsNullOrWhiteSpace(sourceFolder) || !Directory.Exists(sourceFolder))
@@ -43,28 +53,36 @@ public static class RuntimeDependencyAnalyzer
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var importedRuntimeDlls = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var webView2Signals = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         var analyzedFiles = new List<string>();
 
         foreach (var file in files)
         {
             var imports = TryReadImportedDllNames(file);
-            if (imports.Count == 0)
-            {
-                imports = TryFindRuntimeDllStrings(file);
-            }
-
-            if (imports.Count == 0)
-            {
-                continue;
-            }
-
-            analyzedFiles.Add(ToRelativePath(sourceRoot, file));
             foreach (var import in imports)
             {
                 if (VisualCppRuntimeDlls.Contains(import))
                 {
                     importedRuntimeDlls.Add(import);
                 }
+
+                AddWebView2Signals(import, webView2Signals);
+            }
+
+            var stringSignals = TryFindRuntimeDependencyStrings(file);
+            foreach (var runtimeDll in stringSignals.VisualCppDlls)
+            {
+                importedRuntimeDlls.Add(runtimeDll);
+            }
+
+            foreach (var signal in stringSignals.WebView2Signals)
+            {
+                webView2Signals.Add(signal);
+            }
+
+            if (imports.Count > 0 || stringSignals.VisualCppDlls.Count > 0 || stringSignals.WebView2Signals.Count > 0)
+            {
+                analyzedFiles.Add(ToRelativePath(sourceRoot, file));
             }
         }
 
@@ -74,6 +92,9 @@ public static class RuntimeDependencyAnalyzer
         var hasRedist = Directory
             .EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories)
             .Any(IsVisualCppRedistributableInstaller);
+        var hasWebView2Installer = Directory
+            .EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories)
+            .Any(IsWebView2RuntimeInstaller);
         var requiresVcpp = importedRuntimeDlls.Count > 0;
         var hasRuntimeFiles = missingRuntimeDlls.Length == 0 && requiresVcpp;
 
@@ -82,10 +103,13 @@ public static class RuntimeDependencyAnalyzer
             RequiresVisualCppRuntime = requiresVcpp,
             HasVisualCppRuntimeFiles = hasRuntimeFiles,
             HasVisualCppRedistributableInstaller = hasRedist,
+            RequiresWebView2Runtime = webView2Signals.Count > 0,
+            HasWebView2RuntimeInstaller = hasWebView2Installer,
             ImportedRuntimeDlls = importedRuntimeDlls.ToArray(),
             MissingRuntimeDlls = missingRuntimeDlls,
+            DetectedWebView2Signals = webView2Signals.ToArray(),
             AnalyzedFiles = analyzedFiles,
-            Summary = BuildSummary(requiresVcpp, hasRuntimeFiles, hasRedist, missingRuntimeDlls)
+            Summary = BuildSummary(requiresVcpp, hasRuntimeFiles, hasRedist, missingRuntimeDlls, webView2Signals.Count > 0, hasWebView2Installer)
         };
     }
 
@@ -235,32 +259,41 @@ public static class RuntimeDependencyAnalyzer
         }
     }
 
-    private static IReadOnlyList<string> TryFindRuntimeDllStrings(string filePath)
+    private static RuntimeDependencyStringSignals TryFindRuntimeDependencyStrings(string filePath)
     {
         try
         {
             var fileInfo = new FileInfo(filePath);
             if (fileInfo.Length <= 0 || fileInfo.Length > 256L * 1024L * 1024L)
             {
-                return [];
+                return new RuntimeDependencyStringSignals([], []);
             }
 
             var bytes = File.ReadAllBytes(filePath);
             var ascii = Encoding.ASCII.GetString(bytes);
-            var found = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            var foundVisualCpp = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            var foundWebView2 = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var runtimeDll in VisualCppRuntimeDlls)
             {
                 if (ascii.Contains(runtimeDll, StringComparison.OrdinalIgnoreCase))
                 {
-                    found.Add(runtimeDll);
+                    foundVisualCpp.Add(runtimeDll);
                 }
             }
 
-            return found.ToArray();
+            foreach (var signal in WebView2Signals)
+            {
+                if (ascii.Contains(signal, StringComparison.OrdinalIgnoreCase))
+                {
+                    foundWebView2.Add(signal);
+                }
+            }
+
+            return new RuntimeDependencyStringSignals(foundVisualCpp.ToArray(), foundWebView2.ToArray());
         }
         catch
         {
-            return [];
+            return new RuntimeDependencyStringSignals([], []);
         }
     }
 
@@ -304,6 +337,27 @@ public static class RuntimeDependencyAnalyzer
                name.Contains("visual-cpp", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsWebView2RuntimeInstaller(string filePath)
+    {
+        var name = Path.GetFileName(filePath);
+        return name.Contains("webview2", StringComparison.OrdinalIgnoreCase) &&
+               (name.Contains("runtime", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("evergreen", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("bootstrapper", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("standalone", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void AddWebView2Signals(string value, ISet<string> signals)
+    {
+        foreach (var signal in WebView2Signals)
+        {
+            if (value.Contains(signal, StringComparison.OrdinalIgnoreCase))
+            {
+                signals.Add(signal);
+            }
+        }
+    }
+
     private static string ToRelativePath(string sourceRoot, string filePath)
     {
         try
@@ -320,26 +374,43 @@ public static class RuntimeDependencyAnalyzer
         bool requiresVcpp,
         bool hasRuntimeFiles,
         bool hasRedist,
-        IReadOnlyList<string> missingRuntimeDlls)
+        IReadOnlyList<string> missingRuntimeDlls,
+        bool requiresWebView2,
+        bool hasWebView2Installer)
     {
-        if (!requiresVcpp)
+        if (!requiresVcpp && !requiresWebView2)
         {
-            return "No Visual C++ runtime imports were detected in source executables.";
+            return "No Visual C++ or WebView2 runtime dependencies were detected in source executables.";
         }
 
+        var parts = new List<string>();
         if (hasRuntimeFiles)
         {
-            return "Visual C++ runtime imports were detected and matching DLLs are present in the source folder.";
+            parts.Add("Visual C++ runtime imports were detected and matching DLLs are present in the source folder.");
         }
-
-        if (hasRedist)
+        else if (hasRedist)
         {
-            return "Visual C++ runtime imports were detected and a VC++ redistributable installer is present in the source folder.";
+            parts.Add("Visual C++ runtime imports were detected and a VC++ redistributable installer is present in the source folder.");
+        }
+        else if (requiresVcpp)
+        {
+            parts.Add("Visual C++ runtime imports were detected, but required runtime DLLs are missing from the source folder: " +
+                      string.Join(", ", missingRuntimeDlls));
         }
 
-        return "Visual C++ runtime imports were detected, but required runtime DLLs are missing from the source folder: " +
-               string.Join(", ", missingRuntimeDlls);
+        if (requiresWebView2)
+        {
+            parts.Add(hasWebView2Installer
+                ? "WebView2 usage was detected and a WebView2 runtime installer is present in the source folder."
+                : "WebView2 usage was detected; deploy Microsoft Edge WebView2 Runtime as an Intune dependency if the target image does not already include it.");
+        }
+
+        return string.Join(" ", parts);
     }
 
     private sealed record PeSection(uint VirtualAddress, uint VirtualSize, uint RawPointer);
+
+    private sealed record RuntimeDependencyStringSignals(
+        IReadOnlyList<string> VisualCppDlls,
+        IReadOnlyList<string> WebView2Signals);
 }

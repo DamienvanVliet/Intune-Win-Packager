@@ -8,9 +8,15 @@ public sealed record RuntimeDependencyAnalysis
 
     public bool HasVisualCppRedistributableInstaller { get; init; }
 
+    public bool RequiresWebView2Runtime { get; init; }
+
+    public bool HasWebView2RuntimeInstaller { get; init; }
+
     public IReadOnlyList<string> ImportedRuntimeDlls { get; init; } = [];
 
     public IReadOnlyList<string> MissingRuntimeDlls { get; init; } = [];
+
+    public IReadOnlyList<string> DetectedWebView2Signals { get; init; } = [];
 
     public IReadOnlyList<string> AnalyzedFiles { get; init; } = [];
 

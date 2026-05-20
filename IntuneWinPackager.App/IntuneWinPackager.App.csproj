@@ -19,9 +19,9 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>Assets\IntuneWinPackager.ico</ApplicationIcon>
-    <Version>3.0.7</Version>
-    <AssemblyVersion>3.0.7.0</AssemblyVersion>
-    <FileVersion>3.0.7.0</FileVersion>
-    <InformationalVersion>3.0.7</InformationalVersion>
+    <Version>3.0.8</Version>
+    <AssemblyVersion>3.0.8.0</AssemblyVersion>
+    <FileVersion>3.0.8.0</FileVersion>
+    <InformationalVersion>3.0.8</InformationalVersion>
   </PropertyGroup>
 </Project>

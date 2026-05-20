@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.8] - 2026-05-20
+
+### Fixed
+- Smart packaging now narrows broad workspace source folders to the selected setup file folder, preventing output, logs, tools, cache, sandbox, and previous package artifacts from being swept into the `.intunewin`.
+- Temporary EXE source staging now skips known generated folders and transient files, and blocks prepared sources that are abnormally large compared with the selected installer.
+- Runtime dependency analysis now also flags WebView2 usage and documents Microsoft Edge WebView2 Runtime as a likely Intune dependency for apps that open to a blank white window in clean sandbox images.
+- Added regression coverage for broad workspace source narrowing and WebView2 dependency detection.
+
 ## [3.0.7] - 2026-05-20
 
 ### Fixed
