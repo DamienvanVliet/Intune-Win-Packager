@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.9] - 2026-05-20
+
+### Fixed
+- Sandbox Proof now performs a post-install launch validation instead of stopping at install and detection evidence.
+- The sandbox runner now starts the installed application from a new shortcut, uninstall footprint, or installed executable and records process/window state, application event log errors, and launch screenshots.
+- Blank white application windows are now detected by capturing the app window and measuring a high white-pixel ratio; Proof & Package is blocked when launch validation fails.
+- Sandbox result import now treats failed launch validation as a failed proof even when detection candidates are otherwise valid.
+
 ## [3.0.8] - 2026-05-20
 
 ### Fixed

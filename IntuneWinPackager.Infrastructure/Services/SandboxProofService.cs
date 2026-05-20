@@ -224,10 +224,21 @@ public sealed class SandboxProofService : ISandboxProofService
                 .FirstOrDefault();
 
             var message = BuildSandboxProofResultMessage(candidates.Count, provenCandidateCount, proofAvailable, bestCandidate);
+            var launchFailed = TryGetObject(root, "launchProof", out var launchProofElement) &&
+                GetJsonBoolean(launchProofElement, "required") &&
+                !GetJsonBoolean(launchProofElement, "success");
+            if (launchFailed)
+            {
+                var launchSummary = GetJsonString(launchProofElement, "summary");
+                message = string.IsNullOrWhiteSpace(launchSummary)
+                    ? "Sandbox proof failed launch validation after install."
+                    : $"Sandbox proof failed launch validation: {launchSummary}";
+            }
 
             return new SandboxProofDetectionResult
             {
                 Completed = true,
+                Failed = launchFailed,
                 ResultPath = resultPath,
                 Message = message,
                 CandidateCount = candidates.Count,
@@ -1702,6 +1713,280 @@ function Get-DetectionCandidates {
     return @($candidates)
 }
 
+function Test-ExecutableLooksLaunchable {
+    param($Executable)
+    if ($null -eq $Executable -or [string]::IsNullOrWhiteSpace([string]$Executable.fullName)) { return $false }
+    $name = [IO.Path]::GetFileNameWithoutExtension([string]$Executable.fullName)
+    if ([string]::IsNullOrWhiteSpace($name)) { return $false }
+    return $name -notmatch '(?i)(unins|uninstall|setup|installer|install|update|updater|crash|helper|service|broker|cef|webview|runtime|redistributable|repair)'
+}
+
+function Get-LaunchTargets {
+    param($NewShortcuts, $NewExecutables, $NewUninstallEntries)
+    $targets = New-Object System.Collections.ArrayList
+    $seen = @{}
+
+    function Add-LaunchTarget {
+        param([string]$Path, [string]$Arguments, [string]$WorkingDirectory, [string]$Source, [int]$Score)
+        $candidatePath = Resolve-PathCandidate -Value $Path
+        if ([string]::IsNullOrWhiteSpace($candidatePath) -or -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) { return }
+        if ([IO.Path]::GetExtension($candidatePath) -ine '.exe') { return }
+        $key = $candidatePath.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { return }
+        $seen[$key] = $true
+        [void]$targets.Add([pscustomobject]@{
+            path = $candidatePath
+            arguments = [string]$Arguments
+            workingDirectory = [string]$WorkingDirectory
+            source = $Source
+            score = $Score
+        })
+    }
+
+    foreach ($shortcut in @($NewShortcuts)) {
+        Add-LaunchTarget -Path ([string]$shortcut.targetPath) -Arguments ([string]$shortcut.arguments) -WorkingDirectory ([string]$shortcut.workingDirectory) -Source "Shortcut: $($shortcut.fullName)" -Score 100
+    }
+
+    foreach ($entry in @($NewUninstallEntries)) {
+        foreach ($value in @([string]$entry.displayIcon, [string]$entry.installLocation)) {
+            $candidatePath = Resolve-PathCandidate -Value $value
+            if ([string]::IsNullOrWhiteSpace($candidatePath) -and -not [string]::IsNullOrWhiteSpace($value) -and (Test-Path -LiteralPath $value -PathType Container)) {
+                foreach ($exe in @(Find-ExecutableDetectionTargets -Root $value -DisplayName ([string]$entry.displayName) -Publisher ([string]$entry.publisher) -DisplayVersion ([string]$entry.displayVersion) | Select-Object -First 1)) {
+                    Add-LaunchTarget -Path ([string]$exe.fullName) -Arguments '' -WorkingDirectory ([IO.Path]::GetDirectoryName([string]$exe.fullName)) -Source "Uninstall entry: $($entry.displayName)" -Score 92
+                }
+                continue
+            }
+
+            Add-LaunchTarget -Path $candidatePath -Arguments '' -WorkingDirectory ([IO.Path]::GetDirectoryName($candidatePath)) -Source "Uninstall entry: $($entry.displayName)" -Score 90
+        }
+    }
+
+    foreach ($executable in @($NewExecutables | Where-Object { Test-ExecutableLooksLaunchable -Executable $_ } | Sort-Object -Property @{ Expression = { if ([string]::IsNullOrWhiteSpace($_.productName)) { 0 } else { 1 } }; Descending = $true }, @{ Expression = { $_.length }; Descending = $true } | Select-Object -First 10)) {
+        Add-LaunchTarget -Path ([string]$executable.fullName) -Arguments '' -WorkingDirectory ([string]$executable.directoryName) -Source 'New executable' -Score 70
+    }
+
+    return @($targets | Sort-Object -Property @{ Expression = { $_.score }; Descending = $true }, @{ Expression = { $_.path }; Ascending = $true })
+}
+
+function Get-RecentApplicationErrors {
+    param([datetime]$SinceUtc)
+    try {
+        return @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 1,2; StartTime = $SinceUtc.ToLocalTime() } -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object {
+            [pscustomobject]@{
+                timeCreatedUtc = $_.TimeCreated.ToUniversalTime().ToString('o')
+                providerName = [string]$_.ProviderName
+                id = [int]$_.Id
+                levelDisplayName = [string]$_.LevelDisplayName
+                message = ([string]$_.Message).Trim()
+            }
+        })
+    }
+    catch {
+        Write-ProofLog "Application event log read failed: $($_.Exception.Message)"
+        return @()
+    }
+}
+
+function Save-DesktopScreenshot {
+    param([string]$Path)
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+        $graphics.Dispose()
+        $bitmap.Dispose()
+        return $true
+    }
+    catch {
+        Write-ProofLog "Screenshot capture failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Save-WindowScreenshotAndAnalyze {
+    param([IntPtr]$WindowHandle, [string]$Path)
+    if ($WindowHandle -eq [IntPtr]::Zero) {
+        return [pscustomobject]@{ captured = $false; path = ''; whitePixelRatio = 0.0; likelyBlank = $false; error = 'No window handle.' }
+    }
+
+    try {
+        Add-Type -AssemblyName System.Drawing
+        if (-not ('IwpNativeWindow' -as [type])) {
+            Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class IwpNativeWindow {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+}
+'@
+        }
+
+        $rect = New-Object IwpNativeWindow+RECT
+        if (-not [IwpNativeWindow]::GetWindowRect($WindowHandle, [ref]$rect)) {
+            return [pscustomobject]@{ captured = $false; path = ''; whitePixelRatio = 0.0; likelyBlank = $false; error = 'GetWindowRect failed.' }
+        }
+
+        $width = [Math]::Max(0, $rect.Right - $rect.Left)
+        $height = [Math]::Max(0, $rect.Bottom - $rect.Top)
+        if ($width -lt 80 -or $height -lt 80) {
+            return [pscustomobject]@{ captured = $false; path = ''; whitePixelRatio = 0.0; likelyBlank = $false; error = "Window too small: ${width}x${height}." }
+        }
+
+        $bitmap = [System.Drawing.Bitmap]::new($width, $height)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, [System.Drawing.Size]::new($width, $height))
+        $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+
+        $sampled = 0
+        $white = 0
+        $stepX = [Math]::Max(1, [int]($width / 80))
+        $stepY = [Math]::Max(1, [int]($height / 60))
+        for ($x = 0; $x -lt $width; $x += $stepX) {
+            for ($y = 0; $y -lt $height; $y += $stepY) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $sampled += 1
+                if ($pixel.R -ge 245 -and $pixel.G -ge 245 -and $pixel.B -ge 245) {
+                    $white += 1
+                }
+            }
+        }
+
+        $graphics.Dispose()
+        $bitmap.Dispose()
+        $ratio = if ($sampled -gt 0) { [double]$white / [double]$sampled } else { 0.0 }
+        return [pscustomobject]@{
+            captured = $true
+            path = $Path
+            whitePixelRatio = $ratio
+            likelyBlank = $ratio -ge 0.92
+            error = ''
+        }
+    }
+    catch {
+        Write-ProofLog "Window screenshot capture failed: $($_.Exception.Message)"
+        return [pscustomobject]@{ captured = $false; path = ''; whitePixelRatio = 0.0; likelyBlank = $false; error = $_.Exception.Message }
+    }
+}
+
+function Test-LaunchProof {
+    param($NewShortcuts, $NewExecutables, $NewUninstallEntries)
+    $targets = @(Get-LaunchTargets -NewShortcuts $NewShortcuts -NewExecutables $NewExecutables -NewUninstallEntries $NewUninstallEntries)
+    if ($targets.Count -eq 0) {
+        return [pscustomobject]@{
+            required = $false
+            success = $true
+            summary = 'No launchable application executable or shortcut was found; launch validation skipped.'
+            target = $null
+            attempts = @()
+            events = @()
+            screenshotPath = ''
+        }
+    }
+
+    $attempts = @()
+    $startedAtUtc = (Get-Date).ToUniversalTime()
+    foreach ($target in @($targets | Select-Object -First 3)) {
+        Write-ProofLog "Launch validation starting: $($target.path)"
+        $attempt = [ordered]@{
+            path = [string]$target.path
+            arguments = [string]$target.arguments
+            workingDirectory = [string]$target.workingDirectory
+            source = [string]$target.source
+            started = $false
+            exited = $false
+            exitCode = $null
+            processId = $null
+            processName = ''
+            mainWindowTitle = ''
+            mainWindowHandle = ''
+            hasMainWindow = $false
+            stillRunning = $false
+            windowScreenshotPath = ''
+            whitePixelRatio = 0.0
+            likelyBlankWindow = $false
+            error = ''
+        }
+
+        try {
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = [string]$target.path
+            if (-not [string]::IsNullOrWhiteSpace([string]$target.arguments)) { $psi.Arguments = [string]$target.arguments }
+            if (-not [string]::IsNullOrWhiteSpace([string]$target.workingDirectory) -and (Test-Path -LiteralPath ([string]$target.workingDirectory))) { $psi.WorkingDirectory = [string]$target.workingDirectory }
+            $psi.UseShellExecute = $true
+            $process = [System.Diagnostics.Process]::Start($psi)
+            if ($null -eq $process) { throw 'Process.Start returned null.' }
+            $attempt.started = $true
+            $attempt.processId = $process.Id
+            $attempt.processName = $process.ProcessName
+            Start-Sleep -Seconds 8
+            try { $process.Refresh() } catch {}
+            $attempt.exited = $process.HasExited
+            if ($process.HasExited) {
+                try { $attempt.exitCode = $process.ExitCode } catch {}
+            }
+            else {
+                $attempt.stillRunning = $true
+                $attempt.mainWindowTitle = [string]$process.MainWindowTitle
+                $attempt.mainWindowHandle = $process.MainWindowHandle.ToString()
+                $attempt.hasMainWindow = $process.MainWindowHandle -ne [IntPtr]::Zero
+                if ($attempt.hasMainWindow) {
+                    $windowScreenshot = Join-Path $LogsPath ("launch-window-{0}.png" -f $process.Id)
+                    $windowAnalysis = Save-WindowScreenshotAndAnalyze -WindowHandle $process.MainWindowHandle -Path $windowScreenshot
+                    $attempt.windowScreenshotPath = [string]$windowAnalysis.path
+                    $attempt.whitePixelRatio = [double]$windowAnalysis.whitePixelRatio
+                    $attempt.likelyBlankWindow = [bool]$windowAnalysis.likelyBlank
+                }
+            }
+        }
+        catch {
+            $attempt.error = $_.Exception.Message
+        }
+
+        $attempts += [pscustomobject]$attempt
+        if ($attempt.started -and $attempt.stillRunning -and -not $attempt.likelyBlankWindow) {
+            $screenshot = Join-Path $LogsPath 'launch-screenshot.png'
+            [void](Save-DesktopScreenshot -Path $screenshot)
+            $events = @(Get-RecentApplicationErrors -SinceUtc $startedAtUtc)
+            return [pscustomobject]@{
+                required = $true
+                success = $true
+                summary = if ($attempt.hasMainWindow) { "Launch validation passed; app process is running with a window: $($attempt.mainWindowTitle)" } else { 'Launch validation passed; app process stayed running, but no main window title was available.' }
+                target = [pscustomobject]$attempt
+                attempts = $attempts
+                events = $events
+                screenshotPath = if (-not [string]::IsNullOrWhiteSpace($attempt.windowScreenshotPath)) { $attempt.windowScreenshotPath } else { $screenshot }
+            }
+        }
+    }
+
+    $failureScreenshot = Join-Path $LogsPath 'launch-failure-screenshot.png'
+    [void](Save-DesktopScreenshot -Path $failureScreenshot)
+    $failureEvents = @(Get-RecentApplicationErrors -SinceUtc $startedAtUtc)
+    return [pscustomobject]@{
+        required = $true
+        success = $false
+        summary = 'Installed application could not be launched successfully in the sandbox. It exited immediately, failed to start, produced an application error, or opened a likely blank white window.'
+        target = if ($attempts.Count -gt 0) { $attempts[0] } else { $null }
+        attempts = $attempts
+        events = $failureEvents
+        screenshotPath = $failureScreenshot
+    }
+}
+
 function Write-Report {
     param($Result)
     $lines = @()
@@ -1716,6 +2001,23 @@ function Write-Report {
     $lines += ''
     $lines += "Pre-install detection: $($Result.preInstallDetection.success) - $($Result.preInstallDetection.summary)"
     $lines += "Post-install detection: $($Result.postInstallDetection.success) - $($Result.postInstallDetection.summary)"
+    $lines += ''
+    $lines += "Launch validation: $($Result.launchProof.success) - $($Result.launchProof.summary)"
+    if ($null -ne $Result.launchProof.target) {
+        $lines += "Launch target: $($Result.launchProof.target.path)"
+        $lines += "Launch source: $($Result.launchProof.target.source)"
+        $lines += "Launch window title: $($Result.launchProof.target.mainWindowTitle)"
+        $lines += "Launch white pixel ratio: $($Result.launchProof.target.whitePixelRatio)"
+        $lines += "Launch likely blank window: $($Result.launchProof.target.likelyBlankWindow)"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Result.launchProof.screenshotPath)) {
+        $lines += "Launch screenshot: $($Result.launchProof.screenshotPath)"
+    }
+    foreach ($event in @($Result.launchProof.events | Select-Object -First 8)) {
+        $message = ([string]$event.message)
+        if ($message.Length -gt 240) { $message = $message.Substring(0, 240) + '...' }
+        $lines += "Launch event: [$($event.providerName) $($event.id)] $message"
+    }
     $lines += ''
     $lines += "New uninstall entries: $(@($Result.diff.newUninstallEntries).Count)"
     foreach ($entry in @($Result.diff.newUninstallEntries | Select-Object -First 12)) {
@@ -1792,14 +2094,16 @@ try {
 
     $candidates = @(Get-DetectionCandidates -NewUninstallEntries $diff.newUninstallEntries -NewProgramDirectories $diff.newProgramDirectories -NewExecutables $diff.newExecutables -NewShortcuts $diff.newShortcuts -NewServices $diff.newServices -NewScheduledTasks $diff.newScheduledTasks)
     $candidates = @($candidates | ForEach-Object { Complete-CandidateProof -Candidate $_ })
+    $launchProof = Test-LaunchProof -NewShortcuts $diff.newShortcuts -NewExecutables $diff.newExecutables -NewUninstallEntries $diff.newUninstallEntries
 
     $result = [pscustomobject]@{
-        schemaVersion = 2
+        schemaVersion = 3
         completedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
         request = $inputData
         install = $installResult
         preInstallDetection = $preDetection
         postInstallDetection = $postDetection
+        launchProof = $launchProof
         diff = $diff
         candidates = $candidates
         snapshots = [pscustomobject]@{
