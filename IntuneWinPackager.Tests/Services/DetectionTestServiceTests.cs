@@ -75,6 +75,62 @@ public sealed class DetectionTestServiceTests
     }
 
     [Fact]
+    public async Task TestAsync_ScriptDetection_ReturnsValidNotDetected_WhenExitOneHasNoStdErr()
+    {
+        var runner = new FakeProcessRunner(
+            new ProcessRunResult
+            {
+                ExitCode = 1,
+                TimedOut = false
+            },
+            []);
+        var sut = new DetectionTestService(runner);
+
+        var result = await sut.TestAsync(
+            InstallerType.Exe,
+            new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Script,
+                Script = new ScriptDetectionRule
+                {
+                    ScriptBody = "if ($false) { Write-Output 'detected'; exit 0 }; exit 1"
+                }
+            });
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.ExitCode);
+        Assert.False(result.HasStdErr);
+        Assert.Contains("valid Intune not-detected signal", result.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TestAsync_ScriptDetection_WritesUtf8BomAndUsesNonInteractivePowerShell()
+    {
+        var runner = new CapturingProcessRunner(new ProcessRunResult { ExitCode = 1, TimedOut = false });
+        var sut = new DetectionTestService(runner);
+
+        var result = await sut.TestAsync(
+            InstallerType.Exe,
+            new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Script,
+                Script = new ScriptDetectionRule
+                {
+                    ScriptBody = "if ($false) { Write-Output 'detected'; exit 0 }; exit 1",
+                    RunAs32BitOn64System = true
+                }
+            });
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("-NonInteractive", runner.LastRequest.Arguments, StringComparison.OrdinalIgnoreCase);
+        Assert.True(runner.LastScriptBytes.Length >= 3);
+        Assert.Equal((byte)0xEF, runner.LastScriptBytes[0]);
+        Assert.Equal((byte)0xBB, runner.LastScriptBytes[1]);
+        Assert.Equal((byte)0xBF, runner.LastScriptBytes[2]);
+    }
+
+    [Fact]
     public async Task TestAsync_MsiDetection_Passes_WhenProductCodeExistsAndVersionIsOptional()
     {
         if (!OperatingSystem.IsWindows())
@@ -201,6 +257,69 @@ public sealed class DetectionTestServiceTests
         Assert.True(proof.PositivePhase.Success);
     }
 
+    [Fact]
+    public async Task ProveAsync_PassiveMode_PassesValidation_WhenConfiguredRuleReportsNotDetected()
+    {
+        var sut = new DetectionTestService(new FakeProcessRunner(
+            new ProcessRunResult
+            {
+                ExitCode = 1,
+                TimedOut = false
+            },
+            []));
+
+        var proof = await sut.ProveAsync(new DetectionProofRequest
+        {
+            InstallerType = InstallerType.Exe,
+            Mode = DetectionProofMode.PassiveRuleControl,
+            RequirePositiveDetection = false,
+            DetectionRule = new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Script,
+                Script = new ScriptDetectionRule
+                {
+                    ScriptBody = "if ($false) { Write-Output 'detected'; exit 0 }; exit 1"
+                }
+            }
+        });
+
+        Assert.True(proof.Success);
+        Assert.True(proof.NegativePhase.Success);
+        Assert.True(proof.PositivePhase.Success);
+        Assert.Contains("Intune-compatible", proof.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ProveAsync_PassiveMode_Fails_WhenPositiveDetectionIsRequiredAndRuleReportsNotDetected()
+    {
+        var sut = new DetectionTestService(new FakeProcessRunner(
+            new ProcessRunResult
+            {
+                ExitCode = 1,
+                TimedOut = false
+            },
+            []));
+
+        var proof = await sut.ProveAsync(new DetectionProofRequest
+        {
+            InstallerType = InstallerType.Exe,
+            Mode = DetectionProofMode.PassiveRuleControl,
+            RequirePositiveDetection = true,
+            DetectionRule = new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Script,
+                Script = new ScriptDetectionRule
+                {
+                    ScriptBody = "if ($false) { Write-Output 'detected'; exit 0 }; exit 1"
+                }
+            }
+        });
+
+        Assert.False(proof.Success);
+        Assert.True(proof.NegativePhase.Success);
+        Assert.False(proof.PositivePhase.Success);
+    }
+
     private sealed class FakeProcessRunner : IProcessRunner
     {
         private readonly ProcessRunResult _result;
@@ -220,6 +339,39 @@ public sealed class DetectionTestServiceTests
             foreach (var line in _lines)
             {
                 outputProgress?.Report(line);
+            }
+
+            return Task.FromResult(_result);
+        }
+    }
+
+    private sealed class CapturingProcessRunner : IProcessRunner
+    {
+        private static readonly Regex FileArgumentRegex = new("-File\\s+(?:\"(?<pathq>[^\"]+)\"|(?<pathu>[^\\s]+))", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private readonly ProcessRunResult _result;
+
+        public CapturingProcessRunner(ProcessRunResult result)
+        {
+            _result = result;
+        }
+
+        public ProcessRunRequest LastRequest { get; private set; } = new();
+
+        public byte[] LastScriptBytes { get; private set; } = [];
+
+        public Task<ProcessRunResult> RunAsync(
+            ProcessRunRequest request,
+            IProgress<ProcessOutputLine>? outputProgress = null,
+            CancellationToken cancellationToken = default)
+        {
+            LastRequest = request;
+            var match = FileArgumentRegex.Match(request.Arguments ?? string.Empty);
+            if (match.Success)
+            {
+                var path = match.Groups["pathq"].Success
+                    ? match.Groups["pathq"].Value
+                    : match.Groups["pathu"].Value;
+                LastScriptBytes = File.Exists(path) ? File.ReadAllBytes(path) : [];
             }
 
             return Task.FromResult(_result);

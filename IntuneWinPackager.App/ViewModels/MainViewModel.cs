@@ -3140,6 +3140,7 @@ public partial class MainViewModel : ObservableObject
                 InstallerType = InstallerType,
                 DetectionRule = detectionRule,
                 Mode = DetectionProofMode.PassiveRuleControl,
+                RequirePositiveDetection = false,
                 InstallCommand = InstallCommand,
                 UninstallCommand = UninstallCommand,
                 WorkingDirectory = string.IsNullOrWhiteSpace(SetupFilePath)
@@ -3174,22 +3175,25 @@ public partial class MainViewModel : ObservableObject
 
             AppendLog($"Detection test summary: {result.Summary}");
 
-            if (result.Success && proof.Success)
+            if (proof.Success)
             {
                 DetectionTestStatus = T("Vm.Detection.TestStatus.Passed");
-                if (InstallerType == InstallerType.Exe)
+                if (result.Success && InstallerType == InstallerType.Exe)
                 {
                     RequireSilentSwitchReview = false;
                     SilentSwitchesVerified = true;
                 }
 
-                TrySaveVerifiedInstallerKnowledge();
-                await PromoteActiveCatalogProfileAsVerifiedAsync();
+                if (result.Success)
+                {
+                    TrySaveVerifiedInstallerKnowledge();
+                    await PromoteActiveCatalogProfileAsVerifiedAsync();
+                }
 
                 SetStatus(
                     OperationState.Success,
                     T("Vm.Status.DetectionTestPassedTitle"),
-                    result.Details);
+                    result.Success ? result.Details : proof.PositivePhase.Summary);
             }
             else
             {

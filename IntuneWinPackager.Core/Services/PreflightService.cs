@@ -72,6 +72,7 @@ public sealed class PreflightService : IPreflightService
         await AddToolChecksAsync(request.IntuneWinAppUtilPath, checks, cancellationToken);
         AddSourceChecks(request.Configuration.SourceFolder, request.Configuration.UseSmartSourceStaging, checks);
         AddSetupChecks(request.Configuration.SetupFilePath, request.Configuration.SourceFolder, checks);
+        AddRuntimeDependencyChecks(request.Configuration.SetupFilePath, request.Configuration.SourceFolder, checks);
         AddOutputChecks(request.Configuration.OutputFolder, request.Configuration.SourceFolder, request.Configuration.UseSmartSourceStaging, checks);
         AddCommandChecks(request.Configuration.InstallCommand, request.Configuration.UninstallCommand, checks);
         AddIntuneRuleChecks(request.InstallerType, request.Configuration.IntuneRules, checks);
@@ -267,6 +268,37 @@ public sealed class PreflightService : IPreflightService
                 titleKey: "Core.Preflight.Title.SourceMatch",
                 messageKey: "Core.Preflight.Message.SetupOutsideSource"));
         }
+    }
+
+    private static void AddRuntimeDependencyChecks(string setupFilePath, string sourceFolder, ICollection<PreflightCheck> checks)
+    {
+        var analysis = RuntimeDependencyAnalyzer.Analyze(setupFilePath, sourceFolder);
+        if (!analysis.RequiresVisualCppRuntime)
+        {
+            checks.Add(Pass(
+                "runtime-vcpp",
+                "Runtime Dependencies",
+                analysis.Summary,
+                titleKey: "Core.Preflight.Title.RuntimeDependencies"));
+            return;
+        }
+
+        if (RuntimeDependencyAnalyzer.HasBlockingMissingRuntime(analysis))
+        {
+            checks.Add(Error(
+                "runtime-vcpp",
+                "Runtime Dependencies",
+                analysis.Summary + " Add Microsoft Visual C++ 2015-2022 Redistributable as an Intune dependency, install it before this app, or include the matching runtime DLLs in the application folder.",
+                titleKey: "Core.Preflight.Title.RuntimeDependencies",
+                messageKey: "Core.Preflight.Message.RuntimeDependenciesMissing"));
+            return;
+        }
+
+        checks.Add(Pass(
+            "runtime-vcpp",
+            "Runtime Dependencies",
+            analysis.Summary,
+            titleKey: "Core.Preflight.Title.RuntimeDependencies"));
     }
 
     private static void AddOutputChecks(

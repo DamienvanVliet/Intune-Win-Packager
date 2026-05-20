@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.0.7] - 2026-05-20
+
+### Fixed
+- Detection Test now validates Intune detection rules without requiring the target app to already be installed on the test machine.
+- PowerShell script detection now treats `exit 1` without STDERR as a valid Intune not-detected result, while still requiring `exit 0` plus STDOUT for installed detection.
+- Local detection tests now normalize scripts with UTF-8 BOM, strict Intune success/failure exits, and non-interactive PowerShell execution.
+- Detection script execution now honors 32-bit vs 64-bit PowerShell selection on 64-bit Windows.
+- Verified installer knowledge is only saved when the rule actually detects the installed app, avoiding false verification from rule-only validation.
+- Packaging now scans EXE/DLL imports and installer payload strings for Visual C++ 2015-2022 runtime dependencies such as `MSVCP140.dll` and `VCRUNTIME140.dll`.
+- Preflight and validation now block packages that would launch with missing VC++ v14 runtime DLLs unless matching runtime DLLs or a `vc_redist` installer are included in the source.
+- Intune metadata and portal checklist now document required Visual C++ redistributable dependencies, including an architecture note for x86/x64 sandbox and Intune deployments.
+
 ## [3.0.6] - 2026-05-13
 
 ### Changed
@@ -106,7 +118,6 @@
 - EXE detection now uses native file detection when an installed uninstall footprint exposes an existing uninstaller, display icon, or install folder target.
 - Store/catalog EXE entries without native registry or file metadata now remain in manual detection review instead of being marked script-ready.
 - Validation and preflight now allow specific uninstaller-file detection under a real install path.
-
 ## [2.2.4] - 2026-05-06
 
 ### Fixed

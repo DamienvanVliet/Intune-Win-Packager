@@ -190,6 +190,8 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                 ? $"Package source folder: {preparedSource.PackagingSourceFolder}"
                 : $"Temporary package source folder: {preparedSource.PackagingSourceFolder}");
             logProgress?.Report($"Output folder: {outputFolder}");
+            var runtimeDependencies = RuntimeDependencyAnalyzer.Analyze(stagedInstallerPath, preparedSource.PackagingSourceFolder);
+            logProgress?.Report($"Runtime dependency analysis: {runtimeDependencies.Summary}");
             LogDetectionDecisionTrace(request.Configuration.IntuneRules, logProgress);
 
             var arguments = $"-c {Quote(preparedSource.PackagingSourceFolder)} -s {Quote(preparedSource.SetupRelativePath)} -o {Quote(outputFolder)} -q";
@@ -272,10 +274,11 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                     preparedSource,
                     outputPackagePath,
                     detectionScriptPath,
+                    runtimeDependencies,
                     logProgress,
                     cancellationToken);
 
-                var checklist = BuildIntunePortalChecklist(request, outputPackagePath, metadataPath, detectionScriptPath);
+                var checklist = BuildIntunePortalChecklist(request, outputPackagePath, metadataPath, detectionScriptPath, runtimeDependencies);
                 var checklistPath = await WriteChecklistFileAsync(
                     outputPackagePath,
                     checklist,
@@ -682,6 +685,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         PreparedSourceContext preparedSource,
         string outputPackagePath,
         string? detectionScriptPath,
+        RuntimeDependencyAnalysis runtimeDependencies,
         IProgress<string>? logProgress,
         CancellationToken cancellationToken)
     {
@@ -698,6 +702,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             installCommand = request.Configuration.InstallCommand,
             uninstallCommand = request.Configuration.UninstallCommand,
             detectionScriptFile = detectionScriptPath,
+            runtimeDependencies,
             intuneRules = request.Configuration.IntuneRules,
             packagingOptions = new
             {
@@ -777,7 +782,8 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         PackagingRequest request,
         string outputPackagePath,
         string? metadataPath,
-        string? detectionScriptPath)
+        string? detectionScriptPath,
+        RuntimeDependencyAnalysis runtimeDependencies)
     {
         var rules = request.Configuration.IntuneRules;
         var requirements = rules.Requirements;
@@ -837,11 +843,44 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         builder.AppendLine(detectionSummary);
 
         builder.AppendLine();
-        builder.AppendLine("## 5. Manual Verification Before Create");
+        builder.AppendLine("## 5. Dependencies");
+        builder.AppendLine(BuildDependencySummary(runtimeDependencies));
+
+        builder.AppendLine();
+        builder.AppendLine("## 6. Manual Verification Before Create");
         builder.AppendLine("- Confirm app info fields (name, description, publisher, version, icon).");
         builder.AppendLine("- Confirm assignments and availability scope.");
         builder.AppendLine("- Confirm return codes, dependencies, and supersedence where required.");
         builder.AppendLine("- Run pilot assignment before broad production rollout.");
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string BuildDependencySummary(RuntimeDependencyAnalysis runtimeDependencies)
+    {
+        if (!runtimeDependencies.RequiresVisualCppRuntime)
+        {
+            return "- Visual C++ runtime: `Not detected from package imports`";
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"- Visual C++ runtime imports: `{string.Join(", ", runtimeDependencies.ImportedRuntimeDlls)}`");
+        if (runtimeDependencies.MissingRuntimeDlls.Count > 0)
+        {
+            builder.AppendLine($"- Missing runtime DLLs in package source: `{string.Join(", ", runtimeDependencies.MissingRuntimeDlls)}`");
+            builder.AppendLine("- Required Intune dependency: `Microsoft Visual C++ 2015-2022 Redistributable`");
+            builder.AppendLine("- Architecture note: install the redistributable matching the app architecture; deploying both x86 and x64 is safest when architecture is uncertain.");
+            builder.AppendLine("- Sandbox symptom when missing: app starts with `MSVCP140.dll` or `VCRUNTIME140.dll` system errors.");
+        }
+        else
+        {
+            builder.AppendLine("- Visual C++ runtime: `Required DLLs are present in the package source`");
+        }
+
+        if (runtimeDependencies.HasVisualCppRedistributableInstaller)
+        {
+            builder.AppendLine("- VC++ redistributable installer found in source. Confirm the install command actually installs it before launching the app.");
+        }
 
         return builder.ToString().TrimEnd();
     }
