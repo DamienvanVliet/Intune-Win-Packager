@@ -1,5 +1,50 @@
 # Changelog
 
+## [3.0.11] - 2026-05-20
+
+### Fixed
+- App startup now renders the main window before running heavier initialization, avoiding the long blank white window during launch.
+- Startup no longer restores the previous source folder or setup file, so the app opens in a clean state instead of appearing to resume the last package.
+- Settings persistence no longer writes selected package source/setup state between sessions; workspace, output, tool path, update, language, theme, and density preferences are still preserved.
+- Catalog profile loading now runs in the background after initial startup instead of blocking first render.
+
+## [3.0.10] - 2026-05-20
+
+### Fixed
+- Sandbox Proof launch validation no longer crashes when uninstall metadata contains a non-executable or malformed path.
+- Packaging and Sandbox Proof now treat broad `Downloads`/desktop source folders as unsafe roots and automatically narrow to the selected setup file folder.
+- Sandbox detection candidate generation now skips dependency uninstall entries such as Microsoft Visual C++ Redistributable and WebView2 Runtime so they cannot become the primary app detection rule.
+- Verified knowledge cache now refuses EXE app entries whose primary detection is a dependency MSI ProductCode, preventing stale runtime detection from being reused for the real app.
+- Removed one bad local cMTViewer knowledge-cache entry that pointed detection at a Visual C++ runtime product code.
+
+## [3.0.9] - 2026-05-20
+
+### Fixed
+- Sandbox Proof now performs a post-install launch validation instead of stopping at install and detection evidence.
+- The sandbox runner now starts the installed application from a new shortcut, uninstall footprint, or installed executable and records process/window state, application event log errors, and launch screenshots.
+- Blank white application windows are now detected by capturing the app window and measuring a high white-pixel ratio; Proof & Package is blocked when launch validation fails.
+- Sandbox result import now treats failed launch validation as a failed proof even when detection candidates are otherwise valid.
+
+## [3.0.8] - 2026-05-20
+
+### Fixed
+- Smart packaging now narrows broad workspace source folders to the selected setup file folder, preventing output, logs, tools, cache, sandbox, and previous package artifacts from being swept into the `.intunewin`.
+- Temporary EXE source staging now skips known generated folders and transient files, and blocks prepared sources that are abnormally large compared with the selected installer.
+- Runtime dependency analysis now also flags WebView2 usage and documents Microsoft Edge WebView2 Runtime as a likely Intune dependency for apps that open to a blank white window in clean sandbox images.
+- Added regression coverage for broad workspace source narrowing and WebView2 dependency detection.
+
+## [3.0.7] - 2026-05-20
+
+### Fixed
+- Detection Test now validates Intune detection rules without requiring the target app to already be installed on the test machine.
+- PowerShell script detection now treats `exit 1` without STDERR as a valid Intune not-detected result, while still requiring `exit 0` plus STDOUT for installed detection.
+- Local detection tests now normalize scripts with UTF-8 BOM, strict Intune success/failure exits, and non-interactive PowerShell execution.
+- Detection script execution now honors 32-bit vs 64-bit PowerShell selection on 64-bit Windows.
+- Verified installer knowledge is only saved when the rule actually detects the installed app, avoiding false verification from rule-only validation.
+- Packaging now scans EXE/DLL imports and installer payload strings for Visual C++ 2015-2022 runtime dependencies such as `MSVCP140.dll` and `VCRUNTIME140.dll`.
+- Preflight and validation now block packages that would launch with missing VC++ v14 runtime DLLs unless matching runtime DLLs or a `vc_redist` installer are included in the source.
+- Intune metadata and portal checklist now document required Visual C++ redistributable dependencies, including an architecture note for x86/x64 sandbox and Intune deployments.
+
 ## [3.0.6] - 2026-05-13
 
 ### Changed
@@ -106,7 +151,6 @@
 - EXE detection now uses native file detection when an installed uninstall footprint exposes an existing uninstaller, display icon, or install folder target.
 - Store/catalog EXE entries without native registry or file metadata now remain in manual detection review instead of being marked script-ready.
 - Validation and preflight now allow specific uninstaller-file detection under a real install path.
-
 ## [2.2.4] - 2026-05-06
 
 ### Fixed

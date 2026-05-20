@@ -1080,7 +1080,8 @@ public partial class MainViewModel : ObservableObject
         await RunStartupStepAsync("LoadSettings", LoadSettingsAsync);
         await RunStartupStepAsync("RefreshProfiles", RefreshProfileListAsync);
         await RunStartupStepAsync("RefreshHistory", RefreshHistoryAsync);
-        await RunStartupStepAsync("ReloadCatalogProfiles", () => ReloadCatalogProfilesAsync());
+
+        _ = RunStartupStepAsync("ReloadCatalogProfiles", () => ReloadCatalogProfilesAsync());
 
         UpdateValidation();
 
@@ -1831,8 +1832,8 @@ public partial class MainViewModel : ObservableObject
             IntuneWinAppUtilPath = settings.IntuneWinAppUtilPath;
             WorkspaceRoot = settings.WorkspaceRoot;
             DataPathProvider.ConfigureWorkspaceRoot(WorkspaceRoot);
-            SourceFolder = settings.LastSourceFolder;
-            OutputFolder = settings.LastOutputFolder;
+            SourceFolder = ResolveFreshStartupSourceFolder();
+            OutputFolder = ResolveFreshStartupOutputFolder(settings.LastOutputFolder);
             UseLowImpactMode = settings.UseLowImpactMode;
             EnableSilentAppUpdates = settings.EnableSilentAppUpdates;
             ShowStoreAdvancedDetails = settings.StoreShowAdvancedDetails;
@@ -1847,11 +1848,6 @@ public partial class MainViewModel : ObservableObject
                 UpdateStatus = TF("Vm.Update.NotificationFormat", LatestVersion, CurrentVersion);
             }
 
-            if (File.Exists(settings.LastSetupFilePath))
-            {
-                await SelectSetupFileAsync(settings.LastSetupFilePath, updateOutputWhenEmpty: false);
-            }
-
             if (string.IsNullOrWhiteSpace(IntuneWinAppUtilPath) || !File.Exists(IntuneWinAppUtilPath))
             {
                 IntuneWinAppUtilPath = _toolLocatorService.LocateToolPath() ?? string.Empty;
@@ -1863,6 +1859,31 @@ public partial class MainViewModel : ObservableObject
         {
             _isLoadingSettings = false;
         }
+    }
+
+    private string ResolveFreshStartupSourceFolder()
+    {
+        if (!string.IsNullOrWhiteSpace(WorkspaceRoot) && Directory.Exists(WorkspaceInputFolder))
+        {
+            return WorkspaceInputFolder;
+        }
+
+        return string.Empty;
+    }
+
+    private string ResolveFreshStartupOutputFolder(string persistedOutputFolder)
+    {
+        if (!string.IsNullOrWhiteSpace(persistedOutputFolder))
+        {
+            return persistedOutputFolder;
+        }
+
+        if (!string.IsNullOrWhiteSpace(WorkspaceRoot))
+        {
+            return WorkspaceOutputFolder;
+        }
+
+        return string.Empty;
     }
 
     private async Task RefreshProfileListAsync()
@@ -3140,6 +3161,7 @@ public partial class MainViewModel : ObservableObject
                 InstallerType = InstallerType,
                 DetectionRule = detectionRule,
                 Mode = DetectionProofMode.PassiveRuleControl,
+                RequirePositiveDetection = false,
                 InstallCommand = InstallCommand,
                 UninstallCommand = UninstallCommand,
                 WorkingDirectory = string.IsNullOrWhiteSpace(SetupFilePath)
@@ -3174,22 +3196,25 @@ public partial class MainViewModel : ObservableObject
 
             AppendLog($"Detection test summary: {result.Summary}");
 
-            if (result.Success && proof.Success)
+            if (proof.Success)
             {
                 DetectionTestStatus = T("Vm.Detection.TestStatus.Passed");
-                if (InstallerType == InstallerType.Exe)
+                if (result.Success && InstallerType == InstallerType.Exe)
                 {
                     RequireSilentSwitchReview = false;
                     SilentSwitchesVerified = true;
                 }
 
-                TrySaveVerifiedInstallerKnowledge();
-                await PromoteActiveCatalogProfileAsVerifiedAsync();
+                if (result.Success)
+                {
+                    TrySaveVerifiedInstallerKnowledge();
+                    await PromoteActiveCatalogProfileAsVerifiedAsync();
+                }
 
                 SetStatus(
                     OperationState.Success,
                     T("Vm.Status.DetectionTestPassedTitle"),
-                    result.Details);
+                    result.Success ? result.Details : proof.PositivePhase.Summary);
             }
             else
             {
@@ -5402,10 +5427,10 @@ public partial class MainViewModel : ObservableObject
         var settings = new AppSettings
         {
             IntuneWinAppUtilPath = IntuneWinAppUtilPath,
-            LastSourceFolder = SourceFolder,
+            LastSourceFolder = string.Empty,
             LastOutputFolder = OutputFolder,
             WorkspaceRoot = WorkspaceRoot,
-            LastSetupFilePath = SetupFilePath,
+            LastSetupFilePath = string.Empty,
             UseLowImpactMode = UseLowImpactMode,
             EnableSilentAppUpdates = EnableSilentAppUpdates,
             StoreShowAdvancedDetails = ShowStoreAdvancedDetails,

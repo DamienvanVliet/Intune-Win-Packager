@@ -10,10 +10,11 @@ public sealed record DetectionProofRequest
 
     public DetectionProofMode Mode { get; init; } = DetectionProofMode.PassiveRuleControl;
 
+    public bool RequirePositiveDetection { get; init; }
+
     public string InstallCommand { get; init; } = string.Empty;
 
     public string UninstallCommand { get; init; } = string.Empty;
 
     public string WorkingDirectory { get; init; } = string.Empty;
 }
-

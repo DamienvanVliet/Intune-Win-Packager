@@ -15,6 +15,8 @@ namespace IntuneWinPackager.Core.Services;
 public sealed class PackagingWorkflowService : IPackagingWorkflowService
 {
     private const int MaxStagingCopyParallelism = 8;
+    private const long AbsolutePreparedSourceLimitBytes = 4L * 1024L * 1024L * 1024L;
+    private const long MinimumRelativePreparedSourceLimitBytes = 1536L * 1024L * 1024L;
 
     private static readonly JsonSerializerOptions MetadataSerializerOptions = new()
     {
@@ -190,6 +192,8 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                 ? $"Package source folder: {preparedSource.PackagingSourceFolder}"
                 : $"Temporary package source folder: {preparedSource.PackagingSourceFolder}");
             logProgress?.Report($"Output folder: {outputFolder}");
+            var runtimeDependencies = RuntimeDependencyAnalyzer.Analyze(stagedInstallerPath, preparedSource.PackagingSourceFolder);
+            logProgress?.Report($"Runtime dependency analysis: {runtimeDependencies.Summary}");
             LogDetectionDecisionTrace(request.Configuration.IntuneRules, logProgress);
 
             var arguments = $"-c {Quote(preparedSource.PackagingSourceFolder)} -s {Quote(preparedSource.SetupRelativePath)} -o {Quote(outputFolder)} -q";
@@ -272,10 +276,11 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                     preparedSource,
                     outputPackagePath,
                     detectionScriptPath,
+                    runtimeDependencies,
                     logProgress,
                     cancellationToken);
 
-                var checklist = BuildIntunePortalChecklist(request, outputPackagePath, metadataPath, detectionScriptPath);
+                var checklist = BuildIntunePortalChecklist(request, outputPackagePath, metadataPath, detectionScriptPath, runtimeDependencies);
                 var checklistPath = await WriteChecklistFileAsync(
                     outputPackagePath,
                     checklist,
@@ -331,7 +336,8 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
     {
         var sourceFolder = Path.GetFullPath(request.Configuration.SourceFolder);
         var setupFilePath = Path.GetFullPath(request.Configuration.SetupFilePath);
-        var setupRelativePath = Path.GetRelativePath(sourceFolder, setupFilePath);
+        var effectiveSourceFolder = ResolveEffectivePackagingSourceFolder(sourceFolder, setupFilePath, logProgress);
+        var setupRelativePath = Path.GetRelativePath(effectiveSourceFolder, setupFilePath);
 
         if (setupRelativePath.StartsWith("..", StringComparison.Ordinal))
         {
@@ -339,7 +345,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         }
 
         var outputFolder = Path.GetFullPath(request.Configuration.OutputFolder);
-        var outputInsideSource = IsPathInsideFolder(outputFolder, sourceFolder);
+        var outputInsideSource = IsPathInsideFolder(outputFolder, effectiveSourceFolder);
         if (outputInsideSource)
         {
             throw new InvalidOperationException("Output folder must be outside the selected source folder.");
@@ -347,16 +353,17 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
 
         var sourceContainsPackages =
             request.Configuration.UseSmartSourceStaging &&
-            SourceContainsPackageArtifacts(sourceFolder);
+            SourceContainsPackageArtifacts(effectiveSourceFolder);
+        var sourceWasNarrowed = !effectiveSourceFolder.Equals(sourceFolder, StringComparison.OrdinalIgnoreCase);
         var mustUseTemporarySourceForExe = request.InstallerType == InstallerType.Exe;
         var shouldStage = mustUseTemporarySourceForExe ||
-            (request.Configuration.UseSmartSourceStaging && sourceContainsPackages);
+            (request.Configuration.UseSmartSourceStaging && (sourceContainsPackages || sourceWasNarrowed));
 
         if (!shouldStage)
         {
             return new PreparedSourceContext
             {
-                PackagingSourceFolder = sourceFolder,
+                PackagingSourceFolder = effectiveSourceFolder,
                 SetupRelativePath = setupRelativePath,
                 StagingRootFolder = null,
                 StagedFileCount = 0,
@@ -377,13 +384,15 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             ? "Temporary package source enabled for EXE reliability."
             : sourceContainsPackages
                 ? "Smart staging enabled: previous .intunewin artifacts detected in source."
-                : "Smart staging enabled: isolated temporary source will be used for packaging.");
+                : sourceWasNarrowed
+                    ? "Smart staging enabled: broad source was narrowed to the setup folder."
+                    : "Smart staging enabled: isolated temporary source will be used for packaging.");
 
         var copiedFileCount = 0;
         long copiedBytes = 0;
         var hardLinkedFileCount = 0;
         var copyParallelism = DetermineStagingCopyParallelism(request.UseLowImpactMode);
-        var preferHardLinks = CanUseHardLinkStaging(sourceFolder, stagingSource);
+        var preferHardLinks = CanUseHardLinkStaging(effectiveSourceFolder, stagingSource);
 
         if (preferHardLinks)
         {
@@ -391,7 +400,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         }
 
         CopyDirectoryTree(
-            sourceFolder,
+            effectiveSourceFolder,
             stagingSource,
             outputInsideSource ? outputFolder : null,
             preferHardLinks,
@@ -400,6 +409,15 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             ref hardLinkedFileCount,
             ref copiedBytes,
             cancellationToken);
+
+        var preparedSourceLimit = CalculatePreparedSourceLimitBytes(selectedSetupFileSize: new FileInfo(setupFilePath).Length);
+        if (copiedBytes > preparedSourceLimit)
+        {
+            throw new InvalidOperationException(
+                $"Prepared package source is too large ({FormatBytes(copiedBytes)}). " +
+                $"The selected source folder likely contains output, cache, downloads, logs, tools, or previous packages. " +
+                $"Select the folder that contains only this installer and its required support files. Limit: {FormatBytes(preparedSourceLimit)}.");
+        }
 
         var stagedSetupPath = Path.Combine(stagingSource, setupRelativePath);
         if (!File.Exists(stagedSetupPath))
@@ -437,6 +455,110 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             HardLinkedFileCount = hardLinkedFileCount,
             StagedBytes = copiedBytes
         };
+    }
+
+    private static string ResolveEffectivePackagingSourceFolder(
+        string sourceFolder,
+        string setupFilePath,
+        IProgress<string>? logProgress)
+    {
+        var setupDirectory = Path.GetDirectoryName(setupFilePath);
+        if (string.IsNullOrWhiteSpace(setupDirectory))
+        {
+            return sourceFolder;
+        }
+
+        var normalizedSetupDirectory = Path.GetFullPath(setupDirectory);
+        if (normalizedSetupDirectory.Equals(sourceFolder, StringComparison.OrdinalIgnoreCase))
+        {
+            return sourceFolder;
+        }
+
+        if (!IsPathInsideFolder(normalizedSetupDirectory, sourceFolder))
+        {
+            return sourceFolder;
+        }
+
+        if (!LooksLikeBroadPackagingRoot(sourceFolder))
+        {
+            return sourceFolder;
+        }
+
+        logProgress?.Report(
+            $"Smart source narrowing: selected source '{sourceFolder}' looks like a workspace/root folder. " +
+            $"Packaging from setup folder '{normalizedSetupDirectory}' to avoid bloated .intunewin output.");
+        return normalizedSetupDirectory;
+    }
+
+    private static bool LooksLikeBroadPackagingRoot(string sourceFolder)
+    {
+        try
+        {
+            var sourceFolderName = Path.GetFileName(sourceFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (sourceFolderName.Equals("Downloads", StringComparison.OrdinalIgnoreCase) ||
+                sourceFolderName.Equals("Desktop", StringComparison.OrdinalIgnoreCase) ||
+                sourceFolderName.Equals("Bureaublad", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var knownWorkspaceDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Input",
+                "Output",
+                "Logs",
+                "Tools",
+                "Updates",
+                "Sandbox",
+                "SandboxProof",
+                "Sandbox-Proof",
+                "CatalogDownloads",
+                "Catalog-Downloads",
+                "CatalogIcons",
+                "Catalog-Icons",
+                "Profiles",
+                "Temp",
+                "Cache"
+            };
+
+            var directoryNames = Directory
+                .EnumerateDirectories(sourceFolder)
+                .Select(Path.GetFileName)
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .ToArray();
+
+            if (directoryNames.Count(name => knownWorkspaceDirectories.Contains(name!)) >= 2)
+            {
+                return true;
+            }
+
+            var installerLikeFiles = Directory
+                .EnumerateFiles(sourceFolder, "*", SearchOption.TopDirectoryOnly)
+                .Count(static file =>
+                {
+                    var extension = Path.GetExtension(file);
+                    return extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+                           extension.Equals(".msi", StringComparison.OrdinalIgnoreCase) ||
+                           extension.Equals(".intunewin", StringComparison.OrdinalIgnoreCase);
+                });
+            if (installerLikeFiles >= 3)
+            {
+                return true;
+            }
+
+            return SourceContainsPackageArtifacts(sourceFolder) ||
+                   directoryNames.Any(name => ShouldSkipDirectoryByName(name!));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static long CalculatePreparedSourceLimitBytes(long selectedSetupFileSize)
+    {
+        var relativeLimit = Math.Max(MinimumRelativePreparedSourceLimitBytes, selectedSetupFileSize * 8);
+        return Math.Min(AbsolutePreparedSourceLimitBytes, relativeLimit);
     }
 
     private static int DetermineStagingCopyParallelism(bool useLowImpactMode)
@@ -557,7 +679,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
     {
         if (string.IsNullOrWhiteSpace(excludedOutputFolder))
         {
-            return false;
+            return ShouldSkipDirectoryByName(Path.GetFileName(directoryPath));
         }
 
         var normalizedDirectory = Path.GetFullPath(directoryPath)
@@ -565,10 +687,45 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         var normalizedExcluded = Path.GetFullPath(excludedOutputFolder)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
+        if (ShouldSkipDirectoryByName(Path.GetFileName(directoryPath)))
+        {
+            return true;
+        }
+
         return normalizedDirectory.Equals(normalizedExcluded, StringComparison.OrdinalIgnoreCase) ||
                normalizedDirectory.StartsWith(
                    normalizedExcluded + Path.DirectorySeparatorChar,
                    StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldSkipDirectoryByName(string? directoryName)
+    {
+        if (string.IsNullOrWhiteSpace(directoryName))
+        {
+            return false;
+        }
+
+        return directoryName.Equals(".git", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals(".vs", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("bin", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("obj", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("node_modules", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("packages", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("artifacts", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("output", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("logs", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("tools", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("updates", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("cache", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("temp", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("tmp", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("sandbox", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("sandbox-proof", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("sandboxproof", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("catalog-downloads", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("catalogdownloads", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("catalog-icons", StringComparison.OrdinalIgnoreCase) ||
+               directoryName.Equals("catalogicons", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool ShouldSkipFile(string filePath)
@@ -576,6 +733,8 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         var extension = Path.GetExtension(filePath);
         return extension.Equals(".intunewin", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".intune.json", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".log", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".tmp", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".md", StringComparison.OrdinalIgnoreCase) &&
                Path.GetFileName(filePath).EndsWith(".intune-checklist.md", StringComparison.OrdinalIgnoreCase);
     }
@@ -682,6 +841,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         PreparedSourceContext preparedSource,
         string outputPackagePath,
         string? detectionScriptPath,
+        RuntimeDependencyAnalysis runtimeDependencies,
         IProgress<string>? logProgress,
         CancellationToken cancellationToken)
     {
@@ -698,6 +858,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             installCommand = request.Configuration.InstallCommand,
             uninstallCommand = request.Configuration.UninstallCommand,
             detectionScriptFile = detectionScriptPath,
+            runtimeDependencies,
             intuneRules = request.Configuration.IntuneRules,
             packagingOptions = new
             {
@@ -777,7 +938,8 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         PackagingRequest request,
         string outputPackagePath,
         string? metadataPath,
-        string? detectionScriptPath)
+        string? detectionScriptPath,
+        RuntimeDependencyAnalysis runtimeDependencies)
     {
         var rules = request.Configuration.IntuneRules;
         var requirements = rules.Requirements;
@@ -837,11 +999,61 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         builder.AppendLine(detectionSummary);
 
         builder.AppendLine();
-        builder.AppendLine("## 5. Manual Verification Before Create");
+        builder.AppendLine("## 5. Dependencies");
+        builder.AppendLine(BuildDependencySummary(runtimeDependencies));
+
+        builder.AppendLine();
+        builder.AppendLine("## 6. Manual Verification Before Create");
         builder.AppendLine("- Confirm app info fields (name, description, publisher, version, icon).");
         builder.AppendLine("- Confirm assignments and availability scope.");
         builder.AppendLine("- Confirm return codes, dependencies, and supersedence where required.");
         builder.AppendLine("- Run pilot assignment before broad production rollout.");
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string BuildDependencySummary(RuntimeDependencyAnalysis runtimeDependencies)
+    {
+        if (!runtimeDependencies.RequiresVisualCppRuntime && !runtimeDependencies.RequiresWebView2Runtime)
+        {
+            return "- Runtime dependencies: `No Visual C++ or WebView2 runtime dependency detected from package imports`";
+        }
+
+        var builder = new StringBuilder();
+        if (runtimeDependencies.RequiresVisualCppRuntime)
+        {
+            builder.AppendLine($"- Visual C++ runtime imports: `{string.Join(", ", runtimeDependencies.ImportedRuntimeDlls)}`");
+            if (runtimeDependencies.MissingRuntimeDlls.Count > 0)
+            {
+                builder.AppendLine($"- Missing runtime DLLs in package source: `{string.Join(", ", runtimeDependencies.MissingRuntimeDlls)}`");
+                builder.AppendLine("- Required Intune dependency: `Microsoft Visual C++ 2015-2022 Redistributable`");
+                builder.AppendLine("- Architecture note: install the redistributable matching the app architecture; deploying both x86 and x64 is safest when architecture is uncertain.");
+                builder.AppendLine("- Sandbox symptom when missing: app starts with `MSVCP140.dll` or `VCRUNTIME140.dll` system errors.");
+            }
+            else
+            {
+                builder.AppendLine("- Visual C++ runtime: `Required DLLs are present in the package source`");
+            }
+
+            if (runtimeDependencies.HasVisualCppRedistributableInstaller)
+            {
+                builder.AppendLine("- VC++ redistributable installer found in source. Confirm the install command actually installs it before launching the app.");
+            }
+        }
+
+        if (runtimeDependencies.RequiresWebView2Runtime)
+        {
+            builder.AppendLine($"- WebView2 signals: `{string.Join(", ", runtimeDependencies.DetectedWebView2Signals)}`");
+            if (runtimeDependencies.HasWebView2RuntimeInstaller)
+            {
+                builder.AppendLine("- WebView2 runtime installer found in source. Confirm it is installed before the app starts.");
+            }
+            else
+            {
+                builder.AppendLine("- Recommended Intune dependency: `Microsoft Edge WebView2 Runtime`.");
+                builder.AppendLine("- Sandbox symptom when missing or broken: app opens to a blank/white window while it works on machines where WebView2 is already healthy.");
+            }
+        }
 
         return builder.ToString().TrimEnd();
     }

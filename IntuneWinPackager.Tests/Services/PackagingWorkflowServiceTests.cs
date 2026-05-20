@@ -294,6 +294,80 @@ public class PackagingWorkflowServiceTests
     }
 
     [Fact]
+    public async Task PackageAsync_NarrowsBroadWorkspaceSourceToSetupFolder()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var workspaceRoot = Path.Combine(tempRoot, "workspace");
+        var inputFolder = Path.Combine(workspaceRoot, "Input", "cMTViewer");
+        var workspaceOutputFolder = Path.Combine(workspaceRoot, "Output");
+        var outputFolder = Path.Combine(tempRoot, "package-output");
+
+        Directory.CreateDirectory(inputFolder);
+        Directory.CreateDirectory(workspaceOutputFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(inputFolder, "cMTViewer.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        var expectedOutput = Path.Combine(outputFolder, "cMTViewer.intunewin");
+        var workspaceArtifact = Path.Combine(workspaceOutputFolder, "old-package.intunewin");
+
+        await File.WriteAllBytesAsync(setupFilePath, new byte[180 * 1024]);
+        await File.WriteAllTextAsync(toolPath, "dummy");
+        await File.WriteAllBytesAsync(expectedOutput, new byte[150 * 1024]);
+        await File.WriteAllBytesAsync(workspaceArtifact, new byte[250 * 1024]);
+
+        var request = BuildValidRequest(toolPath, workspaceRoot, setupFilePath, outputFolder);
+        var logs = new List<string>();
+        var fakeRunner = new CapturingProcessRunner(exitCode: 0);
+        var sut = new PackagingWorkflowService(new PackagingValidationService(), fakeRunner);
+
+        var result = await sut.PackageAsync(request, logProgress: new Progress<string>(logs.Add));
+
+        Assert.True(result.Success, result.Message);
+        Assert.NotNull(fakeRunner.LastRequest);
+        Assert.Contains(logs, entry => entry.Contains("Smart source narrowing", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(workspaceRoot, fakeRunner.LastRequest!.Arguments, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("old-package.intunewin", string.Join(Environment.NewLine, logs), StringComparison.OrdinalIgnoreCase);
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
+    public async Task PackageAsync_NarrowsDownloadsSourceToSetupFolder()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var downloadsFolder = Path.Combine(tempRoot, "Downloads");
+        var setupFolder = Path.Combine(downloadsFolder, "cMTViewer_V22329");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(setupFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(setupFolder, "cMTViewer-2.23.29.exe");
+        var unrelatedInstaller = Path.Combine(downloadsFolder, "Autodesk.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        var expectedOutput = Path.Combine(outputFolder, "cMTViewer-2.23.29.intunewin");
+
+        await File.WriteAllBytesAsync(setupFilePath, new byte[180 * 1024]);
+        await File.WriteAllBytesAsync(unrelatedInstaller, new byte[250 * 1024]);
+        await File.WriteAllTextAsync(toolPath, "dummy");
+        await File.WriteAllBytesAsync(expectedOutput, new byte[150 * 1024]);
+
+        var request = BuildValidRequest(toolPath, downloadsFolder, setupFilePath, outputFolder);
+        var logs = new List<string>();
+        var fakeRunner = new CapturingProcessRunner(exitCode: 0);
+        var sut = new PackagingWorkflowService(new PackagingValidationService(), fakeRunner);
+
+        var result = await sut.PackageAsync(request, logProgress: new Progress<string>(logs.Add));
+
+        Assert.True(result.Success, result.Message);
+        Assert.Contains(logs, entry => entry.Contains("Smart source narrowing", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("Autodesk.exe", string.Join(Environment.NewLine, logs), StringComparison.OrdinalIgnoreCase);
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
     public async Task PackageAsync_DoesNotBlock_WhenScriptReferenceUsesRuntimeEnvironmentVariables()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");

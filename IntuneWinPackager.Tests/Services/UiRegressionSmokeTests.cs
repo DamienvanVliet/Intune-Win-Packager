@@ -54,6 +54,28 @@ public class UiRegressionSmokeTests
         Assert.Equal(comfortableDensityKeys, compactDensityKeys);
     }
 
+    [Fact]
+    public void Startup_DoesNotRestorePreviousPackageSelection()
+    {
+        var viewModel = File.ReadAllText(GetPath("IntuneWinPackager.App", "ViewModels", "MainViewModel.cs"));
+
+        Assert.Contains("SourceFolder = ResolveFreshStartupSourceFolder();", viewModel, StringComparison.Ordinal);
+        Assert.DoesNotContain("SourceFolder = settings.LastSourceFolder;", viewModel, StringComparison.Ordinal);
+        Assert.DoesNotContain("SelectSetupFileAsync(settings.LastSetupFilePath", viewModel, StringComparison.Ordinal);
+        Assert.Contains("LastSourceFolder = string.Empty", viewModel, StringComparison.Ordinal);
+        Assert.Contains("LastSetupFilePath = string.Empty", viewModel, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MainWindow_DefersInitializationUntilAfterFirstRender()
+    {
+        var codeBehind = File.ReadAllText(GetPath("IntuneWinPackager.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("InitializeAfterFirstRenderAsync", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("DispatcherPriority.ApplicationIdle", codeBehind, StringComparison.Ordinal);
+        Assert.DoesNotContain("private async void MainWindow_Loaded", codeBehind, StringComparison.Ordinal);
+    }
+
     private static SortedSet<string> ExtractResourceKeys(string filePath)
     {
         var content = File.ReadAllText(filePath);

@@ -5,7 +5,9 @@ using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
 using Microsoft.Win32;
 using System.Runtime.Versioning;
+using System.Text;
 using System.Text.RegularExpressions;
+using IntuneWinPackager.Core.Utilities;
 
 namespace IntuneWinPackager.Core.Services;
 
@@ -86,8 +88,10 @@ public sealed class DetectionTestService : IDetectionTestService
         var negative = await TestAsync(request.InstallerType, negativeRule, cancellationToken);
         var positive = await TestAsync(request.InstallerType, request.DetectionRule, cancellationToken);
 
-        var negativeOk = !negative.Success;
-        var positiveOk = positive.Success;
+        var negativeOk = IsValidNotDetectedOutcome(negative);
+        var positiveOk = request.RequirePositiveDetection
+            ? IsPositiveDetectionOutcome(positive)
+            : IsValidPassiveDetectionOutcome(positive);
         var success = negativeOk && positiveOk;
 
         return new DetectionProofResult
@@ -95,7 +99,9 @@ public sealed class DetectionTestService : IDetectionTestService
             Success = success,
             Mode = DetectionProofMode.PassiveRuleControl,
             Summary = success
-                ? "Two-phase detection proof passed (negative control failed, positive rule passed)."
+                ? request.RequirePositiveDetection
+                    ? "Two-phase detection proof passed (negative control failed, positive rule passed)."
+                    : "Detection rule validation passed (negative control failed, configured rule is Intune-compatible)."
                 : "Two-phase detection proof failed. Review both phases.",
             NegativePhase = new DetectionProofPhaseResult
             {
@@ -108,11 +114,11 @@ public sealed class DetectionTestService : IDetectionTestService
             },
             PositivePhase = new DetectionProofPhaseResult
             {
-                PhaseName = "Phase B (positive rule)",
+                PhaseName = request.RequirePositiveDetection
+                    ? "Phase B (positive rule)"
+                    : "Phase B (configured rule validation)",
                 Success = positiveOk,
-                Summary = positiveOk
-                    ? "Positive rule passed."
-                    : "Positive rule failed (app may not be installed or rule is incorrect).",
+                Summary = BuildPositivePhaseSummary(request.RequirePositiveDetection, positive),
                 Details = positive.Details
             }
         };
@@ -136,7 +142,7 @@ public sealed class DetectionTestService : IDetectionTestService
         }
 
         var phaseA = await TestAsync(request.InstallerType, request.DetectionRule, cancellationToken);
-        var phaseAOk = !phaseA.Success;
+        var phaseAOk = IsValidNotDetectedOutcome(phaseA);
 
         var installResult = await ExecuteCommandAsync(request.InstallCommand, request.WorkingDirectory, cancellationToken);
         if (installResult.ExitCode != 0 || installResult.TimedOut)
@@ -370,10 +376,20 @@ public sealed class DetectionTestService : IDetectionTestService
             return Failed("Detection script is empty.");
         }
 
+        var normalizedScriptBody = DeterministicDetectionScript.NormalizeForIntuneScriptPolicy(rule.ScriptBody);
+        if (!DeterministicDetectionScript.IsStrictIntuneScriptPolicyCompliant(normalizedScriptBody))
+        {
+            return Failed("Detection script is not Intune-compatible after normalization.");
+        }
+
         var tempRoot = Path.Combine(Path.GetTempPath(), "IntuneWinPackager", "detection-test", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempRoot);
         var scriptPath = Path.Combine(tempRoot, "detect.ps1");
-        await File.WriteAllTextAsync(scriptPath, rule.ScriptBody, cancellationToken);
+        await File.WriteAllTextAsync(
+            scriptPath,
+            normalizedScriptBody.TrimStart('\uFEFF'),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
+            cancellationToken);
 
         var outputLines = new List<string>();
         var errorLines = new List<string>();
@@ -385,8 +401,8 @@ public sealed class DetectionTestService : IDetectionTestService
             var processResult = await _processRunner.RunAsync(
                 new ProcessRunRequest
                 {
-                    FileName = "powershell.exe",
-                    Arguments = $"-NoLogo -NoProfile -ExecutionPolicy Bypass -File {QuoteArgument(scriptPath)}",
+                    FileName = ResolveWindowsPowerShellPath(rule.RunAs32BitOn64System),
+                    Arguments = $"-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {QuoteArgument(scriptPath)}",
                     WorkingDirectory = tempRoot
                 },
                 new InlineProgress<ProcessOutputLine>(line =>
@@ -417,17 +433,22 @@ public sealed class DetectionTestService : IDetectionTestService
             var hasStdOut = !string.IsNullOrWhiteSpace(stdOut);
             var hasStdErr = !string.IsNullOrWhiteSpace(stdErr);
             var compliant = processResult.ExitCode == 0 && hasStdOut && !hasStdErr;
+            var validNotDetected = processResult.ExitCode == 1 && !hasStdErr;
             var summary = compliant
                 ? $"{installerType} script detection passed (exit 0 with STDOUT content)."
-                : $"{installerType} script detection failed Intune compliance check (needs exit 0 + STDOUT, no STDERR).";
+                : validNotDetected
+                    ? $"{installerType} script detection returned a valid Intune not-detected signal (exit 1)."
+                    : $"{installerType} script detection failed Intune compliance check (installed: exit 0 + STDOUT; not installed: exit 1; no STDERR).";
 
             return new DetectionTestResult
             {
-                Success = compliant,
+                Success = compliant || validNotDetected,
                 Summary = summary,
                 Details = compliant
                     ? "Script produced a valid installed signal for Intune."
-                    : $"ExitCode={processResult.ExitCode}, HasStdOut={hasStdOut}, HasStdErr={hasStdErr}.",
+                    : validNotDetected
+                        ? "Script is valid for Intune and reported that the app is not installed on this device."
+                        : $"ExitCode={processResult.ExitCode}, HasStdOut={hasStdOut}, HasStdErr={hasStdErr}.",
                 ExitCode = processResult.ExitCode,
                 HasStdOut = hasStdOut,
                 HasStdErr = hasStdErr,
@@ -555,7 +576,7 @@ public sealed class DetectionTestService : IDetectionTestService
 
             if (scriptBody.Equals(original.Script.ScriptBody, StringComparison.Ordinal))
             {
-                scriptBody = "exit 1";
+                scriptBody = "if ($false) { Write-Output 'detected'; exit 0 }" + Environment.NewLine + "exit 1";
             }
 
             return original with
@@ -568,6 +589,96 @@ public sealed class DetectionTestService : IDetectionTestService
         }
 
         return original;
+    }
+
+    private static bool IsValidPassiveDetectionOutcome(DetectionTestResult result)
+    {
+        if (result.Success)
+        {
+            return true;
+        }
+
+        if (result.ExitCode == 1 && !result.HasStdErr)
+        {
+            return true;
+        }
+
+        return result.Summary.Contains("was not found", StringComparison.OrdinalIgnoreCase)
+            || result.Summary.Contains("did not match", StringComparison.OrdinalIgnoreCase)
+            || result.Summary.Contains("not installed", StringComparison.OrdinalIgnoreCase)
+            || result.Summary.Contains("not-detected", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPositiveDetectionOutcome(DetectionTestResult result)
+    {
+        if (!result.Success)
+        {
+            return false;
+        }
+
+        return result.ExitCode == 0 && !result.HasStdErr;
+    }
+
+    private static bool IsValidNotDetectedOutcome(DetectionTestResult result)
+    {
+        return !IsPositiveDetectionOutcome(result) && IsValidPassiveDetectionOutcome(result);
+    }
+
+    private static string BuildPositivePhaseSummary(bool requirePositiveDetection, DetectionTestResult positive)
+    {
+        if (requirePositiveDetection)
+        {
+            return IsPositiveDetectionOutcome(positive)
+                ? "Positive rule passed."
+                : "Positive rule failed (app may not be installed or rule is incorrect).";
+        }
+
+        if (positive.Success)
+        {
+            return "Configured rule is valid and currently detects the app.";
+        }
+
+        if (IsValidPassiveDetectionOutcome(positive))
+        {
+            return "Configured rule is valid; the app is not currently detected on this device.";
+        }
+
+        return "Configured rule is invalid or produced an Intune-incompatible detection result.";
+    }
+
+    private static string ResolveWindowsPowerShellPath(bool runAs32BitOn64System)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return "powershell.exe";
+        }
+
+        var windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        if (string.IsNullOrWhiteSpace(windowsDirectory))
+        {
+            windowsDirectory = Environment.GetEnvironmentVariable("WINDIR") ?? @"C:\Windows";
+        }
+
+        if (Environment.Is64BitOperatingSystem)
+        {
+            var systemDirectory = runAs32BitOn64System ? "SysWOW64" : "System32";
+            var candidate = Path.Combine(windowsDirectory, systemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            if (!runAs32BitOn64System)
+            {
+                var sysnative = Path.Combine(windowsDirectory, "Sysnative", "WindowsPowerShell", "v1.0", "powershell.exe");
+                if (File.Exists(sysnative))
+                {
+                    return sysnative;
+                }
+            }
+        }
+
+        return "powershell.exe";
     }
 
     [SupportedOSPlatform("windows")]

@@ -58,7 +58,12 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("New MSI ProductCode registered after install", script, StringComparison.Ordinal);
             Assert.Contains("Detection candidates", script, StringComparison.Ordinal);
             Assert.Contains("Candidate passed sandbox two-phase validation", script, StringComparison.Ordinal);
-            Assert.Contains("schemaVersion = 2", script, StringComparison.Ordinal);
+            Assert.Contains("Test-LaunchProof", script, StringComparison.Ordinal);
+            Assert.Contains("Launch validation", script, StringComparison.Ordinal);
+            Assert.Contains("launch-screenshot.png", script, StringComparison.Ordinal);
+            Assert.Contains("Save-WindowScreenshotAndAnalyze", script, StringComparison.Ordinal);
+            Assert.Contains("likelyBlankWindow", script, StringComparison.Ordinal);
+            Assert.Contains("schemaVersion = 3", script, StringComparison.Ordinal);
             Assert.Contains("GreaterThanOrEqual", script, StringComparison.Ordinal);
             Assert.Contains("result.json", script, StringComparison.Ordinal);
         }
@@ -107,6 +112,49 @@ public sealed class SandboxProofServiceTests
             Assert.Equal(@"C:\IwpSandboxProof\input\OutsideSource.exe", sandboxSetupPath);
             Assert.Contains(@"C:\IwpSandboxProof\input\OutsideSource.exe", installCommand, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(setupPath, installCommand, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(session.RunDirectory);
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenSourceIsDownloads_MapsOnlySetupFolder()
+    {
+        var tempRoot = CreateTempDirectory();
+        var downloadsFolder = Path.Combine(tempRoot, "Downloads");
+        var setupFolder = Path.Combine(downloadsFolder, "cMTViewer_V22329");
+        Directory.CreateDirectory(setupFolder);
+
+        var setupPath = Path.Combine(setupFolder, "cMTViewer-2.23.29.exe");
+        await File.WriteAllTextAsync(setupPath, "not a real exe");
+        await File.WriteAllTextAsync(Path.Combine(downloadsFolder, "OtherInstaller.exe"), "unrelated");
+
+        var sut = new SandboxProofService();
+
+        var session = await sut.StartAsync(new SandboxProofRequest
+        {
+            InstallerType = InstallerType.Exe,
+            SourceFolder = downloadsFolder,
+            SetupFilePath = setupPath,
+            InstallCommand = $"\"{setupPath}\" /S",
+            DetectionRule = BuildFileDetectionRule(),
+            LaunchSandbox = false
+        });
+
+        try
+        {
+            Assert.True(session.Success);
+
+            var input = await ReadInputAsync(session.InputPath);
+            Assert.Equal(setupFolder, input.RootElement.GetProperty("hostSourceFolder").GetString());
+            Assert.Equal(@"C:\IwpSandboxSource\cMTViewer-2.23.29.exe", input.RootElement.GetProperty("sandboxSetupFilePath").GetString());
+
+            var wsb = await File.ReadAllTextAsync(session.WsbPath);
+            Assert.Contains(setupFolder, wsb, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(downloadsFolder + "</HostFolder>", wsb, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -263,6 +311,56 @@ public sealed class SandboxProofServiceTests
             Assert.Equal("DisplayVersion", result.BestCandidate.Rule.Registry.ValueName);
             Assert.Equal(IntuneDetectionOperator.GreaterThanOrEqual, result.BestCandidate.Rule.Registry.Operator);
             Assert.Equal("8.9.4", result.BestCandidate.Rule.Registry.Value);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenLaunchProofFails_ReturnsFailedResult()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 3,
+              "launchProof": {
+                "required": true,
+                "success": false,
+                "summary": "Installed application could not be launched successfully in the sandbox."
+              },
+              "candidates": [
+                {
+                  "type": "File",
+                  "confidence": "High",
+                  "score": 90,
+                  "reason": "New shortcut target points to the installed application executable.",
+                  "proof": { "success": true, "summary": "Candidate passed sandbox two-phase validation." },
+                  "rule": {
+                    "ruleType": "File",
+                    "file": {
+                      "path": "C:\\Program Files\\Contoso",
+                      "fileOrFolderName": "Contoso.exe",
+                      "operator": "Exists"
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.True(result.Failed);
+            Assert.Contains("launch validation", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.NotNull(result.BestCandidate);
         }
         finally
         {

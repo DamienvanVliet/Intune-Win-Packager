@@ -122,6 +122,15 @@ public sealed class PackagingValidationService : IValidationService
             }
         }
 
+        var runtimeDependencies = RuntimeDependencyAnalyzer.Analyze(config.SetupFilePath, config.SourceFolder);
+        if (RuntimeDependencyAnalyzer.HasBlockingMissingRuntime(runtimeDependencies))
+        {
+            AddIssue(
+                issues,
+                "Core.Validation.RuntimeDependencyMissing",
+                runtimeDependencies.Summary + " Add Microsoft Visual C++ 2015-2022 Redistributable as an Intune dependency, install it before this app, or include the matching runtime DLLs in the application folder.");
+        }
+
         if (string.IsNullOrWhiteSpace(config.InstallCommand))
         {
             AddIssue(issues, "Core.Validation.InstallCommandRequired", "Install command is required.");
