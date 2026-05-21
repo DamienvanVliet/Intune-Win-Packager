@@ -5726,6 +5726,15 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private static TemplateSuggestion BuildTemplate(string packageId, InstallerType installerType, string? raw)
     {
         var normalized = raw?.ToLowerInvariant() ?? string.Empty;
+        if (installerType == InstallerType.Exe && IsFoxitPdfReaderPackage(packageId))
+        {
+            return new(
+                "\"<installer-file>.exe\" /install /quiet /norestart",
+                "\"<installer-file>.exe\" /uninstall /quiet /norestart",
+                "Foxit PDF Reader bundle detected. Use the vendor/packaging proven quiet bundle switches and validate in Sandbox Proof.",
+                84);
+        }
+
         if (installerType == InstallerType.Msi)
         {
             return new("msiexec /i \"<installer-file>.msi\" /quiet /norestart", "msiexec /x \"{PRODUCT-CODE}\" /quiet /norestart", "Use MSI Product Code detection in Intune.", 90);
@@ -5757,6 +5766,12 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
 
         return new("\"<installer-file>\" <install-args>", "\"<uninstall-command>\" <uninstall-args>", "Installer type unknown. Configure commands and detection manually.", 28);
+    }
+
+    private static bool IsFoxitPdfReaderPackage(string packageId)
+    {
+        return packageId.Equals("Foxit.FoxitReader", StringComparison.OrdinalIgnoreCase) ||
+               packageId.Equals("Foxit.FoxitReader.Inno", StringComparison.OrdinalIgnoreCase);
     }
 
     private static InstallerType InferInstallerType(string? raw, string? fallback)

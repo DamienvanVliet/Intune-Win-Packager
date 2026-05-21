@@ -541,6 +541,78 @@ public sealed class SandboxProofServiceTests
     }
 
     [Fact]
+    public async Task ReadResultAsync_WhenInstallReturns1602WithoutEvidence_ReturnsFailedResult()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "install": {
+                "exitCode": 1602,
+                "timedOut": false,
+                "stdout": "",
+                "stderr": ""
+              },
+              "candidates": []
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.True(result.Failed);
+            Assert.Equal(0, result.CandidateCount);
+            Assert.Contains("1602", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("incorrect silent switches", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("No install evidence", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenInstallTimesOutWithoutEvidence_ReturnsFailedResult()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "install": {
+                "exitCode": -1,
+                "timedOut": true,
+                "stdout": "",
+                "stderr": ""
+              },
+              "candidates": []
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.True(result.Failed);
+            Assert.Contains("timed out", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Intune", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
     public async Task ReadResultAsync_WhenLegacyFlattenedCandidateExists_StillReturnsDetectionRule()
     {
         var tempRoot = CreateTempDirectory();

@@ -827,6 +827,102 @@ public sealed class PackageCatalogServiceTests
     }
 
     [Fact]
+    public async Task GetDetailsAsync_WingetManifestFoxitInnoWithoutSwitches_UsesFoxitBundleQuietSwitches()
+    {
+        var processRunner = new StubProcessRunner(
+        [
+            new StubProcessResult(0,
+            [
+                "Found Foxit PDF Reader [Foxit.FoxitReader.Inno]",
+                "Version: 2025.2.0.33046",
+                "Publisher: Foxit Software Inc.",
+                "Installer:",
+                "  No applicable installer found; see logs for more details."
+            ])
+        ]);
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.EndsWith("Foxit.FoxitReader.Inno.installer.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Foxit.FoxitReader.Inno
+                    PackageVersion: 2025.2.0.33046
+                    InstallerType: inno
+                    Scope: machine
+                    ProductCode: Foxit Reader_is1
+                    Installers:
+                    - Architecture: x64
+                      InstallerUrl: https://cdn01.foxitsoftware.com/product/reader/desktop/win/2025.2.0/FoxitPDFReader20252_L10N_Setup_Prom_x64.exe
+                      InstallerSha256: 31DB3256B8F5EC55EC9BC5A278A03C938802ED17A61FE6394E196E5FA4FED1BD
+                    ManifestType: installer
+                    ManifestVersion: 1.10.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Foxit.FoxitReader.Inno.locale.en-US.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Foxit.FoxitReader.Inno
+                    PackageVersion: 2025.2.0.33046
+                    PackageLocale: en-US
+                    Publisher: Foxit Software Inc.
+                    PackageName: Foxit PDF Reader
+                    ManifestType: defaultLocale
+                    ManifestVersion: 1.10.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Foxit.FoxitReader.Inno.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Foxit.FoxitReader.Inno
+                    PackageVersion: 2025.2.0.33046
+                    DefaultLocale: en-US
+                    ManifestType: version
+                    ManifestVersion: 1.10.0
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var entry = new PackageCatalogEntry
+        {
+            Source = PackageCatalogSource.Winget,
+            SourceDisplayName = "WinGet",
+            SourceChannel = "winget",
+            PackageId = "Foxit.FoxitReader.Inno",
+            Name = "Foxit PDF Reader",
+            Version = "2025.2.0.33046"
+        };
+
+        var details = await sut.GetDetailsAsync(entry);
+
+        Assert.NotNull(details);
+        var variant = Assert.Single(details!.InstallerVariants);
+        Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Contains("/install", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/quiet", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/norestart", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/VERYSILENT", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/uninstall", variant.SuggestedUninstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/quiet", variant.SuggestedUninstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Foxit Reader_is1", variant.DetectionRule.Registry.KeyPath);
+    }
+
+    [Fact]
     public async Task GetDetailsAsync_WingetManifestUnknownExe_CustomOnlySwitchesDoNotCreateUnsafeInstallCommand()
     {
         var processRunner = new StubProcessRunner(

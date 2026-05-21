@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.0.14] - 2026-05-21
+
+### Changed
+- Use Foxit PDF Reader bundle-specific quiet install switches for WinGet Foxit reader packages instead of blindly falling back to generic Inno `/VERYSILENT` arguments.
+- Add clearer Sandbox Proof install verdicts to generated reports.
+
+### Fixed
+- Treat failed sandbox installs with non-success exit codes and no proven evidence as real proof failures, including common exit-code explanations such as `1602`.
+- Add regression coverage for Foxit PDF Reader command generation and sandbox install-failure reporting.
+
 ## [3.0.13] - 2026-05-21
 
 ### Fixed

@@ -198,6 +198,9 @@ public sealed class SandboxProofService : ISandboxProofService
                 };
             }
 
+            var hasInstallOutcome = TryGetObject(root, "install", out var installElement);
+            var installTimedOut = hasInstallOutcome && GetJsonBoolean(installElement, "timedOut");
+            var installExitCode = hasInstallOutcome ? GetJsonInt(installElement, "exitCode") : 0;
             var candidates = new List<SandboxProofDetectionCandidate>();
             if (root.TryGetProperty("candidates", out var candidatesElement) &&
                 candidatesElement.ValueKind == JsonValueKind.Array)
@@ -222,6 +225,23 @@ public sealed class SandboxProofService : ISandboxProofService
                 .ThenByDescending(candidate => ConfidenceScore(candidate.Confidence))
                 .ThenBy(candidate => DetectionTypePriority(candidate.Rule.RuleType))
                 .FirstOrDefault();
+
+            if (hasInstallOutcome &&
+                !IsSuccessfulInstallExitCode(installExitCode, installTimedOut) &&
+                provenCandidateCount == 0)
+            {
+                return new SandboxProofDetectionResult
+                {
+                    Completed = true,
+                    Failed = true,
+                    ResultPath = resultPath,
+                    Message = BuildInstallFailureMessage(installExitCode, installTimedOut, candidates.Count),
+                    CandidateCount = candidates.Count,
+                    ProvenCandidateCount = provenCandidateCount,
+                    BestCandidate = bestCandidate,
+                    Candidates = candidates
+                };
+            }
 
             var message = BuildSandboxProofResultMessage(candidates.Count, provenCandidateCount, proofAvailable, bestCandidate);
 
@@ -273,6 +293,35 @@ public sealed class SandboxProofService : ISandboxProofService
             Success = false,
             Message = message
         };
+    }
+
+    private static bool IsSuccessfulInstallExitCode(int exitCode, bool timedOut)
+    {
+        return !timedOut && exitCode is 0 or 3010 or 1641;
+    }
+
+    private static string BuildInstallFailureMessage(int exitCode, bool timedOut, int candidateCount)
+    {
+        if (timedOut)
+        {
+            return "Sandbox proof failed: install command timed out. The installer did not finish unattended, so this package would likely hang in Intune too.";
+        }
+
+        var explanation = exitCode switch
+        {
+            1602 => "cancelled by the installer or blocked by a required UI prompt, often caused by incorrect silent switches",
+            1618 => "another installation is already in progress",
+            1623 or 1633 or 1654 => "installer does not support this system",
+            1625 or 1640 or 1643 or 1644 or 1649 => "blocked by policy",
+            1628 or 1639 or 1650 => "invalid command-line parameters",
+            1638 => "another version is already installed",
+            _ => "installer returned a failure code"
+        };
+        var evidence = candidateCount == 0
+            ? "No install evidence or detection candidates were created."
+            : $"{candidateCount} detection candidate(s) were created, but none passed proof validation.";
+
+        return $"Sandbox proof failed: install command exited with code {exitCode} ({explanation}). {evidence} Review the install arguments before packaging.";
     }
 
     private static SandboxProofDetectionCandidate? ParseDetectionCandidate(JsonElement candidateElement)
@@ -1719,6 +1768,34 @@ function Write-Report {
     $lines += "Install command: $($Result.request.installCommand)"
     $lines += "Install exit code: $($Result.install.exitCode)"
     $lines += "Install timed out: $($Result.install.timedOut)"
+    $installExitCode = [int]$Result.install.exitCode
+    $installTimedOut = [bool]$Result.install.timedOut
+    if ($installTimedOut) {
+        $lines += 'Install verdict: Failed - command timed out before completing unattended.'
+    }
+    elseif ($installExitCode -in @(0, 3010, 1641)) {
+        $lines += 'Install verdict: Completed - exit code is accepted for proof.'
+    }
+    else {
+        $exitExplanation = switch ($installExitCode) {
+            1602 { 'cancelled by installer/user or blocked by a required prompt; check silent switches' }
+            1618 { 'another installation is already in progress' }
+            1623 { 'system not supported' }
+            1625 { 'blocked by policy' }
+            1628 { 'invalid command-line parameters' }
+            1633 { 'system not supported' }
+            1638 { 'another version is already installed' }
+            1639 { 'invalid command-line parameters' }
+            1640 { 'blocked by policy' }
+            1643 { 'blocked by policy' }
+            1644 { 'blocked by policy' }
+            1649 { 'blocked by policy' }
+            1650 { 'invalid command-line parameters' }
+            1654 { 'system not supported' }
+            default { 'installer returned a failure code' }
+        }
+        $lines += "Install verdict: Failed - $exitExplanation."
+    }
     $lines += ''
     $lines += "Pre-install detection: $($Result.preInstallDetection.success) - $($Result.preInstallDetection.summary)"
     $lines += "Post-install detection: $($Result.postInstallDetection.success) - $($Result.postInstallDetection.summary)"
