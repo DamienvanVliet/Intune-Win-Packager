@@ -10,7 +10,9 @@ namespace IntuneWinPackager.Core.Services;
 public sealed class PackagingValidationService : IValidationService
 {
     private static readonly Regex ProductCodeRegex = new("^\\{[0-9A-Fa-f\\-]{36}\\}$", RegexOptions.Compiled);
-    private static readonly Regex PlaceholderRegex = new("<[^>]+>", RegexOptions.Compiled);
+    private static readonly Regex PlaceholderRegex = new(
+        @"<[^>]+>|\{PRODUCT-CODE\}|\{PACKAGE-IDENTITY\}",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly HashSet<string> SupportedArchitectures = new(StringComparer.OrdinalIgnoreCase)
     {

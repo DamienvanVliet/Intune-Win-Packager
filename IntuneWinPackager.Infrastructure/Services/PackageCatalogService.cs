@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using IntuneWinPackager.Core.Interfaces;
+using IntuneWinPackager.Core.Services;
 using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
@@ -387,6 +388,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             SuggestedInstallCommand = Coalesce(variant.SuggestedInstallCommand, entry.SuggestedInstallCommand),
             SuggestedUninstallCommand = Coalesce(variant.SuggestedUninstallCommand, entry.SuggestedUninstallCommand),
             DetectionGuidance = Coalesce(variant.DetectionGuidance, entry.DetectionGuidance),
+            DetectionReady = variant.IsDeterministicDetection &&
+                             CatalogReadinessEvaluator.IsUsableDetectionRule(variant.DetectionRule),
             ConfidenceScore = Math.Max(entry.ConfidenceScore, variant.ConfidenceScore)
         };
     }
@@ -1241,9 +1244,17 @@ public sealed class PackageCatalogService : IPackageCatalogService
             fileDetectionPath = parsedIconPath;
             fileDetectionName = parsedIconName;
         }
+        else if (TryBuildFileDetectionFromInstallationMetadata(
+                     preferredManifestInstaller,
+                     out var manifestFilePath,
+                     out var manifestFileName))
+        {
+            fileDetectionPath = manifestFilePath;
+            fileDetectionName = manifestFileName;
+        }
         var template = BuildTemplate(packageId, installerType, installerRaw);
         var installCommand = Coalesce(
-            BuildManifestInstallCommand(installerType, preferredManifestInstaller),
+            BuildManifestInstallCommand(installerType, preferredManifestInstaller, template.InstallCommand),
             template.InstallCommand);
         var uninstallCommand = ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode, appxIdentity);
         var detection = BuildDeterministicDetectionRule(
@@ -1302,7 +1313,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                     detectionGuidance: detection.Guidance,
                     isDeterministicDetection: detection.IsDeterministic,
                     confidenceScore: template.ConfidenceScore,
-                    publishedAtUtc: null)
+                    publishedAtUtc: null,
+                    additionalDetectionRules: detection.AdditionalRules ?? [])
             ];
         }
 
@@ -1334,6 +1346,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             SuggestedUninstallCommand = Coalesce(preferredVariant.SuggestedUninstallCommand, uninstallCommand),
             DetectionGuidance = Coalesce(preferredVariant.DetectionGuidance, detection.Guidance),
             ConfidenceScore = Math.Max(template.ConfidenceScore, preferredVariant.ConfidenceScore),
+            DetectionReady = preferredVariant.IsDeterministicDetection &&
+                             CatalogReadinessEvaluator.IsUsableDetectionRule(preferredVariant.DetectionRule),
             MetadataNotes = string.IsNullOrWhiteSpace(map.GetValueOrDefault("Installer Url"))
                 ? manifest is null
                     ? $"Detailed metadata from WinGet source '{sourceName}'."
@@ -1449,7 +1463,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
         var localeRoot = ParseYamlTopLevelScalars(localeYaml, stopAtInstallers: false);
         var versionRoot = ParseYamlTopLevelScalars(versionYaml, stopAtInstallers: false);
         var globalSwitches = ParseWingetGlobalInstallerSwitches(installerYaml);
-        var installers = ParseWingetManifestInstallers(installerYaml, installerRoot, globalSwitches);
+        var globalInstallationMetadata = ParseWingetGlobalInstallationMetadata(installerYaml);
+        var installers = ParseWingetManifestInstallers(installerYaml, installerRoot, globalSwitches, globalInstallationMetadata);
 
         return new WingetManifestInfo(
             PackageIdentifier: Coalesce(
@@ -1471,7 +1486,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private static IReadOnlyList<WingetManifestInstallerInfo> ParseWingetManifestInstallers(
         string yaml,
         IReadOnlyDictionary<string, string> root,
-        IReadOnlyDictionary<string, string> globalSwitches)
+        IReadOnlyDictionary<string, string> globalSwitches,
+        WingetInstallationMetadata globalInstallationMetadata)
     {
         var builders = new List<WingetManifestInstallerBuilder>();
         var inInstallers = false;
@@ -1533,6 +1549,25 @@ public sealed class PackageCatalogService : IPackageCatalogService
                     : trimmed;
                 if (TryReadYamlKeyValue(nested, out var nestedKey, out var nestedValue))
                 {
+                    if (section.Equals("metadata", StringComparison.OrdinalIgnoreCase) &&
+                        nestedKey.Equals("Files", StringComparison.OrdinalIgnoreCase))
+                    {
+                        section = "metadataFiles";
+                        sectionIndent = Math.Max(sectionIndent, indent - 1);
+                        continue;
+                    }
+
+                    if (section.Equals("metadataFiles", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (trimmed.StartsWith("- ", StringComparison.Ordinal) || current.InstalledFiles.Count == 0)
+                        {
+                            current.InstalledFiles.Add(new WingetInstalledFileBuilder());
+                        }
+
+                        current.InstalledFiles[^1].Values[nestedKey] = nestedValue;
+                        continue;
+                    }
+
                     var target = section switch
                     {
                         "switches" => current.Switches,
@@ -1595,7 +1630,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
         }
 
         return builders
-            .Select(builder => BuildWingetManifestInstallerInfo(builder, root, globalSwitches))
+            .Select(builder => BuildWingetManifestInstallerInfo(builder, root, globalSwitches, globalInstallationMetadata))
             .Where(installer => !string.IsNullOrWhiteSpace(installer.InstallerUrl))
             .ToList();
     }
@@ -1603,13 +1638,24 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private static WingetManifestInstallerInfo BuildWingetManifestInstallerInfo(
         WingetManifestInstallerBuilder builder,
         IReadOnlyDictionary<string, string> root,
-        IReadOnlyDictionary<string, string> globalSwitches)
+        IReadOnlyDictionary<string, string> globalSwitches,
+        WingetInstallationMetadata globalInstallationMetadata)
     {
         var switches = new Dictionary<string, string>(globalSwitches, StringComparer.OrdinalIgnoreCase);
         foreach (var pair in builder.Switches)
         {
             switches[pair.Key] = pair.Value;
         }
+
+        var installationMetadata = new Dictionary<string, string>(globalInstallationMetadata.Values, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in builder.InstallationMetadata)
+        {
+            installationMetadata[pair.Key] = pair.Value;
+        }
+
+        var installedFiles = builder.InstalledFiles.Count > 0
+            ? builder.InstalledFiles.Select(BuildInstalledFileInfo).ToList()
+            : globalInstallationMetadata.Files;
 
         return new WingetManifestInstallerInfo(
             InstallerTypeRaw: Coalesce(builder.Values.GetValueOrDefault("InstallerType"), root.GetValueOrDefault("InstallerType")),
@@ -1621,13 +1667,24 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 builder.Values.GetValueOrDefault("ProductCode"),
                 builder.AppsAndFeatures.GetValueOrDefault("ProductCode"),
                 root.GetValueOrDefault("ProductCode")),
+            CustomSwitch: Coalesce(switches.GetValueOrDefault("Custom")),
             SilentSwitch: Coalesce(switches.GetValueOrDefault("Silent")),
             SilentWithProgressSwitch: Coalesce(switches.GetValueOrDefault("SilentWithProgress")),
             InstallLocationSwitch: Coalesce(switches.GetValueOrDefault("InstallLocation")),
+            UpgradeSwitch: Coalesce(switches.GetValueOrDefault("Upgrade")),
+            RepairSwitch: Coalesce(switches.GetValueOrDefault("Repair")),
+            LogSwitch: Coalesce(switches.GetValueOrDefault("Log")),
+            InstallLocationRequired: ParseWingetBoolean(Coalesce(
+                builder.Values.GetValueOrDefault("InstallLocationRequired"),
+                root.GetValueOrDefault("InstallLocationRequired"))),
+            RequireExplicitUpgrade: ParseWingetBoolean(Coalesce(
+                builder.Values.GetValueOrDefault("RequireExplicitUpgrade"),
+                root.GetValueOrDefault("RequireExplicitUpgrade"))),
             DefaultInstallLocation: Coalesce(
-                builder.InstallationMetadata.GetValueOrDefault("DefaultInstallLocation"),
+                installationMetadata.GetValueOrDefault("DefaultInstallLocation"),
                 builder.Values.GetValueOrDefault("DefaultInstallLocation"),
                 root.GetValueOrDefault("DefaultInstallLocation")),
+            InstalledFiles: installedFiles,
             DisplayName: Coalesce(builder.AppsAndFeatures.GetValueOrDefault("DisplayName")),
             Publisher: Coalesce(builder.AppsAndFeatures.GetValueOrDefault("Publisher")),
             DisplayVersion: Coalesce(builder.AppsAndFeatures.GetValueOrDefault("DisplayVersion")));
@@ -1703,6 +1760,92 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return switches;
     }
 
+    private static WingetInstallationMetadata ParseWingetGlobalInstallationMetadata(string yaml)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var files = new List<WingetInstalledFileBuilder>();
+        var inMetadata = false;
+        var metadataIndent = -1;
+        var inFiles = false;
+        var filesIndent = -1;
+
+        foreach (var raw in SplitYamlLines(yaml))
+        {
+            if (IsIgnorableYamlLine(raw))
+            {
+                continue;
+            }
+
+            var indent = CountLeadingSpaces(raw);
+            var trimmed = raw.Trim();
+            if (trimmed.Equals("Installers:", StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            if (!inMetadata)
+            {
+                if (trimmed.Equals("InstallationMetadata:", StringComparison.OrdinalIgnoreCase))
+                {
+                    inMetadata = true;
+                    metadataIndent = indent;
+                }
+
+                continue;
+            }
+
+            if (indent <= metadataIndent && !trimmed.StartsWith("- ", StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            if (inFiles && indent > filesIndent)
+            {
+                var nested = trimmed.StartsWith("- ", StringComparison.Ordinal)
+                    ? trimmed[2..].Trim()
+                    : trimmed;
+                if (TryReadYamlKeyValue(nested, out var fileKey, out var fileValue))
+                {
+                    if (trimmed.StartsWith("- ", StringComparison.Ordinal) || files.Count == 0)
+                    {
+                        files.Add(new WingetInstalledFileBuilder());
+                    }
+
+                    files[^1].Values[fileKey] = fileValue;
+                }
+
+                continue;
+            }
+
+            inFiles = false;
+            if (!TryReadYamlKeyValue(trimmed, out var key, out var value))
+            {
+                continue;
+            }
+
+            if (key.Equals("Files", StringComparison.OrdinalIgnoreCase))
+            {
+                inFiles = true;
+                filesIndent = Math.Max(metadataIndent, indent - 1);
+                continue;
+            }
+
+            values[key] = value;
+        }
+
+        return new WingetInstallationMetadata(
+            values,
+            files.Select(BuildInstalledFileInfo).ToList());
+    }
+
+    private static WingetInstalledFileInfo BuildInstalledFileInfo(WingetInstalledFileBuilder builder)
+    {
+        return new WingetInstalledFileInfo(
+            RelativeFilePath: Coalesce(builder.Values.GetValueOrDefault("RelativeFilePath")),
+            FileType: Coalesce(builder.Values.GetValueOrDefault("FileType")),
+            DisplayName: Coalesce(builder.Values.GetValueOrDefault("DisplayName")));
+    }
+
     private static IReadOnlyList<CatalogInstallerVariant> BuildWingetManifestInstallerVariants(
         WingetManifestInfo manifest,
         PackageCatalogSource source,
@@ -1729,6 +1872,10 @@ public sealed class PackageCatalogService : IPackageCatalogService
             var uninstallRegistryKeyPath = installerType == InstallerType.Exe
                 ? BuildUninstallRegistryPathFromProductCode(rawProductCode)
                 : string.Empty;
+            TryBuildFileDetectionFromInstallationMetadata(
+                installer,
+                out var fileDetectionPath,
+                out var fileDetectionName);
             var detection = BuildDeterministicDetectionRule(
                 installerType,
                 packageId,
@@ -1741,11 +1888,13 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 uninstallDisplayName: Coalesce(installer.DisplayName, packageName),
                 uninstallPublisher: Coalesce(installer.Publisher, publisher),
                 uninstallDisplayVersion: Coalesce(installer.DisplayVersion, version),
-                fileDetectionPath: installer.DefaultInstallLocation,
-                fileDetectionName: string.Empty,
+                fileDetectionPath: fileDetectionPath,
+                fileDetectionName: fileDetectionName,
                 fileDetectionVersion: Coalesce(installer.DisplayVersion, version),
                 appxPublisher: publisher);
-            var installCommand = Coalesce(BuildManifestInstallCommand(installerType, installer), template.InstallCommand);
+            var installCommand = Coalesce(
+                BuildManifestInstallCommand(installerType, installer, template.InstallCommand),
+                template.InstallCommand);
             var uninstallCommand = ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode, appxIdentity);
             var confidence = Math.Min(100, template.ConfidenceScore + 8);
 
@@ -1773,7 +1922,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 confidenceScore: confidence,
                 publishedAtUtc: DateTimeOffset.TryParse(manifest.ReleaseDate, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var releaseDate)
                     ? releaseDate.ToUniversalTime()
-                    : null));
+                    : null,
+                additionalDetectionRules: detection.AdditionalRules ?? []));
         }
 
         return variants
@@ -1783,17 +1933,104 @@ public sealed class PackageCatalogService : IPackageCatalogService
             .ToList();
     }
 
-    private static string BuildManifestInstallCommand(InstallerType installerType, WingetManifestInstallerInfo? installer)
+    private static string BuildManifestInstallCommand(
+        InstallerType installerType,
+        WingetManifestInstallerInfo? installer,
+        string fallbackInstallCommand)
     {
-        if (installer is null || installerType == InstallerType.Msi)
+        if (installer is null)
         {
             return string.Empty;
         }
 
-        var silentSwitch = Coalesce(installer.SilentSwitch, installer.SilentWithProgressSwitch);
-        return string.IsNullOrWhiteSpace(silentSwitch)
-            ? string.Empty
-            : $"\"<installer-file>\" {silentSwitch}";
+        var fallbackSilentSwitches = ResolveTemplateInstallSwitches(fallbackInstallCommand);
+        var installSwitches = BuildManifestInstallSwitches(
+            installer,
+            fallbackSilentSwitches,
+            requiresSilentBase: installerType != InstallerType.Msi);
+        if (installerType == InstallerType.Msi)
+        {
+            var command = "msiexec /i \"<installer-file>.msi\" /quiet /norestart";
+            return string.IsNullOrWhiteSpace(installSwitches)
+                ? command
+                : $"{command} {installSwitches}";
+        }
+
+        if (installerType == InstallerType.AppxMsix)
+        {
+            return string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(installSwitches))
+        {
+            return string.Empty;
+        }
+
+        return $"\"<installer-file>\" {installSwitches}".Trim();
+    }
+
+    private static string BuildManifestInstallSwitches(
+        WingetManifestInstallerInfo installer,
+        string fallbackSilentSwitches,
+        bool requiresSilentBase)
+    {
+        var switches = new List<string>();
+
+        var silentSwitch = Coalesce(installer.SilentSwitch, installer.SilentWithProgressSwitch, fallbackSilentSwitches);
+        if (requiresSilentBase && string.IsNullOrWhiteSpace(silentSwitch))
+        {
+            return string.Empty;
+        }
+
+        AddCommandPart(switches, silentSwitch);
+        AddCommandPart(switches, installer.CustomSwitch);
+
+        if (installer.InstallLocationRequired)
+        {
+            var installLocationSwitch = Coalesce(installer.InstallLocationSwitch, "<INSTALLPATH>");
+            AddCommandPart(switches, installLocationSwitch);
+        }
+
+        return string.Join(" ", switches);
+    }
+
+    private static string ResolveTemplateInstallSwitches(string fallbackInstallCommand)
+    {
+        if (string.IsNullOrWhiteSpace(fallbackInstallCommand))
+        {
+            return string.Empty;
+        }
+
+        var command = fallbackInstallCommand.Trim();
+        var argumentStart = command.StartsWith('"')
+            ? command.IndexOf('"', 1) + 1
+            : command.IndexOf(' ', StringComparison.Ordinal);
+        if (argumentStart <= 0 || argumentStart >= command.Length)
+        {
+            return string.Empty;
+        }
+
+        var arguments = command[argumentStart..].Trim();
+        return ContainsTemplateArgument(arguments) ? string.Empty : arguments;
+    }
+
+    private static bool ContainsTemplateArgument(string value)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+               (value.Contains('<', StringComparison.Ordinal) || value.Contains('{', StringComparison.Ordinal));
+    }
+
+    private static void AddCommandPart(List<string> parts, string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            parts.Add(value.Trim());
+        }
+    }
+
+    private static bool ParseWingetBoolean(string value)
+    {
+        return bool.TryParse(value?.Trim(), out var parsed) && parsed;
     }
 
     private static int WingetManifestInstallerPreferenceScore(WingetManifestInstallerInfo installer)
@@ -2065,7 +2302,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 detectionGuidance: detection.Guidance,
                 isDeterministicDetection: detection.IsDeterministic,
                 confidenceScore: Math.Max(30, template.ConfidenceScore - 20),
-                publishedAtUtc: null);
+                publishedAtUtc: null,
+                additionalDetectionRules: detection.AdditionalRules ?? []);
 
             parsed.Add(new PackageCatalogEntry
             {
@@ -2344,7 +2582,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 detectionGuidance: detection.Guidance,
                 isDeterministicDetection: detection.IsDeterministic,
                 confidenceScore: Math.Max(46, template.ConfidenceScore - 18),
-                publishedAtUtc: null);
+                publishedAtUtc: null,
+                additionalDetectionRules: detection.AdditionalRules ?? []);
 
             entries.Add(new PackageCatalogEntry
             {
@@ -2430,7 +2669,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             detectionGuidance: detection.Guidance,
             isDeterministicDetection: detection.IsDeterministic,
             confidenceScore: Math.Max(entry.ConfidenceScore, template.ConfidenceScore),
-            publishedAtUtc: null);
+            publishedAtUtc: null,
+            additionalDetectionRules: detection.AdditionalRules ?? []);
 
         return entry with
         {
@@ -3064,7 +3304,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 detectionGuidance: detection.Guidance,
                 isDeterministicDetection: detection.IsDeterministic,
                 confidenceScore: confidence,
-                publishedAtUtc: null);
+                publishedAtUtc: null,
+                additionalDetectionRules: detection.AdditionalRules ?? []);
 
             entries.Add(new PackageCatalogEntry
             {
@@ -3158,7 +3399,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             detectionGuidance: detection.Guidance,
             isDeterministicDetection: detection.IsDeterministic,
             confidenceScore: entry.ConfidenceScore,
-            publishedAtUtc: entry.PublishedAtUtc);
+            publishedAtUtc: entry.PublishedAtUtc,
+            additionalDetectionRules: detection.AdditionalRules ?? []);
 
         return entry with
         {
@@ -4438,7 +4680,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 detectionGuidance: Coalesce(entry.DetectionGuidance, detection.Guidance),
                 isDeterministicDetection: detection.IsDeterministic,
                 confidenceScore: entry.ConfidenceScore,
-                publishedAtUtc: entry.PublishedAtUtc);
+                publishedAtUtc: entry.PublishedAtUtc,
+                additionalDetectionRules: detection.AdditionalRules ?? []);
             return [variant];
         }
 
@@ -4474,7 +4717,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
             ? InferAppxIdentity(resolvedPackageId, packageName, variant.PackageId)
             : string.Empty;
         var detection = variant.DetectionRule.RuleType != IntuneDetectionRuleType.None
-            ? new DetectionStrategyPlan(variant.DetectionRule, variant.DetectionGuidance, variant.IsDeterministicDetection)
+            ? new DetectionStrategyPlan(
+                variant.DetectionRule,
+                variant.DetectionGuidance,
+                variant.IsDeterministicDetection,
+                variant.AdditionalDetectionRules)
             : BuildDeterministicDetectionRule(
                 resolvedInstallerType,
                 resolvedPackageId,
@@ -4518,7 +4765,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
             isDeterministicDetection: variant.IsDeterministicDetection || detection.IsDeterministic,
             confidenceScore: Math.Max(variant.ConfidenceScore, entry.ConfidenceScore),
             publishedAtUtc: variant.PublishedAtUtc ?? entry.PublishedAtUtc,
-            variantKey: variant.VariantKey);
+            variantKey: variant.VariantKey,
+            additionalDetectionRules: detection.AdditionalRules ?? []);
     }
 
     private static CatalogInstallerVariant BuildInstallerVariant(
@@ -4544,7 +4792,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
         bool isDeterministicDetection,
         int confidenceScore,
         DateTimeOffset? publishedAtUtc,
-        string variantKey = "")
+        string variantKey = "",
+        IReadOnlyList<IntuneDetectionRule>? additionalDetectionRules = null)
     {
         var resolvedVersion = Coalesce(version, buildVersion);
         var resolvedBuildVersion = Coalesce(buildVersion, resolvedVersion);
@@ -4573,6 +4822,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
             SuggestedInstallCommand = suggestedInstallCommand,
             SuggestedUninstallCommand = suggestedUninstallCommand,
             DetectionRule = detectionRule,
+            AdditionalDetectionRules = additionalDetectionRules ?? [],
             DetectionGuidance = detectionGuidance,
             IsDeterministicDetection = isDeterministicDetection,
             ConfidenceScore = confidenceScore,
@@ -4665,7 +4915,8 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 detectionGuidance: detection.Guidance,
                 isDeterministicDetection: detection.IsDeterministic,
                 confidenceScore: variantConfidence,
-                publishedAtUtc: release.PublishedAtUtc));
+                publishedAtUtc: release.PublishedAtUtc,
+                additionalDetectionRules: detection.AdditionalRules ?? []));
         }
 
         return variants
@@ -4750,21 +5001,28 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 !string.IsNullOrWhiteSpace(exactPublisher) &&
                 !string.IsNullOrWhiteSpace(exactVersion))
             {
-                return new DetectionStrategyPlan(
-                    new IntuneDetectionRule
+                var registryRule = new IntuneDetectionRule
+                {
+                    RuleType = IntuneDetectionRuleType.Registry,
+                    Registry = new RegistryDetectionRule
                     {
-                        RuleType = IntuneDetectionRuleType.Registry,
-                        Registry = new RegistryDetectionRule
-                        {
-                            Hive = "HKEY_LOCAL_MACHINE",
-                            KeyPath = uninstallRegistryKeyPath,
-                            ValueName = "DisplayVersion",
-                            Operator = IntuneDetectionOperator.Equals,
-                            Value = exactVersion
-                        }
-                    },
-                    "Detection selection: MSI rejected (installer type EXE). Registry accepted using exact uninstall key metadata plus DisplayVersion equality. File/script detection were not needed.",
-                    true);
+                        Hive = "HKEY_LOCAL_MACHINE",
+                        KeyPath = uninstallRegistryKeyPath,
+                        ValueName = "DisplayVersion",
+                        Operator = IntuneDetectionOperator.Equals,
+                        Value = exactVersion
+                    }
+                };
+
+                return new DetectionStrategyPlan(
+                    registryRule,
+                    "Detection selection: MSI rejected (installer type EXE). Registry accepted using exact uninstall key metadata plus DisplayVersion equality, with DisplayName/Publisher identity rules when available. File/script detection were not needed.",
+                    true,
+                    BuildRegistryIdentityAdditionalRules(
+                        registryRule.Registry.Hive,
+                        registryRule.Registry.KeyPath,
+                        exactDisplayName,
+                        exactPublisher));
             }
 
             if (!string.IsNullOrWhiteSpace(stableFilePath) &&
@@ -4839,6 +5097,48 @@ public sealed class PackageCatalogService : IPackageCatalogService
     private static string BuildExactRegistryDetectionScript(string displayName, string publisher, string version)
     {
         return DeterministicDetectionScript.BuildExactExeRegistryScript(displayName, publisher, version);
+    }
+
+    private static IReadOnlyList<IntuneDetectionRule> BuildRegistryIdentityAdditionalRules(
+        string hive,
+        string keyPath,
+        string displayName,
+        string publisher)
+    {
+        var rules = new List<IntuneDetectionRule>();
+        if (!string.IsNullOrWhiteSpace(displayName))
+        {
+            rules.Add(new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Registry,
+                Registry = new RegistryDetectionRule
+                {
+                    Hive = hive,
+                    KeyPath = keyPath,
+                    ValueName = "DisplayName",
+                    Operator = IntuneDetectionOperator.Equals,
+                    Value = displayName
+                }
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(publisher))
+        {
+            rules.Add(new IntuneDetectionRule
+            {
+                RuleType = IntuneDetectionRuleType.Registry,
+                Registry = new RegistryDetectionRule
+                {
+                    Hive = hive,
+                    KeyPath = keyPath,
+                    ValueName = "Publisher",
+                    Operator = IntuneDetectionOperator.Equals,
+                    Value = publisher
+                }
+            });
+        }
+
+        return rules;
     }
 
     private static string BuildExactAppxDetectionScript(string appxIdentity, string version, string publisher)
@@ -5002,6 +5302,149 @@ public sealed class PackageCatalogService : IPackageCatalogService
         {
             return false;
         }
+    }
+
+    private static bool TryBuildFileDetectionFromInstallationMetadata(
+        WingetManifestInstallerInfo? installer,
+        out string folderPath,
+        out string fileName)
+    {
+        folderPath = string.Empty;
+        fileName = string.Empty;
+        if (installer is null || installer.InstalledFiles.Count == 0)
+        {
+            return false;
+        }
+
+        var orderedFiles = installer.InstalledFiles
+            .Where(file => !string.IsNullOrWhiteSpace(file.RelativeFilePath))
+            .Select(file => new
+            {
+                File = file,
+                Score = InstalledFileDetectionScore(file)
+            })
+            .Where(item => item.Score > 0)
+            .OrderByDescending(item => item.Score)
+            .ThenBy(item => item.File.RelativeFilePath.Length)
+            .Select(item => item.File);
+
+        foreach (var file in orderedFiles)
+        {
+            if (TrySplitInstalledFilePath(
+                    installer.DefaultInstallLocation,
+                    file.RelativeFilePath,
+                    out folderPath,
+                    out fileName))
+            {
+                return true;
+            }
+        }
+
+        folderPath = string.Empty;
+        fileName = string.Empty;
+        return false;
+    }
+
+    private static int InstalledFileDetectionScore(WingetInstalledFileInfo file)
+    {
+        var relativePath = file.RelativeFilePath.Replace('/', '\\').Trim();
+        var name = Path.GetFileName(relativePath);
+        if (string.IsNullOrWhiteSpace(name) ||
+            !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+            IsWeakDetectionExecutableName(name))
+        {
+            return 0;
+        }
+
+        var score = 40;
+        if (file.FileType.Equals("launch", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 45;
+        }
+        else if (file.FileType.Equals("uninstall", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        if (!string.IsNullOrWhiteSpace(file.DisplayName))
+        {
+            score += 8;
+        }
+
+        return score;
+    }
+
+    private static bool TrySplitInstalledFilePath(
+        string defaultInstallLocation,
+        string relativeFilePath,
+        out string folderPath,
+        out string fileName)
+    {
+        folderPath = string.Empty;
+        fileName = string.Empty;
+        if (string.IsNullOrWhiteSpace(relativeFilePath))
+        {
+            return false;
+        }
+
+        var normalizedRelative = relativeFilePath.Replace('/', '\\').Trim().Trim('\\');
+        if (string.IsNullOrWhiteSpace(normalizedRelative))
+        {
+            return false;
+        }
+
+        var candidate = normalizedRelative;
+        if (!Path.IsPathRooted(candidate))
+        {
+            if (string.IsNullOrWhiteSpace(defaultInstallLocation))
+            {
+                return false;
+            }
+
+            candidate = CombineWindowsPath(defaultInstallLocation, normalizedRelative);
+        }
+
+        var candidateFileName = Path.GetFileName(candidate);
+        if (string.IsNullOrWhiteSpace(candidateFileName) ||
+            !candidateFileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+            IsWeakDetectionExecutableName(candidateFileName))
+        {
+            return false;
+        }
+
+        var candidateFolder = Path.GetDirectoryName(candidate);
+        if (string.IsNullOrWhiteSpace(candidateFolder))
+        {
+            return false;
+        }
+
+        folderPath = candidateFolder;
+        fileName = candidateFileName;
+        return true;
+    }
+
+    private static string CombineWindowsPath(string basePath, string relativePath)
+    {
+        return basePath.Trim().TrimEnd('\\', '/') + "\\" + relativePath.Trim().TrimStart('\\', '/');
+    }
+
+    private static bool IsWeakDetectionExecutableName(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return true;
+        }
+
+        var normalized = Path.GetFileNameWithoutExtension(fileName).ToLowerInvariant();
+        return normalized.Contains("unins", StringComparison.Ordinal) ||
+               normalized.Contains("uninstall", StringComparison.Ordinal) ||
+               normalized.Contains("setup", StringComparison.Ordinal) ||
+               normalized.Contains("install", StringComparison.Ordinal) ||
+               normalized.Contains("updater", StringComparison.Ordinal) ||
+               normalized.Contains("update", StringComparison.Ordinal) ||
+               normalized.Contains("crash", StringComparison.Ordinal) ||
+               normalized.Contains("helper", StringComparison.Ordinal) ||
+               normalized.Contains("repair", StringComparison.Ordinal);
     }
 
     private static string InferArchitecture(string first, string second, string third, string fourth)
@@ -5506,7 +5949,11 @@ public sealed class PackageCatalogService : IPackageCatalogService
         return 0;
     }
 
-    private sealed record DetectionStrategyPlan(IntuneDetectionRule Rule, string Guidance, bool IsDeterministic);
+    private sealed record DetectionStrategyPlan(
+        IntuneDetectionRule Rule,
+        string Guidance,
+        bool IsDeterministic,
+        IReadOnlyList<IntuneDetectionRule>? AdditionalRules = null);
     private sealed record TemplateSuggestion(string InstallCommand, string UninstallCommand, string DetectionGuidance, int ConfidenceScore);
     private sealed record CachedSearchResult(IReadOnlyList<PackageCatalogEntry> Results, bool IsFresh);
     private sealed record WingetSourceInfo(string Name, bool IsExplicit);
@@ -5525,19 +5972,39 @@ public sealed class PackageCatalogService : IPackageCatalogService
         string InstallerUrl,
         string InstallerSha256,
         string ProductCode,
+        string CustomSwitch,
         string SilentSwitch,
         string SilentWithProgressSwitch,
         string InstallLocationSwitch,
+        string UpgradeSwitch,
+        string RepairSwitch,
+        string LogSwitch,
+        bool InstallLocationRequired,
+        bool RequireExplicitUpgrade,
         string DefaultInstallLocation,
+        IReadOnlyList<WingetInstalledFileInfo> InstalledFiles,
         string DisplayName,
         string Publisher,
         string DisplayVersion);
+    private sealed record WingetInstallationMetadata(
+        IReadOnlyDictionary<string, string> Values,
+        IReadOnlyList<WingetInstalledFileInfo> Files);
+    private sealed record WingetInstalledFileInfo(
+        string RelativeFilePath,
+        string FileType,
+        string DisplayName);
     private sealed class WingetManifestInstallerBuilder
     {
         public Dictionary<string, string> Values { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> Switches { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> AppsAndFeatures { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> InstallationMetadata { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<WingetInstalledFileBuilder> InstalledFiles { get; } = [];
+    }
+
+    private sealed class WingetInstalledFileBuilder
+    {
+        public Dictionary<string, string> Values { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     private sealed record ChocolateySourceInfo(string Name, string ApiUrl, bool IsEnabled);

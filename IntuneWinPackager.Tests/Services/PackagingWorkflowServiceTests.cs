@@ -4,6 +4,7 @@ using IntuneWinPackager.Core.Utilities;
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
 using IntuneWinPackager.Models.Process;
+using System.Text.Json;
 
 namespace IntuneWinPackager.Tests.Services;
 
@@ -132,7 +133,7 @@ public class PackagingWorkflowServiceTests
     }
 
     [Fact]
-    public async Task PackageAsync_UsesSetupFileNameOnly_InIntuneWinAppUtilArguments()
+    public async Task PackageAsync_PreservesNestedSetupRelativePath_InIntuneWinAppUtilArguments()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
         var sourceFolder = Path.Combine(tempRoot, "source");
@@ -143,22 +144,29 @@ public class PackagingWorkflowServiceTests
         Directory.CreateDirectory(outputFolder);
 
         var setupFilePath = Path.Combine(nestedFolder, "ClientSetup.exe");
+        var helperFilePath = Path.Combine(nestedFolder, "ClientHelper.dll");
         var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
         var expectedOutput = Path.Combine(outputFolder, "ClientSetup.intunewin");
 
         await File.WriteAllTextAsync(setupFilePath, "dummy");
+        await File.WriteAllTextAsync(helperFilePath, "helper payload");
         await File.WriteAllTextAsync(toolPath, "dummy");
         await File.WriteAllTextAsync(expectedOutput, "dummy output payload");
 
         var request = BuildValidRequest(toolPath, sourceFolder, setupFilePath, outputFolder);
-        var fakeRunner = new CapturingProcessRunner(exitCode: 0);
+        var fakeRunner = new CapturingProcessRunner(exitCode: 0, request =>
+        {
+            Assert.True(File.Exists(Path.Combine(request.WorkingDirectory, "nested", "ClientSetup.exe")));
+            Assert.True(File.Exists(Path.Combine(request.WorkingDirectory, "nested", "ClientHelper.dll")));
+            Assert.False(File.Exists(Path.Combine(request.WorkingDirectory, "ClientSetup.exe")));
+        });
         var sut = new PackagingWorkflowService(new PackagingValidationService(), fakeRunner);
 
         var result = await sut.PackageAsync(request);
 
         Assert.True(result.Success);
         Assert.NotNull(fakeRunner.LastRequest);
-        Assert.Contains("-s \"ClientSetup.exe\"", fakeRunner.LastRequest!.Arguments, StringComparison.Ordinal);
+        Assert.Contains("-s \"nested\\ClientSetup.exe\"", fakeRunner.LastRequest!.Arguments, StringComparison.Ordinal);
         Assert.DoesNotContain(setupFilePath, fakeRunner.LastRequest.Arguments, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("-c \"", fakeRunner.LastRequest.Arguments, StringComparison.Ordinal);
         Assert.DoesNotContain($"-c \"{sourceFolder}\"", fakeRunner.LastRequest.Arguments, StringComparison.OrdinalIgnoreCase);
@@ -259,7 +267,7 @@ public class PackagingWorkflowServiceTests
     }
 
     [Fact]
-    public async Task PackageAsync_UsesUniqueSetupAlias_WhenRootFileNameCollidesInStaging()
+    public async Task PackageAsync_PreservesNestedSetupPath_WhenRootFileNameCollidesInStaging()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
         var sourceFolder = Path.Combine(tempRoot, "source");
@@ -288,7 +296,57 @@ public class PackagingWorkflowServiceTests
 
         Assert.True(result.Success);
         Assert.NotNull(fakeRunner.LastRequest);
-        Assert.Contains("__iwp__", fakeRunner.LastRequest!.Arguments, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("-s \"nested\\ClientSetup.exe\"", fakeRunner.LastRequest!.Arguments, StringComparison.Ordinal);
+        Assert.DoesNotContain("__iwp__", fakeRunner.LastRequest.Arguments, StringComparison.OrdinalIgnoreCase);
+
+        Directory.Delete(tempRoot, recursive: true);
+    }
+
+    [Fact]
+    public async Task PackageAsync_NormalizesSetupFileNameCommand_ForNestedPackagedSource()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");
+        var sourceFolder = Path.Combine(tempRoot, "source");
+        var nestedFolder = Path.Combine(sourceFolder, "payload");
+        var outputFolder = Path.Combine(tempRoot, "output");
+
+        Directory.CreateDirectory(nestedFolder);
+        Directory.CreateDirectory(outputFolder);
+
+        var setupFilePath = Path.Combine(nestedFolder, "ClientSetup.exe");
+        var toolPath = Path.Combine(tempRoot, "IntuneWinAppUtil.exe");
+        var expectedOutput = Path.Combine(outputFolder, "ClientSetup.intunewin");
+
+        await File.WriteAllBytesAsync(setupFilePath, new byte[128 * 1024]);
+        await File.WriteAllTextAsync(toolPath, "dummy");
+        await File.WriteAllBytesAsync(expectedOutput, new byte[96 * 1024]);
+
+        var request = BuildValidRequest(
+            toolPath,
+            sourceFolder,
+            setupFilePath,
+            outputFolder,
+            "\"ClientSetup.exe\" /quiet",
+            "\"ClientSetup.exe\" /uninstall /quiet");
+
+        var logs = new List<string>();
+        var sut = new PackagingWorkflowService(
+            new PackagingValidationService(),
+            new CapturingProcessRunner(exitCode: 0));
+
+        var result = await sut.PackageAsync(
+            request,
+            logProgress: new ImmediateProgress<string>(logs.Add));
+
+        Assert.True(result.Success, result.Message);
+        Assert.Contains(logs, entry => entry.Contains("Install command normalized", StringComparison.Ordinal));
+        Assert.Contains(logs, entry => entry.Contains("\"payload\\ClientSetup.exe\" /quiet", StringComparison.Ordinal));
+
+        var metadataJson = await File.ReadAllTextAsync(result.OutputMetadataPath!);
+        using var metadata = JsonDocument.Parse(metadataJson);
+        Assert.Equal("\"payload\\ClientSetup.exe\" /quiet", metadata.RootElement.GetProperty("installCommand").GetString());
+        Assert.Equal("\"payload\\ClientSetup.exe\" /uninstall /quiet", metadata.RootElement.GetProperty("uninstallCommand").GetString());
+        Assert.Contains("payload\\ClientSetup.exe", result.IntunePortalChecklist, StringComparison.Ordinal);
 
         Directory.Delete(tempRoot, recursive: true);
     }
@@ -567,13 +625,30 @@ public class PackagingWorkflowServiceTests
         }
     }
 
+    private sealed class ImmediateProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+
+        public ImmediateProgress(Action<T> handler)
+        {
+            _handler = handler;
+        }
+
+        public void Report(T value)
+        {
+            _handler(value);
+        }
+    }
+
     private sealed class CapturingProcessRunner : IProcessRunner
     {
         private readonly int _exitCode;
+        private readonly Action<ProcessRunRequest>? _onRun;
 
-        public CapturingProcessRunner(int exitCode)
+        public CapturingProcessRunner(int exitCode, Action<ProcessRunRequest>? onRun = null)
         {
             _exitCode = exitCode;
+            _onRun = onRun;
         }
 
         public ProcessRunRequest? LastRequest { get; private set; }
@@ -584,6 +659,7 @@ public class PackagingWorkflowServiceTests
             CancellationToken cancellationToken = default)
         {
             LastRequest = request;
+            _onRun?.Invoke(request);
             outputProgress?.Report(new ProcessOutputLine
             {
                 TimestampUtc = DateTimeOffset.UtcNow,

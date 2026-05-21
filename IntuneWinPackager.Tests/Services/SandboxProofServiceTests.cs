@@ -55,6 +55,8 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("Get-ShortcutSnapshot", script, StringComparison.Ordinal);
             Assert.Contains("Find-ExecutableDetectionTargets", script, StringComparison.Ordinal);
             Assert.Contains("additionalRules", script, StringComparison.Ordinal);
+            Assert.Contains("Package Cache", script, StringComparison.Ordinal);
+            Assert.Contains("targetName -match", script, StringComparison.Ordinal);
             Assert.Contains("New MSI ProductCode registered after install", script, StringComparison.Ordinal);
             Assert.Contains("Detection candidates", script, StringComparison.Ordinal);
             Assert.Contains("Candidate passed sandbox two-phase validation", script, StringComparison.Ordinal);

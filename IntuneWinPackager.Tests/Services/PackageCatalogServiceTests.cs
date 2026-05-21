@@ -650,6 +650,7 @@ public sealed class PackageCatalogServiceTests
                     PackageVersion: 4.5.6
                     InstallerType: nullsoft
                     InstallerSwitches:
+                      Custom: /AllUsers
                       Silent: /S /NoRestart
                     Installers:
                     - Architecture: x64
@@ -712,12 +713,406 @@ public sealed class PackageCatalogServiceTests
         Assert.NotNull(details);
         var variant = Assert.Single(details!.InstallerVariants);
         Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Contains("/AllUsers", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/NoRestart", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(IntuneDetectionRuleType.Registry, variant.DetectionRule.RuleType);
         Assert.Equal(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Contoso Exe App", variant.DetectionRule.Registry.KeyPath);
         Assert.Equal("DisplayVersion", variant.DetectionRule.Registry.ValueName);
         Assert.Equal(IntuneDetectionOperator.Equals, variant.DetectionRule.Registry.Operator);
         Assert.Equal("4.5.6", variant.DetectionRule.Registry.Value);
+        Assert.Equal(2, variant.AdditionalDetectionRules.Count);
+        Assert.Contains(variant.AdditionalDetectionRules, rule =>
+            rule.RuleType == IntuneDetectionRuleType.Registry &&
+            rule.Registry.ValueName == "DisplayName" &&
+            rule.Registry.Value == "Contoso Exe App");
+        Assert.Contains(variant.AdditionalDetectionRules, rule =>
+            rule.RuleType == IntuneDetectionRuleType.Registry &&
+            rule.Registry.ValueName == "Publisher" &&
+            rule.Registry.Value == "Contoso Ltd");
+    }
+
+    [Fact]
+    public async Task GetDetailsAsync_WingetManifestExe_CustomOnlySwitchesKeepInstallerSilentTemplate()
+    {
+        var processRunner = new StubProcessRunner(
+        [
+            new StubProcessResult(0,
+            [
+                "Found Contoso Inno App [Contoso.InnoApp]",
+                "Version: 5.6.7",
+                "Publisher: Contoso Ltd",
+                "Installer:",
+                "  No applicable installer found; see logs for more details."
+            ])
+        ]);
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.EndsWith("Contoso.InnoApp.installer.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.InnoApp
+                    PackageVersion: 5.6.7
+                    InstallerType: inno
+                    InstallerSwitches:
+                      Custom: /mergetasks=!runapp
+                    Installers:
+                    - Architecture: x64
+                      Scope: machine
+                      InstallerUrl: https://download.example.test/contoso-inno-5.6.7.exe
+                      InstallerSha256: EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+                      ProductCode: Contoso Inno App
+                    ManifestType: installer
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.InnoApp.locale.en-US.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.InnoApp
+                    PackageVersion: 5.6.7
+                    PackageLocale: en-US
+                    Publisher: Contoso Ltd
+                    PackageName: Contoso Inno App
+                    ManifestType: defaultLocale
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.InnoApp.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.InnoApp
+                    PackageVersion: 5.6.7
+                    DefaultLocale: en-US
+                    ManifestType: version
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var entry = new PackageCatalogEntry
+        {
+            Source = PackageCatalogSource.Winget,
+            SourceDisplayName = "WinGet",
+            SourceChannel = "winget",
+            PackageId = "Contoso.InnoApp",
+            Name = "Contoso Inno App",
+            Version = "5.6.7"
+        };
+
+        var details = await sut.GetDetailsAsync(entry);
+
+        Assert.NotNull(details);
+        var variant = Assert.Single(details!.InstallerVariants);
+        Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Contains("/VERYSILENT", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/SUPPRESSMSGBOXES", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/NORESTART", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/mergetasks=!runapp", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetDetailsAsync_WingetManifestUnknownExe_CustomOnlySwitchesDoNotCreateUnsafeInstallCommand()
+    {
+        var processRunner = new StubProcessRunner(
+        [
+            new StubProcessResult(0,
+            [
+                "Found Contoso Unknown App [Contoso.UnknownApp]",
+                "Version: 8.9.10",
+                "Publisher: Contoso Ltd",
+                "Installer:",
+                "  No applicable installer found; see logs for more details."
+            ])
+        ]);
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.EndsWith("Contoso.UnknownApp.installer.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.UnknownApp
+                    PackageVersion: 8.9.10
+                    InstallerType: exe
+                    InstallerSwitches:
+                      Custom: /launchAfterInstall=false
+                    Installers:
+                    - Architecture: x64
+                      Scope: machine
+                      InstallerUrl: https://download.example.test/contoso-unknown-8.9.10.exe
+                      InstallerSha256: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+                      ProductCode: Contoso Unknown App
+                    ManifestType: installer
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.UnknownApp.locale.en-US.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.UnknownApp
+                    PackageVersion: 8.9.10
+                    PackageLocale: en-US
+                    Publisher: Contoso Ltd
+                    PackageName: Contoso Unknown App
+                    ManifestType: defaultLocale
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.UnknownApp.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.UnknownApp
+                    PackageVersion: 8.9.10
+                    DefaultLocale: en-US
+                    ManifestType: version
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var entry = new PackageCatalogEntry
+        {
+            Source = PackageCatalogSource.Winget,
+            SourceDisplayName = "WinGet",
+            SourceChannel = "winget",
+            PackageId = "Contoso.UnknownApp",
+            Name = "Contoso Unknown App",
+            Version = "8.9.10"
+        };
+
+        var details = await sut.GetDetailsAsync(entry);
+
+        Assert.NotNull(details);
+        var variant = Assert.Single(details!.InstallerVariants);
+        Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Contains("<silent-args>", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/launchAfterInstall=false", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetDetailsAsync_WingetManifestExe_RequiredInstallLocationKeepsBlockingPlaceholder()
+    {
+        var processRunner = new StubProcessRunner(
+        [
+            new StubProcessResult(0,
+            [
+                "Found Contoso Location App [Contoso.LocationApp]",
+                "Version: 7.8.9",
+                "Publisher: Contoso Ltd",
+                "Installer:",
+                "  No applicable installer found; see logs for more details."
+            ])
+        ]);
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.EndsWith("Contoso.LocationApp.installer.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.LocationApp
+                    PackageVersion: 7.8.9
+                    Installers:
+                    - Architecture: x64
+                      InstallerType: burn
+                      Scope: machine
+                      InstallerUrl: https://download.example.test/contoso-location-7.8.9.exe
+                      InstallerSha256: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+                      ProductCode: Contoso Location App
+                      InstallLocationRequired: true
+                      InstallerSwitches:
+                        Silent: /quiet /norestart
+                        InstallLocation: TARGETDIR="<INSTALLPATH>"
+                    ManifestType: installer
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.LocationApp.locale.en-US.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.LocationApp
+                    PackageVersion: 7.8.9
+                    PackageLocale: en-US
+                    Publisher: Contoso Ltd
+                    PackageName: Contoso Location App
+                    ManifestType: defaultLocale
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Contoso.LocationApp.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Contoso.LocationApp
+                    PackageVersion: 7.8.9
+                    DefaultLocale: en-US
+                    ManifestType: version
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var entry = new PackageCatalogEntry
+        {
+            Source = PackageCatalogSource.Winget,
+            SourceDisplayName = "WinGet",
+            SourceChannel = "winget",
+            PackageId = "Contoso.LocationApp",
+            Name = "Contoso Location App",
+            Version = "7.8.9"
+        };
+
+        var details = await sut.GetDetailsAsync(entry);
+
+        Assert.NotNull(details);
+        var variant = Assert.Single(details!.InstallerVariants);
+        Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Contains("/quiet /norestart", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("TARGETDIR=\"<INSTALLPATH>\"", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetDetailsAsync_WingetManifestInstallationMetadataFiles_BuildsFileDetection()
+    {
+        var processRunner = new StubProcessRunner(
+        [
+            new StubProcessResult(0,
+            [
+                "Found Fabrikam Tool [Fabrikam.Tool]",
+                "Version: 10.11.12",
+                "Publisher: Fabrikam",
+                "Installer:",
+                "  No applicable installer found; see logs for more details."
+            ])
+        ]);
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.EndsWith("Fabrikam.Tool.installer.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Fabrikam.Tool
+                    PackageVersion: 10.11.12
+                    InstallerType: burn
+                    InstallerSwitches:
+                      Silent: /quiet /norestart
+                    Installers:
+                    - Architecture: x64
+                      Scope: machine
+                      InstallerUrl: https://download.example.test/fabrikam-tool-10.11.12.exe
+                      InstallerSha256: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+                      InstallationMetadata:
+                        DefaultInstallLocation: C:\Program Files\Fabrikam Tool
+                        Files:
+                        - RelativeFilePath: bin\FabrikamTool.exe
+                          FileType: launch
+                          DisplayName: Fabrikam Tool
+                        - RelativeFilePath: uninstall.exe
+                          FileType: uninstall
+                    ManifestType: installer
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Fabrikam.Tool.locale.en-US.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Fabrikam.Tool
+                    PackageVersion: 10.11.12
+                    PackageLocale: en-US
+                    Publisher: Fabrikam
+                    PackageName: Fabrikam Tool
+                    ManifestType: defaultLocale
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Fabrikam.Tool.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Fabrikam.Tool
+                    PackageVersion: 10.11.12
+                    DefaultLocale: en-US
+                    ManifestType: version
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var entry = new PackageCatalogEntry
+        {
+            Source = PackageCatalogSource.Winget,
+            SourceDisplayName = "WinGet",
+            SourceChannel = "winget",
+            PackageId = "Fabrikam.Tool",
+            Name = "Fabrikam Tool",
+            Version = "10.11.12"
+        };
+
+        var details = await sut.GetDetailsAsync(entry);
+
+        Assert.NotNull(details);
+        var variant = Assert.Single(details!.InstallerVariants);
+        Assert.Equal(IntuneDetectionRuleType.File, variant.DetectionRule.RuleType);
+        Assert.Equal(@"C:\Program Files\Fabrikam Tool\bin", variant.DetectionRule.File.Path);
+        Assert.Equal("FabrikamTool.exe", variant.DetectionRule.File.FileOrFolderName);
+        Assert.Equal("10.11.12", variant.DetectionRule.File.Value);
     }
 
     [Fact]

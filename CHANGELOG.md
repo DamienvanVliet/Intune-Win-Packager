@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.0.7] - 2026-05-21
+
+### Added
+- Add a compact recommended workflow in Packaging so users follow source/setup, command preview, Sandbox Proof, then packaging in the right order.
+- Add clearer action tooltips and command previews for install/uninstall execution.
+- Add additional registry identity detection rules where catalog or sandbox evidence supports strict EXE detection.
+
+### Changed
+- Strengthen WinGet manifest parsing for installer switches, install-location requirements, Apps & Features metadata, and installation metadata files.
+- Make detection tests include additional identity rules instead of only the primary rule.
+- Switch install context to User automatically when catalog or sandbox evidence is user scoped.
+
+### Fixed
+- Preserve nested setup paths during EXE packaging so multi-file installers keep their payload/DLL layout inside the `.intunewin`.
+- Normalize package command metadata to the actual relative setup path used inside the package.
+- Prevent unsafe file detection candidates from targeting setup, uninstall, updater, helper, Windows, temp, source, proof, or package-cache paths.
+- Keep catalog packages blocked when required command placeholders or deterministic detection data are missing.
+
 ## [3.0.6] - 2026-05-13
 
 ### Changed

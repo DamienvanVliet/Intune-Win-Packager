@@ -28,8 +28,16 @@
     <sys:String x:Key="Ui.CommandProfile">Detected installer profile</sys:String>
     <sys:String x:Key="Ui.InstallCommand">Install Command (required)</sys:String>
     <sys:String x:Key="Ui.UninstallCommand">Uninstall Command (required)</sys:String>
+    <sys:String x:Key="Ui.CommandPreview.Install">Install command preview - exact command that will be saved/executed</sys:String>
+    <sys:String x:Key="Ui.CommandPreview.Uninstall">Uninstall command preview - exact command that will be saved/executed</sys:String>
     <sys:String x:Key="Ui.SilentSwitchVerified">I verified silent install/uninstall for this EXE</sys:String>
     <sys:String x:Key="Ui.Commands.AutoHint">Commands are auto-filled when possible. Change only if needed.</sys:String>
+    <sys:String x:Key="Ui.Workflow.Title">Recommended order</sys:String>
+    <sys:String x:Key="Ui.Workflow.Description">Use Sandbox Proof before packaging. Proof &amp; Package runs proof first, then builds the .intunewin only when detection is usable.</sys:String>
+    <sys:String x:Key="Ui.Workflow.Step1">Select source and setup</sys:String>
+    <sys:String x:Key="Ui.Workflow.Step2">Check command previews</sys:String>
+    <sys:String x:Key="Ui.Workflow.Step3">Run Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.Workflow.Step4">Package after proof</sys:String>
     <sys:String x:Key="Ui.SmartStaging">Use smart source staging (prevents recursive output packaging)</sys:String>
     <sys:String x:Key="Ui.SimpleModeHint">Simple view is active: only essential fields stay visible.</sys:String>
     <sys:String x:Key="Ui.AdvancedSettings.Title">Advanced Settings (optional)</sys:String>
@@ -82,6 +90,13 @@
     <sys:String x:Key="Ui.FixForMe">Fix For Me</sys:String>
     <sys:String x:Key="Ui.Reset">Reset</sys:String>
     <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
+    <sys:String x:Key="Ui.Tooltip.StartPackaging">Builds the .intunewin package with the current source, setup file, commands, detection rule, and requirements. Use this only when validation is green. Blocks when required arguments or detection data are missing.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.TestDetection">Tests the selected detection rule on this PC. Use after installing the app locally or after applying a Sandbox Proof result. It does not build a package.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.SandboxProof">Creates and launches a Windows Sandbox run. The sandbox installs the package, captures before/after evidence, and writes report.txt/result.json. Requires complete install/uninstall commands.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.ProofAndPackage">Runs Sandbox Proof first and packages only after a usable detection candidate is applied. Best for catalog downloads and EXE installers that need proof.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.FixForMe">Applies safe automatic fixes such as command suggestions, metadata-based detection, and common defaults. Review the preview and validation after it runs.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.Reset">Clears the current package configuration and proof state. Use this before starting a different package.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.OpenOutput">Opens the output folder or latest generated artifact location. Available after output is configured or a package has been created.</sys:String>
 
     <sys:String x:Key="Ui.SetupWizard.Title">Setup Wizard</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Description">Prepare this PC for clean packaging before selecting an installer.</sys:String>
@@ -495,9 +510,9 @@
     <sys:String x:Key="Core.Validation.OutputFolderInvalid">Output folder path is invalid.</sys:String>
     <sys:String x:Key="Core.Validation.SetupFileOutsideSource">Setup file must be inside the selected source folder.</sys:String>
     <sys:String x:Key="Core.Validation.InstallCommandRequired">Install command is required.</sys:String>
-    <sys:String x:Key="Core.Validation.InstallCommandHasPlaceholder">Install command still contains placeholders. Replace placeholders with production-ready arguments.</sys:String>
+    <sys:String x:Key="Core.Validation.InstallCommandHasPlaceholder">Install command still contains unresolved required arguments/placeholders. Fill them in before packaging.</sys:String>
     <sys:String x:Key="Core.Validation.UninstallCommandRequired">Uninstall command is required.</sys:String>
-    <sys:String x:Key="Core.Validation.UninstallCommandHasPlaceholder">Uninstall command still contains placeholders. Replace placeholders with production-ready arguments.</sys:String>
+    <sys:String x:Key="Core.Validation.UninstallCommandHasPlaceholder">Uninstall command still contains unresolved required arguments/placeholders. Fill them in before packaging.</sys:String>
     <sys:String x:Key="Core.Validation.MaxRunTimeInvalid">Maximum run time must be between 1 and 1440 minutes.</sys:String>
     <sys:String x:Key="Core.Validation.ExeSwitchVerificationRequired">Silent install/uninstall switches must be verified for this EXE installer profile.</sys:String>
     <sys:String x:Key="Core.Validation.DetectionRuleRequired">A detection rule is required for reliable Intune deployment.</sys:String>
@@ -576,9 +591,9 @@
     <sys:String x:Key="Core.Preflight.Message.OutputDiskLow">Low free space on output drive. Recommended minimum is 2 GB.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.OutputDiskUnknown">Could not determine output drive free space.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.InstallCommandRequired">Install command is required.</sys:String>
-    <sys:String x:Key="Core.Preflight.Message.InstallCommandPlaceholder">Install command still contains placeholders.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.InstallCommandPlaceholder">Install command still contains unresolved required arguments/placeholders.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.UninstallCommandRequired">Uninstall command is required.</sys:String>
-    <sys:String x:Key="Core.Preflight.Message.UninstallCommandPlaceholder">Uninstall command still contains placeholders.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.UninstallCommandPlaceholder">Uninstall command still contains unresolved required arguments/placeholders.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.IntuneRuntimeInvalid">Max run time must be between 1 and 1440 minutes.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ExeSwitchReviewRequired">This EXE profile requires switch verification. Review vendor switches and confirm before packaging.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.DetectionRuleMissing">No detection rule configured. Configure MSI, file, registry, or script detection.</sys:String>

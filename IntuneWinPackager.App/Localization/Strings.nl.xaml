@@ -28,8 +28,16 @@
     <sys:String x:Key="Ui.CommandProfile">Gedetecteerd installerprofiel</sys:String>
     <sys:String x:Key="Ui.InstallCommand">Installatiecommando (verplicht)</sys:String>
     <sys:String x:Key="Ui.UninstallCommand">Uninstall-commando (verplicht)</sys:String>
+    <sys:String x:Key="Ui.CommandPreview.Install">Installatiepreview - exact commando dat wordt opgeslagen/uitgevoerd</sys:String>
+    <sys:String x:Key="Ui.CommandPreview.Uninstall">Uninstall-preview - exact commando dat wordt opgeslagen/uitgevoerd</sys:String>
     <sys:String x:Key="Ui.SilentSwitchVerified">Ik heb silent install/uninstall voor deze EXE geverifieerd</sys:String>
     <sys:String x:Key="Ui.Commands.AutoHint">Commando's worden automatisch ingevuld waar mogelijk. Pas alleen aan als dat nodig is.</sys:String>
+    <sys:String x:Key="Ui.Workflow.Title">Aanbevolen volgorde</sys:String>
+    <sys:String x:Key="Ui.Workflow.Description">Gebruik Sandbox Proof voordat je packaget. Proof &amp; Package draait eerst de proof en maakt pas daarna de .intunewin wanneer detectie bruikbaar is.</sys:String>
+    <sys:String x:Key="Ui.Workflow.Step1">Kies source en setup</sys:String>
+    <sys:String x:Key="Ui.Workflow.Step2">Controleer command previews</sys:String>
+    <sys:String x:Key="Ui.Workflow.Step3">Draai Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.Workflow.Step4">Package na proof</sys:String>
     <sys:String x:Key="Ui.SmartStaging">Gebruik slimme source staging (voorkomt recursieve output-packaging)</sys:String>
     <sys:String x:Key="Ui.SimpleModeHint">Eenvoudige weergave is actief: alleen de belangrijkste velden zijn zichtbaar.</sys:String>
     <sys:String x:Key="Ui.AdvancedSettings.Title">Geavanceerde Instellingen (optioneel)</sys:String>
@@ -82,6 +90,13 @@
     <sys:String x:Key="Ui.FixForMe">Los Op Voor Mij</sys:String>
     <sys:String x:Key="Ui.Reset">Reset</sys:String>
     <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
+    <sys:String x:Key="Ui.Tooltip.StartPackaging">Bouwt de .intunewin-package met de huidige source, setup, commando's, detectieregel en requirements. Gebruik dit pas als validatie groen is. Blokkeert wanneer verplichte argumenten of detectiedata ontbreken.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.TestDetection">Test de gekozen detectieregel op deze pc. Gebruik dit nadat de app lokaal is geinstalleerd of nadat een Sandbox Proof-resultaat is toegepast. Dit bouwt geen package.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.SandboxProof">Maakt en start een Windows Sandbox-run. De sandbox installeert het package, verzamelt before/after evidence en schrijft report.txt/result.json. Vereist complete install/uninstall-commando's.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.ProofAndPackage">Voert eerst Sandbox Proof uit en package't pas nadat een bruikbare detectiekandidaat is toegepast. Beste keuze voor catalogusdownloads en EXE-installers die bewijs nodig hebben.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.FixForMe">Past veilige automatische fixes toe, zoals commandosuggesties, metadata-detectie en gangbare defaults. Controleer daarna de preview en validatie.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.Reset">Wist de huidige packageconfiguratie en proof-status. Gebruik dit voordat je met een ander package begint.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.OpenOutput">Opent de outputmap of de nieuwste gegenereerde artifactlocatie. Beschikbaar zodra output is ingesteld of een package is gemaakt.</sys:String>
 
     <sys:String x:Key="Ui.SetupWizard.Title">Setup Wizard</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Description">Bereid deze pc voor op schone packaging voordat je een installer selecteert.</sys:String>
@@ -495,9 +510,9 @@
     <sys:String x:Key="Core.Validation.OutputFolderInvalid">Pad van outputmap is ongeldig.</sys:String>
     <sys:String x:Key="Core.Validation.SetupFileOutsideSource">Setup-bestand moet binnen de geselecteerde bronmap staan.</sys:String>
     <sys:String x:Key="Core.Validation.InstallCommandRequired">Installatiecommando is vereist.</sys:String>
-    <sys:String x:Key="Core.Validation.InstallCommandHasPlaceholder">Installatiecommando bevat nog placeholders. Vervang placeholders met productieklare argumenten.</sys:String>
+    <sys:String x:Key="Core.Validation.InstallCommandHasPlaceholder">Installatiecommando bevat nog onopgeloste verplichte argumenten/placeholders. Vul deze in voordat je gaat packagen.</sys:String>
     <sys:String x:Key="Core.Validation.UninstallCommandRequired">Uninstall-commando is vereist.</sys:String>
-    <sys:String x:Key="Core.Validation.UninstallCommandHasPlaceholder">Uninstall-commando bevat nog placeholders. Vervang placeholders met productieklare argumenten.</sys:String>
+    <sys:String x:Key="Core.Validation.UninstallCommandHasPlaceholder">Uninstall-commando bevat nog onopgeloste verplichte argumenten/placeholders. Vul deze in voordat je gaat packagen.</sys:String>
     <sys:String x:Key="Core.Validation.MaxRunTimeInvalid">Maximale looptijd moet tussen 1 en 1440 minuten liggen.</sys:String>
     <sys:String x:Key="Core.Validation.ExeSwitchVerificationRequired">Silent install/uninstall switches moeten worden geverifieerd voor dit EXE-installerprofiel.</sys:String>
     <sys:String x:Key="Core.Validation.DetectionRuleRequired">Een detectieregel is vereist voor betrouwbare Intune-uitrol.</sys:String>
@@ -576,9 +591,9 @@
     <sys:String x:Key="Core.Preflight.Message.OutputDiskLow">Weinig vrije ruimte op outputschijf. Aanbevolen minimum is 2 GB.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.OutputDiskUnknown">Vrije ruimte op outputschijf kon niet worden bepaald.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.InstallCommandRequired">Installatiecommando is vereist.</sys:String>
-    <sys:String x:Key="Core.Preflight.Message.InstallCommandPlaceholder">Installatiecommando bevat nog placeholders.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.InstallCommandPlaceholder">Installatiecommando bevat nog onopgeloste verplichte argumenten/placeholders.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.UninstallCommandRequired">Uninstall-commando is vereist.</sys:String>
-    <sys:String x:Key="Core.Preflight.Message.UninstallCommandPlaceholder">Uninstall-commando bevat nog placeholders.</sys:String>
+    <sys:String x:Key="Core.Preflight.Message.UninstallCommandPlaceholder">Uninstall-commando bevat nog onopgeloste verplichte argumenten/placeholders.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.IntuneRuntimeInvalid">Maximale looptijd moet tussen 1 en 1440 minuten liggen.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.ExeSwitchReviewRequired">Dit EXE-profiel vereist switch-verificatie. Controleer leveranciersswitches en bevestig voor packaging.</sys:String>
     <sys:String x:Key="Core.Preflight.Message.DetectionRuleMissing">Geen detectieregel geconfigureerd. Configureer MSI-, bestand-, register- of scriptdetectie.</sys:String>

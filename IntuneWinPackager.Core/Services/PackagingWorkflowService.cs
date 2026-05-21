@@ -138,6 +138,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             var sourcePreparationStopwatch = Stopwatch.StartNew();
             preparedSource = PrepareSourceContext(request, startedAtUtc, logProgress, cancellationToken);
             sourcePreparationStopwatch.Stop();
+            request = NormalizeRequestForPreparedSource(request, preparedSource, logProgress);
 
             logProgress?.Report($"Source preparation completed in {sourcePreparationStopwatch.Elapsed.TotalSeconds:0.00}s.");
 
@@ -407,22 +408,6 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
             throw new InvalidOperationException($"Copied installer is missing in staging source: {stagedSetupPath}");
         }
 
-        var setupFileNameOnly = Path.GetFileName(setupFilePath);
-        var setupFileNameForPackaging = setupFileNameOnly;
-        var stagedSetupAtRootPath = Path.Combine(stagingSource, setupFileNameOnly);
-        if (!stagedSetupPath.Equals(stagedSetupAtRootPath, StringComparison.OrdinalIgnoreCase))
-        {
-            if (File.Exists(stagedSetupAtRootPath))
-            {
-                setupFileNameForPackaging = BuildUniqueSetupAlias(setupFileNameOnly);
-                stagedSetupAtRootPath = Path.Combine(stagingSource, setupFileNameForPackaging);
-                logProgress?.Report(
-                    $"Setup filename collision detected in staged root. Using '{setupFileNameForPackaging}' for IntuneWinAppUtil -s.");
-            }
-
-            File.Copy(stagedSetupPath, stagedSetupAtRootPath, overwrite: true);
-        }
-
         var copiedFileOnlyCount = Math.Max(0, copiedFileCount - hardLinkedFileCount);
         logProgress?.Report(
             $"Staged {copiedFileCount} file(s), {FormatBytes(copiedBytes)} prepared for isolated source " +
@@ -431,7 +416,7 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         return new PreparedSourceContext
         {
             PackagingSourceFolder = stagingSource,
-            SetupRelativePath = setupFileNameForPackaging,
+            SetupRelativePath = setupRelativePath,
             StagingRootFolder = stagingRoot,
             StagedFileCount = copiedFileCount,
             HardLinkedFileCount = hardLinkedFileCount,
@@ -655,6 +640,128 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
                 IntuneRules = normalizedRules
             }
         };
+    }
+
+    private static PackagingRequest NormalizeRequestForPreparedSource(
+        PackagingRequest request,
+        PreparedSourceContext preparedSource,
+        IProgress<string>? logProgress)
+    {
+        var sourceFolder = request.Configuration.SourceFolder;
+        var setupFilePath = request.Configuration.SetupFilePath;
+        var setupRelativePath = preparedSource.SetupRelativePath;
+        var installCommand = NormalizeSetupCommandForPackage(
+            request.Configuration.InstallCommand,
+            sourceFolder,
+            setupFilePath,
+            setupRelativePath);
+        var uninstallCommand = NormalizeSetupCommandForPackage(
+            request.Configuration.UninstallCommand,
+            sourceFolder,
+            setupFilePath,
+            setupRelativePath);
+
+        if (string.Equals(installCommand, request.Configuration.InstallCommand, StringComparison.Ordinal) &&
+            string.Equals(uninstallCommand, request.Configuration.UninstallCommand, StringComparison.Ordinal))
+        {
+            return request;
+        }
+
+        if (!string.Equals(installCommand, request.Configuration.InstallCommand, StringComparison.Ordinal))
+        {
+            logProgress?.Report($"Install command normalized for packaged source layout: {installCommand}");
+        }
+
+        if (!string.Equals(uninstallCommand, request.Configuration.UninstallCommand, StringComparison.Ordinal))
+        {
+            logProgress?.Report($"Uninstall command normalized for packaged source layout: {uninstallCommand}");
+        }
+
+        return request with
+        {
+            Configuration = request.Configuration with
+            {
+                InstallCommand = installCommand,
+                UninstallCommand = uninstallCommand
+            }
+        };
+    }
+
+    private static string NormalizeSetupCommandForPackage(
+        string command,
+        string sourceFolder,
+        string setupFilePath,
+        string setupRelativePath)
+    {
+        if (string.IsNullOrWhiteSpace(command) ||
+            string.IsNullOrWhiteSpace(sourceFolder) ||
+            string.IsNullOrWhiteSpace(setupFilePath) ||
+            string.IsNullOrWhiteSpace(setupRelativePath))
+        {
+            return command;
+        }
+
+        var normalizedRelative = setupRelativePath.Replace('/', '\\').TrimStart('\\');
+        var setupFileName = Path.GetFileName(setupFilePath);
+        if (string.IsNullOrWhiteSpace(setupFileName) ||
+            string.Equals(normalizedRelative, setupFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return command;
+        }
+
+        var fullSetupPath = Path.GetFullPath(setupFilePath);
+        var quotedRelative = Quote(normalizedRelative);
+        var rewritten = ReplaceCommandPathToken(command, fullSetupPath, normalizedRelative);
+
+        var sourceRelativeFromFull = Path.GetRelativePath(Path.GetFullPath(sourceFolder), fullSetupPath)
+            .Replace('/', '\\')
+            .TrimStart('\\');
+        if (!string.IsNullOrWhiteSpace(sourceRelativeFromFull))
+        {
+            rewritten = ReplaceCommandPathToken(rewritten, sourceRelativeFromFull, normalizedRelative);
+        }
+
+        rewritten = ReplaceCommandPathToken(rewritten, setupFileName, normalizedRelative);
+        rewritten = ReplaceCommandPathToken(rewritten, $".\\{setupFileName}", normalizedRelative);
+        rewritten = Regex.Replace(
+            rewritten,
+            $"(?<![\\w\\\\/:.-])\\.\\\\{Regex.Escape(setupFileName)}(?![\\w\\\\/:.-])",
+            quotedRelative,
+            RegexOptions.IgnoreCase);
+        rewritten = Regex.Replace(
+            rewritten,
+            $"(?<![\\w\\\\/:.-]){Regex.Escape(setupFileName)}(?![\\w\\\\/:.-])",
+            quotedRelative,
+            RegexOptions.IgnoreCase);
+
+        return rewritten;
+    }
+
+    private static string ReplaceCommandPathToken(string command, string fromPath, string toRelativePath)
+    {
+        if (string.IsNullOrWhiteSpace(command) || string.IsNullOrWhiteSpace(fromPath))
+        {
+            return command;
+        }
+
+        var normalizedFrom = fromPath.Replace('/', '\\').Trim('\\');
+        var normalizedTo = toRelativePath.Replace('/', '\\').TrimStart('\\');
+        var quotedTo = Quote(normalizedTo);
+
+        var rewritten = command
+            .Replace($"\"{normalizedFrom}\"", quotedTo, StringComparison.OrdinalIgnoreCase)
+            .Replace($"'{normalizedFrom}'", quotedTo, StringComparison.OrdinalIgnoreCase);
+
+        if (!string.Equals(rewritten, command, StringComparison.Ordinal))
+        {
+            return rewritten;
+        }
+
+        return Regex.Replace(
+            rewritten,
+            $"(?<![\\w\\\\/:.-]){Regex.Escape(normalizedFrom)}(?![\\w\\\\/:.-])",
+            quotedTo,
+            RegexOptions.IgnoreCase);
     }
 
     private static IntuneDetectionRule NormalizeDetectionRuleForPackaging(
@@ -1310,13 +1417,6 @@ public sealed class PackagingWorkflowService : IPackagingWorkflowService
         }
 
         return false;
-    }
-
-    private static string BuildUniqueSetupAlias(string setupFileName)
-    {
-        var extension = Path.GetExtension(setupFileName);
-        var baseName = Path.GetFileNameWithoutExtension(setupFileName);
-        return $"{baseName}__iwp__{Guid.NewGuid():N}{extension}";
     }
 
     private sealed record PreparedSourceContext

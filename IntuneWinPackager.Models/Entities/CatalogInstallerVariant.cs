@@ -42,6 +42,8 @@ public sealed record CatalogInstallerVariant
 
     public IntuneDetectionRule DetectionRule { get; init; } = new();
 
+    public IReadOnlyList<IntuneDetectionRule> AdditionalDetectionRules { get; init; } = [];
+
     public string DetectionGuidance { get; init; } = string.Empty;
 
     public bool IsDeterministicDetection { get; init; }

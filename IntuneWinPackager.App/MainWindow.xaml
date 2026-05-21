@@ -18,6 +18,28 @@
     <Window.Resources>
         <converters:EnumDisplayConverter x:Key="EnumDisplayConverter" />
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <Style x:Key="InfoIconBorderStyle" TargetType="Border">
+            <Setter Property="Width" Value="16" />
+            <Setter Property="Height" Value="16" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Background" Value="{DynamicResource PanelBackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource PanelBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Margin" Value="4,0,8,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="ToolTipService.InitialShowDelay" Value="150" />
+            <Setter Property="ToolTipService.ShowDuration" Value="30000" />
+        </Style>
+        <Style x:Key="InfoIconTextStyle" TargetType="TextBlock">
+            <Setter Property="Text" Value="i" />
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextAlignment" Value="Center" />
+        </Style>
     </Window.Resources>
 
     <Grid Margin="24">
@@ -529,15 +551,128 @@
                                                Margin="0,0,0,10"
                                                TextWrapping="Wrap" />
 
+                                    <Border Margin="0,0,0,12"
+                                            Padding="10"
+                                            CornerRadius="10"
+                                            Background="{DynamicResource PanelBackgroundBrush}"
+                                            BorderBrush="{DynamicResource PanelBorderBrush}"
+                                            BorderThickness="1">
+                                        <StackPanel>
+                                            <TextBlock Text="{DynamicResource Ui.Workflow.Title}"
+                                                       Style="{StaticResource BodyTextStyle}"
+                                                       FontWeight="SemiBold"
+                                                       Margin="0,0,0,4" />
+                                            <TextBlock Text="{DynamicResource Ui.Workflow.Description}"
+                                                       Style="{StaticResource BodyTextStyle}"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                                       TextWrapping="Wrap"
+                                                       Margin="0,0,0,8" />
+                                            <WrapPanel>
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,14,6" MinWidth="210">
+                                                    <Border Width="22"
+                                                            Height="22"
+                                                            CornerRadius="11"
+                                                            Background="{DynamicResource PrimaryAccentBrush}"
+                                                            Margin="0,0,8,0">
+                                                        <TextBlock Text="1"
+                                                                   Foreground="White"
+                                                                   FontSize="11"
+                                                                   FontWeight="SemiBold"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center" />
+                                                    </Border>
+                                                    <TextBlock Text="{DynamicResource Ui.Workflow.Step1}"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,14,6" MinWidth="210">
+                                                    <Border Width="22"
+                                                            Height="22"
+                                                            CornerRadius="11"
+                                                            Background="{DynamicResource PrimaryAccentBrush}"
+                                                            Margin="0,0,8,0">
+                                                        <TextBlock Text="2"
+                                                                   Foreground="White"
+                                                                   FontSize="11"
+                                                                   FontWeight="SemiBold"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center" />
+                                                    </Border>
+                                                    <TextBlock Text="{DynamicResource Ui.Workflow.Step2}"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,14,6" MinWidth="210">
+                                                    <Border Width="22"
+                                                            Height="22"
+                                                            CornerRadius="11"
+                                                            Background="{DynamicResource PrimaryAccentBrush}"
+                                                            Margin="0,0,8,0">
+                                                        <TextBlock Text="3"
+                                                                   Foreground="White"
+                                                                   FontSize="11"
+                                                                   FontWeight="SemiBold"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center" />
+                                                    </Border>
+                                                    <TextBlock Text="{DynamicResource Ui.Workflow.Step3}"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,14,6" MinWidth="210">
+                                                    <Border Width="22"
+                                                            Height="22"
+                                                            CornerRadius="11"
+                                                            Background="{DynamicResource PrimaryAccentBrush}"
+                                                            Margin="0,0,8,0">
+                                                        <TextBlock Text="4"
+                                                                   Foreground="White"
+                                                                   FontSize="11"
+                                                                   FontWeight="SemiBold"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center" />
+                                                    </Border>
+                                                    <TextBlock Text="{DynamicResource Ui.Workflow.Step4}"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
+
                                     <TextBlock Text="{DynamicResource Ui.InstallCommand}" Style="{StaticResource BodyTextStyle}" />
                                     <TextBox Text="{Binding InstallCommand, UpdateSourceTrigger=PropertyChanged}"
                                              Margin="0,6,0,10"
                                              MinHeight="34" />
+                                    <TextBlock Text="{DynamicResource Ui.CommandPreview.Install}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               FontSize="11"
+                                               Margin="0,-2,0,4" />
+                                    <TextBox Text="{Binding InstallCommandPreview}"
+                                             IsReadOnly="True"
+                                             Margin="0,0,0,10"
+                                             MinHeight="34"
+                                             TextWrapping="Wrap"
+                                             FontFamily="Consolas"
+                                             FontSize="12" />
 
                                     <TextBlock Text="{DynamicResource Ui.UninstallCommand}" Style="{StaticResource BodyTextStyle}" />
                                     <TextBox Text="{Binding UninstallCommand, UpdateSourceTrigger=PropertyChanged}"
                                              Margin="0,6,0,10"
                                              MinHeight="34" />
+                                    <TextBlock Text="{DynamicResource Ui.CommandPreview.Uninstall}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               FontSize="11"
+                                               Margin="0,-2,0,4" />
+                                    <TextBox Text="{Binding UninstallCommandPreview}"
+                                             IsReadOnly="True"
+                                             Margin="0,0,0,10"
+                                             MinHeight="34"
+                                             TextWrapping="Wrap"
+                                             FontFamily="Consolas"
+                                             FontSize="12" />
 
                                     <CheckBox Content="{DynamicResource Ui.SilentSwitchVerified}"
                                               IsChecked="{Binding SilentSwitchesVerified}"
@@ -1053,40 +1188,83 @@
                                     </Grid>
 
                                     <WrapPanel>
-                                        <Button Style="{StaticResource PrimaryButtonStyle}"
-                                                Content="{DynamicResource Ui.StartPackaging}"
-                                                MinWidth="130"
-                                                Command="{Binding PackageCommand}" />
-                                        <Button Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="{DynamicResource Ui.TestDetection}"
-                                                MinWidth="130"
-                                                Margin="10,0,0,0"
-                                                Command="{Binding TestDetectionCommand}" />
-                                        <Button Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="{DynamicResource Ui.SandboxProof.RunShort}"
-                                                MinWidth="140"
-                                                Margin="10,0,0,0"
-                                                Command="{Binding RunSandboxProofCommand}" />
-                                        <Button Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="{DynamicResource Ui.SandboxProof.ProofAndPackageShort}"
-                                                MinWidth="150"
-                                                Margin="10,0,0,0"
-                                                Command="{Binding ProofAndPackageCommand}" />
-                                        <Button Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="{DynamicResource Ui.FixForMe}"
-                                                MinWidth="120"
-                                                Margin="10,0,0,0"
-                                                Command="{Binding QuickFixCommand}" />
-                                        <Button Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="{DynamicResource Ui.Reset}"
-                                                MinWidth="110"
-                                                Margin="10,0,0,0"
-                                                Command="{Binding ResetCommand}" />
-                                        <Button Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="{DynamicResource Ui.OpenOutput}"
-                                                MinWidth="130"
-                                                Margin="10,0,0,0"
-                                                Command="{Binding OpenOutputFolderCommand}" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
+                                            <Button Style="{StaticResource PrimaryButtonStyle}"
+                                                    Content="{DynamicResource Ui.StartPackaging}"
+                                                    MinWidth="130"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.StartPackaging}"
+                                                    Command="{Binding PackageCommand}" />
+                                            <Border Style="{StaticResource InfoIconBorderStyle}"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.StartPackaging}">
+                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
+                                            <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="{DynamicResource Ui.TestDetection}"
+                                                    MinWidth="130"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.TestDetection}"
+                                                    Command="{Binding TestDetectionCommand}" />
+                                            <Border Style="{StaticResource InfoIconBorderStyle}"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.TestDetection}">
+                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
+                                            <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="{DynamicResource Ui.SandboxProof.RunShort}"
+                                                    MinWidth="140"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.SandboxProof}"
+                                                    Command="{Binding RunSandboxProofCommand}" />
+                                            <Border Style="{StaticResource InfoIconBorderStyle}"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.SandboxProof}">
+                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
+                                            <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="{DynamicResource Ui.SandboxProof.ProofAndPackageShort}"
+                                                    MinWidth="150"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.ProofAndPackage}"
+                                                    Command="{Binding ProofAndPackageCommand}" />
+                                            <Border Style="{StaticResource InfoIconBorderStyle}"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.ProofAndPackage}">
+                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
+                                            <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="{DynamicResource Ui.FixForMe}"
+                                                    MinWidth="120"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.FixForMe}"
+                                                    Command="{Binding QuickFixCommand}" />
+                                            <Border Style="{StaticResource InfoIconBorderStyle}"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.FixForMe}">
+                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
+                                            <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="{DynamicResource Ui.Reset}"
+                                                    MinWidth="110"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.Reset}"
+                                                    Command="{Binding ResetCommand}" />
+                                            <Border Style="{StaticResource InfoIconBorderStyle}"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.Reset}">
+                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
+                                            <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="{DynamicResource Ui.OpenOutput}"
+                                                    MinWidth="130"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.OpenOutput}"
+                                                    Command="{Binding OpenOutputFolderCommand}" />
+                                            <Border Style="{StaticResource InfoIconBorderStyle}"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.OpenOutput}">
+                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
+                                            </Border>
+                                        </StackPanel>
                                     </WrapPanel>
                                     <TextBlock Text="{Binding DetectionTestStatus}"
                                                Style="{StaticResource BodyTextStyle}"

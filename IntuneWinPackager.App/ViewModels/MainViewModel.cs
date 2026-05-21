@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfColor = System.Windows.Media.Color;
 using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
@@ -26,6 +27,10 @@ namespace IntuneWinPackager.App.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
+    private static readonly Regex CommandPlaceholderRegex = new(
+        @"<[^>]+>|\{PRODUCT-CODE\}|\{PACKAGE-IDENTITY\}",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private readonly IPackagingWorkflowService _packagingWorkflowService;
     private readonly IValidationService _validationService;
     private readonly IInstallerCommandService _installerCommandService;
@@ -799,6 +804,14 @@ public partial class MainViewModel : ObservableObject
         $"{T("Vm.Readiness.DetectionRule")}: {(DetectionRuleType == IntuneDetectionRuleType.None ? T("Vm.Readiness.Missing") : T("Vm.Readiness.Configured"))}{Environment.NewLine}" +
         $"{T("Vm.Readiness.SmartStaging")}: {(UseSmartSourceStaging ? T("Vm.Readiness.Enabled") : T("Vm.Readiness.Disabled"))}";
 
+    public string InstallCommandPreview => BuildCommandPreview(InstallCommand);
+
+    public string UninstallCommandPreview => BuildCommandPreview(UninstallCommand);
+
+    public bool AreExecutionCommandsReady =>
+        IsExecutableCommandReady(InstallCommand) &&
+        IsExecutableCommandReady(UninstallCommand);
+
     public string NextStepHint
     {
         get
@@ -1122,6 +1135,8 @@ public partial class MainViewModel : ObservableObject
     partial void OnSourceFolderChanged(string value)
     {
         InvalidatePreflightIfNeeded();
+        OnPropertyChanged(nameof(InstallCommandPreview));
+        OnPropertyChanged(nameof(UninstallCommandPreview));
         UpdateValidation();
         NotifyReadinessChanged();
     }
@@ -1148,6 +1163,8 @@ public partial class MainViewModel : ObservableObject
     partial void OnInstallCommandChanged(string value)
     {
         InvalidatePreflightIfNeeded();
+        OnPropertyChanged(nameof(InstallCommandPreview));
+        OnPropertyChanged(nameof(AreExecutionCommandsReady));
         UpdateValidation();
         NotifyReadinessChanged();
     }
@@ -1155,6 +1172,8 @@ public partial class MainViewModel : ObservableObject
     partial void OnUninstallCommandChanged(string value)
     {
         InvalidatePreflightIfNeeded();
+        OnPropertyChanged(nameof(UninstallCommandPreview));
+        OnPropertyChanged(nameof(AreExecutionCommandsReady));
         UpdateValidation();
         NotifyReadinessChanged();
     }
@@ -1417,6 +1436,8 @@ public partial class MainViewModel : ObservableObject
     partial void OnSetupFilePathChanged(string value)
     {
         InvalidatePreflightIfNeeded();
+        OnPropertyChanged(nameof(InstallCommandPreview));
+        OnPropertyChanged(nameof(UninstallCommandPreview));
         NotifyReadinessChanged();
 
         if (_activeCatalogSelectionContext is not null &&
@@ -2517,7 +2538,8 @@ public partial class MainViewModel : ObservableObject
         return !IsBusy &&
                InstallerType != InstallerType.Unknown &&
                !string.IsNullOrWhiteSpace(SetupFilePath) &&
-               File.Exists(SetupFilePath);
+               File.Exists(SetupFilePath) &&
+               AreExecutionCommandsReady;
     }
 
     private bool CanProofAndPackage()
@@ -3012,6 +3034,7 @@ public partial class MainViewModel : ObservableObject
 
         ApplyDetectionRule(bestCandidate.Rule);
         _additionalDetectionRules = bestCandidate.AdditionalRules ?? [];
+        ApplyInstallContextFromDetectionEvidence(bestCandidate);
         SandboxProofStatus = TF(
             "Vm.SandboxProof.Status.DetectionApplied",
             bestCandidate.Rule.RuleType,
@@ -3035,6 +3058,49 @@ public partial class MainViewModel : ObservableObject
 
         UpdateValidation();
         return true;
+    }
+
+    private void ApplyInstallContextFromDetectionEvidence(SandboxProofDetectionCandidate candidate)
+    {
+        var rules = new List<IntuneDetectionRule> { candidate.Rule };
+        rules.AddRange(candidate.AdditionalRules ?? []);
+        if (rules.Any(IsUserScopedDetectionRule) && InstallContext != IntuneInstallContext.User)
+        {
+            InstallContext = IntuneInstallContext.User;
+            AppendLog("Install context switched to User because sandbox proof selected HKCU or user-profile detection evidence.");
+        }
+    }
+
+    private static bool IsUserScopedDetectionRule(IntuneDetectionRule rule)
+    {
+        return rule.RuleType switch
+        {
+            IntuneDetectionRuleType.Registry =>
+                rule.Registry.Hive.StartsWith("HKEY_CURRENT_USER", StringComparison.OrdinalIgnoreCase) ||
+                rule.Registry.Hive.Equals("HKCU", StringComparison.OrdinalIgnoreCase),
+            IntuneDetectionRuleType.File => IsUserScopedDetectionPath(rule.File.Path),
+            IntuneDetectionRuleType.Script =>
+                rule.Script.ScriptBody.Contains("HKEY_CURRENT_USER", StringComparison.OrdinalIgnoreCase) ||
+                rule.Script.ScriptBody.Contains("HKCU", StringComparison.OrdinalIgnoreCase) ||
+                rule.Script.ScriptBody.Contains("$env:LOCALAPPDATA", StringComparison.OrdinalIgnoreCase) ||
+                rule.Script.ScriptBody.Contains("$env:APPDATA", StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
+    }
+
+    private static bool IsUserScopedDetectionPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        var normalized = path.Trim();
+        return normalized.Contains("%LOCALAPPDATA%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("%APPDATA%", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains(@"\AppData\Local", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains(@"\AppData\Roaming", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains(@"\Users\", StringComparison.OrdinalIgnoreCase);
     }
 
     private SandboxProofDetectionCandidate? SelectSandboxProofCandidate(
@@ -3135,6 +3201,9 @@ public partial class MainViewModel : ObservableObject
         try
         {
             var detectionRule = BuildDetectionRule();
+            var additionalRules = _additionalDetectionRules
+                .Where(rule => rule.RuleType != IntuneDetectionRuleType.None)
+                .ToList();
             var proof = await _detectionTestService.ProveAsync(new DetectionProofRequest
             {
                 InstallerType = InstallerType,
@@ -3174,7 +3243,23 @@ public partial class MainViewModel : ObservableObject
 
             AppendLog($"Detection test summary: {result.Summary}");
 
-            if (result.Success && proof.Success)
+            var additionalFailures = new List<DetectionTestResult>();
+            for (var index = 0; index < additionalRules.Count; index++)
+            {
+                var additionalResult = await _detectionTestService.TestAsync(InstallerType, additionalRules[index]);
+                AppendLog($"Additional detection rule {index + 1} summary: {additionalResult.Summary}");
+                if (!string.IsNullOrWhiteSpace(additionalResult.Details))
+                {
+                    AppendLog($"Additional detection rule {index + 1} details: {additionalResult.Details}");
+                }
+
+                if (!additionalResult.Success)
+                {
+                    additionalFailures.Add(additionalResult);
+                }
+            }
+
+            if (result.Success && proof.Success && additionalFailures.Count == 0)
             {
                 DetectionTestStatus = T("Vm.Detection.TestStatus.Passed");
                 if (InstallerType == InstallerType.Exe)
@@ -3194,10 +3279,13 @@ public partial class MainViewModel : ObservableObject
             else
             {
                 DetectionTestStatus = T("Vm.Detection.TestStatus.Failed");
+                var additionalFailure = additionalFailures.FirstOrDefault();
                 SetStatus(
                     OperationState.Error,
                     T("Vm.Status.DetectionTestFailedTitle"),
-                    proof.Success ? result.Details : proof.Summary);
+                    additionalFailure is not null
+                        ? additionalFailure.Details
+                        : proof.Success ? result.Details : proof.Summary);
             }
         }
         catch (Exception ex)
@@ -3895,7 +3983,7 @@ public partial class MainViewModel : ObservableObject
 
     private static bool ContainsCatalogTemplatePlaceholder(string command)
     {
-        return command.Contains('<') && command.Contains('>');
+        return !string.IsNullOrWhiteSpace(command) && CommandPlaceholderRegex.IsMatch(command);
     }
 
     private void ApplyCatalogMetadataToCurrentPackage(
@@ -3911,24 +3999,32 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        var installCommandFromManifest = TryBuildWingetManifestSilentInstallCommand(downloadResult.InstallerPath);
         var installCommandFromCatalog = BuildCatalogCommandFromTemplate(
             CoalesceCatalogValue(selectedVariant?.SuggestedInstallCommand, entry.SuggestedInstallCommand),
             downloadResult.InstallerPath);
 
-        var preferredInstallCommand = CoalesceCatalogValue(installCommandFromManifest, installCommandFromCatalog);
+        var preferredInstallCommand = installCommandFromCatalog.Command;
         if (!string.IsNullOrWhiteSpace(preferredInstallCommand))
         {
             InstallCommand = preferredInstallCommand;
             AppendLog($"Catalog silent install command applied: {InstallCommand}");
         }
+        else if (!string.IsNullOrWhiteSpace(installCommandFromCatalog.Message))
+        {
+            AppendLog($"Catalog install command was not applied: {installCommandFromCatalog.Message}");
+        }
 
         var uninstallCommandFromCatalog = BuildCatalogCommandFromTemplate(
             CoalesceCatalogValue(selectedVariant?.SuggestedUninstallCommand, entry.SuggestedUninstallCommand),
             downloadResult.InstallerPath);
-        if (!string.IsNullOrWhiteSpace(uninstallCommandFromCatalog))
+        if (!string.IsNullOrWhiteSpace(uninstallCommandFromCatalog.Command))
         {
-            UninstallCommand = uninstallCommandFromCatalog;
+            UninstallCommand = uninstallCommandFromCatalog.Command;
+            AppendLog($"Catalog uninstall command applied: {UninstallCommand}");
+        }
+        else if (!string.IsNullOrWhiteSpace(uninstallCommandFromCatalog.Message))
+        {
+            AppendLog($"Catalog uninstall command was not applied: {uninstallCommandFromCatalog.Message}");
         }
         else if (InstallerType == InstallerType.Exe && !string.IsNullOrWhiteSpace(preferredInstallCommand))
         {
@@ -3940,9 +4036,18 @@ public partial class MainViewModel : ObservableObject
             catalogDetectionRule.RuleType != IntuneDetectionRuleType.None)
         {
             ApplyDetectionRule(catalogDetectionRule);
-            _additionalDetectionRules = [];
+            _additionalDetectionRules = selectedVariant?.AdditionalDetectionRules ?? [];
             _detectionProvenance = [];
-            AppendLog("Catalog deterministic detection rule applied as the initial rule. Sandbox Proof can still replace it with stronger evidence.");
+            AppendLog(_additionalDetectionRules.Count == 0
+                ? "Catalog deterministic detection rule applied as the initial rule. Sandbox Proof can still replace it with stronger evidence."
+                : $"Catalog deterministic detection rule applied with {_additionalDetectionRules.Count} additional identity rule(s). Sandbox Proof can still replace it with stronger evidence.");
+        }
+
+        if (selectedVariant?.Scope.Equals("user", StringComparison.OrdinalIgnoreCase) == true &&
+            InstallContext != IntuneInstallContext.User)
+        {
+            InstallContext = IntuneInstallContext.User;
+            AppendLog("Install context switched to User because catalog metadata marks this installer as user scoped.");
         }
 
         RefreshSwitchVerificationStatus();
@@ -3950,17 +4055,22 @@ public partial class MainViewModel : ObservableObject
         NotifyReadinessChanged();
     }
 
-    private static string BuildCatalogCommandFromTemplate(string commandTemplate, string installerPath)
+    private static CatalogCommandResolution BuildCatalogCommandFromTemplate(string commandTemplate, string installerPath)
     {
-        if (string.IsNullOrWhiteSpace(commandTemplate) || string.IsNullOrWhiteSpace(installerPath))
+        if (string.IsNullOrWhiteSpace(commandTemplate))
         {
-            return string.Empty;
+            return new CatalogCommandResolution(string.Empty, string.Empty);
+        }
+
+        if (string.IsNullOrWhiteSpace(installerPath))
+        {
+            return new CatalogCommandResolution(string.Empty, "Installer path is missing.");
         }
 
         var fileName = Path.GetFileName(installerPath);
         if (string.IsNullOrWhiteSpace(fileName))
         {
-            return string.Empty;
+            return new CatalogCommandResolution(string.Empty, "Installer filename could not be resolved.");
         }
 
         var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
@@ -3982,105 +4092,16 @@ public partial class MainViewModel : ObservableObject
         }
 
         rewritten = rewritten.Replace(fileNameWithoutExtension + extension + extension, fileName, StringComparison.OrdinalIgnoreCase);
-        return ContainsCatalogTemplatePlaceholder(rewritten) ? string.Empty : rewritten.Trim();
-    }
-
-    private static string TryBuildWingetManifestSilentInstallCommand(string installerPath)
-    {
-        var silentSwitches = TryReadWingetManifestInstallerSwitch(installerPath, "Silent");
-        if (string.IsNullOrWhiteSpace(silentSwitches))
+        rewritten = rewritten.Trim();
+        var unresolved = FindCommandPlaceholders(rewritten);
+        if (unresolved.Count > 0)
         {
-            silentSwitches = TryReadWingetManifestInstallerSwitch(installerPath, "SilentWithProgress");
+            return new CatalogCommandResolution(
+                rewritten,
+                $"Unresolved required argument(s): {string.Join(", ", unresolved)}.");
         }
 
-        if (string.IsNullOrWhiteSpace(silentSwitches))
-        {
-            return string.Empty;
-        }
-
-        return $"{QuoteCatalogCommandFileName(Path.GetFileName(installerPath))} {silentSwitches}".Trim();
-    }
-
-    private static string TryReadWingetManifestInstallerSwitch(string installerPath, string switchName)
-    {
-        var directory = Path.GetDirectoryName(installerPath);
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-        {
-            return string.Empty;
-        }
-
-        var yamlPath = Directory
-            .EnumerateFiles(directory, "*.yaml", SearchOption.TopDirectoryOnly)
-            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(yamlPath))
-        {
-            return string.Empty;
-        }
-
-        try
-        {
-            var inInstallerSwitches = false;
-            var installerSwitchIndent = -1;
-            foreach (var rawLine in File.ReadLines(yamlPath))
-            {
-                if (string.IsNullOrWhiteSpace(rawLine))
-                {
-                    continue;
-                }
-
-                var trimmed = rawLine.Trim();
-                var indent = rawLine.Length - rawLine.TrimStart().Length;
-                if (trimmed.Equals("InstallerSwitches:", StringComparison.OrdinalIgnoreCase))
-                {
-                    inInstallerSwitches = true;
-                    installerSwitchIndent = indent;
-                    continue;
-                }
-
-                if (!inInstallerSwitches)
-                {
-                    continue;
-                }
-
-                if (indent <= installerSwitchIndent && !trimmed.StartsWith("-", StringComparison.Ordinal))
-                {
-                    return string.Empty;
-                }
-
-                var prefix = switchName + ":";
-                if (!trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                return UnquoteCatalogYamlValue(trimmed[prefix.Length..].Trim());
-            }
-        }
-        catch
-        {
-            return string.Empty;
-        }
-
-        return string.Empty;
-    }
-
-    private static string UnquoteCatalogYamlValue(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        var trimmed = value.Trim();
-        if (trimmed.Length >= 2 &&
-            ((trimmed[0] == '\'' && trimmed[^1] == '\'') ||
-             (trimmed[0] == '"' && trimmed[^1] == '"')))
-        {
-            trimmed = trimmed[1..^1];
-        }
-
-        return trimmed.Replace("''", "'", StringComparison.Ordinal);
+        return new CatalogCommandResolution(rewritten, string.Empty);
     }
 
     private static string QuoteCatalogCommandFileName(string fileName)
@@ -4091,6 +4112,122 @@ public partial class MainViewModel : ObservableObject
         }
 
         return $"\"{fileName.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+    }
+
+    private string BuildCommandPreview(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return "Blocked: command is missing.";
+        }
+
+        var trimmed = BuildEffectivePackageCommand(command).Trim();
+        var unresolved = FindCommandPlaceholders(trimmed);
+        return unresolved.Count == 0
+            ? trimmed
+            : $"Blocked: unresolved required argument(s): {string.Join(", ", unresolved)}{Environment.NewLine}{trimmed}";
+    }
+
+    private string BuildEffectivePackageCommand(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command) ||
+            string.IsNullOrWhiteSpace(SourceFolder) ||
+            string.IsNullOrWhiteSpace(SetupFilePath))
+        {
+            return command;
+        }
+
+        try
+        {
+            var sourceFolder = Path.GetFullPath(SourceFolder);
+            var setupFilePath = Path.GetFullPath(SetupFilePath);
+            var setupRelativePath = Path.GetRelativePath(sourceFolder, setupFilePath);
+            if (string.IsNullOrWhiteSpace(setupRelativePath) ||
+                setupRelativePath.StartsWith("..", StringComparison.Ordinal) ||
+                Path.IsPathRooted(setupRelativePath))
+            {
+                return command;
+            }
+
+            return NormalizeSetupCommandForPackagePreview(command, sourceFolder, setupFilePath, setupRelativePath);
+        }
+        catch
+        {
+            return command;
+        }
+    }
+
+    private static string NormalizeSetupCommandForPackagePreview(
+        string command,
+        string sourceFolder,
+        string setupFilePath,
+        string setupRelativePath)
+    {
+        var normalizedRelative = setupRelativePath.Replace('/', '\\').TrimStart('\\');
+        var setupFileName = Path.GetFileName(setupFilePath);
+        if (string.IsNullOrWhiteSpace(setupFileName) ||
+            string.Equals(normalizedRelative, setupFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return command;
+        }
+
+        var rewritten = ReplaceCommandPathTokenForPreview(command, setupFilePath, normalizedRelative);
+        var sourceRelativeFromFull = Path.GetRelativePath(sourceFolder, setupFilePath)
+            .Replace('/', '\\')
+            .TrimStart('\\');
+        if (!string.IsNullOrWhiteSpace(sourceRelativeFromFull))
+        {
+            rewritten = ReplaceCommandPathTokenForPreview(rewritten, sourceRelativeFromFull, normalizedRelative);
+        }
+
+        rewritten = ReplaceCommandPathTokenForPreview(rewritten, setupFileName, normalizedRelative);
+        rewritten = ReplaceCommandPathTokenForPreview(rewritten, $".\\{setupFileName}", normalizedRelative);
+        return rewritten;
+    }
+
+    private static string ReplaceCommandPathTokenForPreview(string command, string fromPath, string toRelativePath)
+    {
+        if (string.IsNullOrWhiteSpace(command) || string.IsNullOrWhiteSpace(fromPath))
+        {
+            return command;
+        }
+
+        var normalizedFrom = fromPath.Replace('/', '\\').Trim('\\');
+        var normalizedTo = toRelativePath.Replace('/', '\\').TrimStart('\\');
+        var quotedTo = QuoteCatalogCommandFileName(normalizedTo);
+        var rewritten = command
+            .Replace($"\"{normalizedFrom}\"", quotedTo, StringComparison.OrdinalIgnoreCase)
+            .Replace($"'{normalizedFrom}'", quotedTo, StringComparison.OrdinalIgnoreCase);
+
+        if (!string.Equals(rewritten, command, StringComparison.Ordinal))
+        {
+            return rewritten;
+        }
+
+        return Regex.Replace(
+            rewritten,
+            $"(?<![\\w\\\\/:.-]){Regex.Escape(normalizedFrom)}(?![\\w\\\\/:.-])",
+            quotedTo,
+            RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsExecutableCommandReady(string command)
+    {
+        return !string.IsNullOrWhiteSpace(command) && FindCommandPlaceholders(command).Count == 0;
+    }
+
+    private static IReadOnlyList<string> FindCommandPlaceholders(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return [];
+        }
+
+        return CommandPlaceholderRegex
+            .Matches(command)
+            .Select(match => match.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static string CoalesceCatalogValue(params string?[] values)
@@ -4542,6 +4679,12 @@ public partial class MainViewModel : ObservableObject
             return false;
         }
 
+        if (!CanReusePreparedCatalogProfile(profile, entry, out var reuseBlockReason))
+        {
+            AppendLog($"Store profile skipped for {entry.Name}: {reuseBlockReason}");
+            return false;
+        }
+
         await SelectSetupFileAsync(profile.InstallerPath);
 
         if (string.IsNullOrWhiteSpace(ProfileName))
@@ -4584,6 +4727,82 @@ public partial class MainViewModel : ObservableObject
             profile.InstallerPath);
 
         return true;
+    }
+
+    private static bool CanReusePreparedCatalogProfile(
+        CatalogPackageProfile profile,
+        PackageCatalogEntry entry,
+        out string reason)
+    {
+        reason = string.Empty;
+
+        if (profile.Confidence == CatalogProfileConfidence.ManualReview)
+        {
+            reason = "saved profile still requires manual review.";
+            return false;
+        }
+
+        if (!profile.DetectionReady ||
+            profile.IntuneRules.DetectionRule.RuleType == IntuneDetectionRuleType.None)
+        {
+            reason = "saved profile has no ready detection rule.";
+            return false;
+        }
+
+        if (!IsExecutableCommandReady(profile.InstallCommand) ||
+            !IsExecutableCommandReady(profile.UninstallCommand))
+        {
+            reason = "saved profile has missing or unresolved command arguments.";
+            return false;
+        }
+
+        if (profile.Confidence == CatalogProfileConfidence.Verified)
+        {
+            return true;
+        }
+
+        var selectedVariant = ResolveCatalogVariant(entry, profile.InstallerSha256);
+        if (selectedVariant is null)
+        {
+            return true;
+        }
+
+        var expectedInstall = BuildCatalogCommandFromTemplate(
+            CoalesceCatalogValue(selectedVariant.SuggestedInstallCommand, entry.SuggestedInstallCommand),
+            profile.InstallerPath);
+        if (!string.IsNullOrWhiteSpace(expectedInstall.Command) &&
+            !CommandsEquivalent(profile.InstallCommand, expectedInstall.Command))
+        {
+            reason = "saved install command differs from current catalog metadata.";
+            return false;
+        }
+
+        var expectedUninstall = BuildCatalogCommandFromTemplate(
+            CoalesceCatalogValue(selectedVariant.SuggestedUninstallCommand, entry.SuggestedUninstallCommand),
+            profile.InstallerPath);
+        if (!string.IsNullOrWhiteSpace(expectedUninstall.Command) &&
+            !CommandsEquivalent(profile.UninstallCommand, expectedUninstall.Command))
+        {
+            reason = "saved uninstall command differs from current catalog metadata.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool CommandsEquivalent(string left, string right)
+    {
+        return NormalizeCommandForComparison(left)
+            .Equals(NormalizeCommandForComparison(right), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeCommandForComparison(string command)
+    {
+        return string.Join(
+            " ",
+            (command ?? string.Empty)
+            .Trim()
+            .Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
     }
 
     private async Task PromoteActiveCatalogProfileAsVerifiedAsync()
@@ -4772,7 +4991,7 @@ public partial class MainViewModel : ObservableObject
 
     private bool CanPackage()
     {
-        return !IsBusy;
+        return !IsBusy && IsConfigurationValid;
     }
 
     private bool CanOpenOutputFolder()
@@ -6008,6 +6227,8 @@ public partial class MainViewModel : ObservableObject
         string InstallerVariantKey,
         string InstallerSha256,
         string InstallerPath);
+
+    private sealed record CatalogCommandResolution(string Command, string Message);
 
     private static string ResolveCurrentVersion()
     {

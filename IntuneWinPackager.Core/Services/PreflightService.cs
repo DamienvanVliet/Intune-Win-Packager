@@ -13,7 +13,9 @@ public sealed class PreflightService : IPreflightService
     private const long RecommendedFreeSpaceBytes = 2L * 1024 * 1024 * 1024;
     private const int ToolProbeTimeoutSeconds = 8;
     private static readonly Regex ProductCodeRegex = new("^\\{[0-9A-Fa-f\\-]{36}\\}$", RegexOptions.Compiled);
-    private static readonly Regex PlaceholderRegex = new("<[^>]+>", RegexOptions.Compiled);
+    private static readonly Regex PlaceholderRegex = new(
+        @"<[^>]+>|\{PRODUCT-CODE\}|\{PACKAGE-IDENTITY\}",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly HashSet<string> SupportedArchitectures = new(StringComparer.OrdinalIgnoreCase)
     {
         "x64",

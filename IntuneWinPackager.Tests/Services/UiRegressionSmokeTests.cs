@@ -27,6 +27,10 @@ public class UiRegressionSmokeTests
         Assert.Contains("ShowStoreAdvancedDetails", xaml, StringComparison.Ordinal);
         Assert.Contains("Ui.Store.Badge.Upgrade", xaml, StringComparison.Ordinal);
         Assert.Contains("Ui.Store.Trust.HashMatched", xaml, StringComparison.Ordinal);
+        Assert.Contains("InfoIconBorderStyle", xaml, StringComparison.Ordinal);
+        Assert.Contains("Ui.Tooltip.StartPackaging", xaml, StringComparison.Ordinal);
+        Assert.Contains("Ui.CommandPreview.Install", xaml, StringComparison.Ordinal);
+        Assert.Contains("Ui.Workflow.Title", xaml, StringComparison.Ordinal);
     }
 
     [Fact]

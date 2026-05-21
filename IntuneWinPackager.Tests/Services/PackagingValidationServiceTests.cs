@@ -800,6 +800,25 @@ public class PackagingValidationServiceTests
         Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
     }
 
+    [Fact]
+    public void Validate_ReturnsError_WhenUninstallCommandContainsProductCodePlaceholder()
+    {
+        var baseRequest = BuildBaseExeRequest();
+        var request = baseRequest with
+        {
+            Configuration = baseRequest.Configuration with
+            {
+                UninstallCommand = "msiexec /x \"{PRODUCT-CODE}\" /quiet /norestart"
+            }
+        };
+
+        var sut = new PackagingValidationService();
+        var result = sut.Validate(request);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Issues, issue => issue.Key == "Core.Validation.UninstallCommandHasPlaceholder");
+    }
+
     private static PackagingRequest BuildBaseExeRequest()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-test-{Guid.NewGuid():N}");

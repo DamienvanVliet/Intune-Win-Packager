@@ -1,10 +1,15 @@
 using IntuneWinPackager.Models.Entities;
 using IntuneWinPackager.Models.Enums;
+using System.Text.RegularExpressions;
 
 namespace IntuneWinPackager.Core.Services;
 
 public static class CatalogReadinessEvaluator
 {
+    private static readonly Regex PlaceholderRegex = new(
+        @"<[^>]+>|\{PRODUCT-CODE\}|\{PACKAGE-IDENTITY\}",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     public static CatalogReadinessEvaluation Evaluate(
         PackageCatalogEntry? entry,
         CatalogPackageProfile? profile = null)
@@ -199,7 +204,7 @@ public static class CatalogReadinessEvaluator
         => !string.IsNullOrWhiteSpace(value) && File.Exists(value);
 
     private static bool ContainsTemplatePlaceholder(string value)
-        => !string.IsNullOrWhiteSpace(value) && value.Contains('<') && value.Contains('>');
+        => !string.IsNullOrWhiteSpace(value) && PlaceholderRegex.IsMatch(value);
 
     private static bool HasText(string value)
         => !string.IsNullOrWhiteSpace(value);

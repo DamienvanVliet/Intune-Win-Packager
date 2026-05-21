@@ -1444,8 +1444,14 @@ function Test-DetectionRuleCandidateAllowed {
     if ($null -eq $Rule.file) { return $false }
 
     $target = Join-Path ([Environment]::ExpandEnvironmentVariables([string]$Rule.file.path)) ([string]$Rule.file.fileOrFolderName)
+    $targetName = [IO.Path]::GetFileName($target)
+    if ($targetName -match '(?i)(^setup|setup$|install|unins|uninstall|updater|update|crash|helper|repair)') {
+        return $false
+    }
+
     $windowsRoot = [Environment]::GetFolderPath('Windows')
-    foreach ($blockedRoot in @($windowsRoot, $ProofRoot, $SandboxSourceRoot)) {
+    $packageCacheRoot = if ([string]::IsNullOrWhiteSpace($env:ProgramData)) { '' } else { Join-Path $env:ProgramData 'Package Cache' }
+    foreach ($blockedRoot in @($windowsRoot, $ProofRoot, $SandboxSourceRoot, $env:TEMP, $env:TMP, $packageCacheRoot)) {
         if ([string]::IsNullOrWhiteSpace($blockedRoot)) { continue }
         $normalizedRoot = $blockedRoot.TrimEnd('\')
         if ($target.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
