@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.0.7] - 2026-05-21
+## [3.0.12] - 2026-05-21
 
 ### Added
 - Add a compact recommended workflow in Packaging so users follow source/setup, command preview, Sandbox Proof, then packaging in the right order.
