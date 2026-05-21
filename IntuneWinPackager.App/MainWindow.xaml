@@ -649,7 +649,7 @@
                                                Foreground="{DynamicResource TextSecondaryBrush}"
                                                FontSize="11"
                                                Margin="0,-2,0,4" />
-                                    <TextBox Text="{Binding InstallCommandPreview}"
+                                    <TextBox Text="{Binding InstallCommandPreview, Mode=OneWay}"
                                              IsReadOnly="True"
                                              Margin="0,0,0,10"
                                              MinHeight="34"
@@ -666,7 +666,7 @@
                                                Foreground="{DynamicResource TextSecondaryBrush}"
                                                FontSize="11"
                                                Margin="0,-2,0,4" />
-                                    <TextBox Text="{Binding UninstallCommandPreview}"
+                                    <TextBox Text="{Binding UninstallCommandPreview, Mode=OneWay}"
                                              IsReadOnly="True"
                                              Margin="0,0,0,10"
                                              MinHeight="34"

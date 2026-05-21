@@ -491,7 +491,7 @@ public class PackagingWorkflowServiceTests
 
         var result = await sut.PackageAsync(
             request,
-            logProgress: new Progress<string>(logs.Add));
+            logProgress: new ImmediateProgress<string>(logs.Add));
 
         Assert.True(result.Success);
         Assert.Contains(logs, entry => entry.Contains("Primary detection rule:", StringComparison.Ordinal));

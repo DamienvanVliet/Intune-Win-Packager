@@ -31,6 +31,8 @@ public class UiRegressionSmokeTests
         Assert.Contains("Ui.Tooltip.StartPackaging", xaml, StringComparison.Ordinal);
         Assert.Contains("Ui.CommandPreview.Install", xaml, StringComparison.Ordinal);
         Assert.Contains("Ui.Workflow.Title", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding InstallCommandPreview, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding UninstallCommandPreview, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
     }
 
     [Fact]

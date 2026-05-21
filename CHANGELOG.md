@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.13] - 2026-05-21
+
+### Fixed
+- Fix startup crash caused by read-only command preview fields using default TwoWay TextBox binding.
+- Add UI regression coverage so command preview bindings stay OneWay.
+- Make the detection decision log test deterministic so release validation does not fail on delayed progress callbacks.
+
 ## [3.0.12] - 2026-05-21
 
 ### Added
