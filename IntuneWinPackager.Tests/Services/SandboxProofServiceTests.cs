@@ -62,6 +62,9 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("Candidate passed sandbox two-phase validation", script, StringComparison.Ordinal);
             Assert.Contains("Invoke-LaunchValidation", script, StringComparison.Ordinal);
             Assert.Contains("Measure-WhiteWindowRatio", script, StringComparison.Ordinal);
+            Assert.Contains("$brightness -ge 185", script, StringComparison.Ordinal);
+            Assert.Contains("$spread -le 70", script, StringComparison.Ordinal);
+            Assert.Contains("blank/light window", script, StringComparison.Ordinal);
             Assert.Contains("launch-window.png", script, StringComparison.Ordinal);
             Assert.Contains("Skipping dependency uninstall entry as primary app detection", script, StringComparison.Ordinal);
             Assert.Contains("$startProcessParameters = @", script, StringComparison.Ordinal);

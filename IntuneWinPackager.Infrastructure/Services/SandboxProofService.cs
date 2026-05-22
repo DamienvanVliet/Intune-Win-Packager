@@ -1872,19 +1872,25 @@ function Measure-WhiteWindowRatio {
     try {
         $bitmap = [System.Drawing.Bitmap]::FromFile($ImagePath)
         $sample = 0
-        $white = 0
+        $blank = 0
         $stepX = [Math]::Max(1, [int]($bitmap.Width / 80))
         $stepY = [Math]::Max(1, [int]($bitmap.Height / 60))
-        for ($y = 0; $y -lt $bitmap.Height; $y += $stepY) {
-            for ($x = 0; $x -lt $bitmap.Width; $x += $stepX) {
+        $startY = [Math]::Min($bitmap.Height - 1, [int]($bitmap.Height * 0.08))
+        for ($y = $startY; $y -lt $bitmap.Height; $y += $stepY) {
+            for ($x = 4; $x -lt ($bitmap.Width - 4); $x += $stepX) {
                 $pixel = $bitmap.GetPixel($x, $y)
                 $sample += 1
-                if ($pixel.R -ge 245 -and $pixel.G -ge 245 -and $pixel.B -ge 245) { $white += 1 }
+                $brightness = ($pixel.R + $pixel.G + $pixel.B) / 3
+                $spread = ([Math]::Max($pixel.R, [Math]::Max($pixel.G, $pixel.B)) - [Math]::Min($pixel.R, [Math]::Min($pixel.G, $pixel.B)))
+                if (($pixel.R -ge 245 -and $pixel.G -ge 245 -and $pixel.B -ge 245) -or
+                    ($brightness -ge 185 -and $spread -le 70)) {
+                    $blank += 1
+                }
             }
         }
 
         if ($sample -eq 0) { return 0.0 }
-        return [Math]::Round(($white / $sample), 4)
+        return [Math]::Round(($blank / $sample), 4)
     }
     finally {
         if ($null -ne $bitmap) { $bitmap.Dispose() }
@@ -1970,9 +1976,9 @@ function Invoke-LaunchValidation {
         $summary = if (-not $hasWindow) {
             'Installed application launched but no usable window was detected.'
         } elseif ($whiteRatio -ge 0.82) {
-            "Installed application launched to a mostly blank white window (white ratio $whiteRatio)."
+            "Installed application launched to a mostly blank/light window (blank ratio $whiteRatio)."
         } else {
-            "Installed application launched with a non-blank window (white ratio $whiteRatio)."
+            "Installed application launched with a non-blank window (blank ratio $whiteRatio)."
         }
 
         return [pscustomobject]@{

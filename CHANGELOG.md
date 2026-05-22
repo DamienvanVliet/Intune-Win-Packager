@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.17] - 2026-05-22
+
+### Fixed
+- Sandbox Proof blank-window detection now catches light blue/gray empty application canvases, not only pure white pixels, so cMTViewer-style blank windows are blocked correctly.
+- The blank-window pixel scan now ignores the title bar area and reports a blank/light ratio for the app client area.
+
 ## [3.0.16] - 2026-05-22
 
 ### Fixed
