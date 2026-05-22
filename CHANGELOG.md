@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.0.21] - 2026-05-22
+
+### Changed
+- Cleaned up the retired local Test Detection and Proof & Package code paths completely from the app, core services, models, dependency injection, localization, and tests.
+- Reordered the Packaging quick actions so Sandbox Proof is presented before Start Packaging, matching the recommended workflow.
+
+### Removed
+- Removed the obsolete detection test service and proof model types that were no longer part of the supported UI flow.
+
 ## [3.0.20] - 2026-05-22
 
 ### Changed

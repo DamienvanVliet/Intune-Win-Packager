@@ -35,6 +35,14 @@ public class UiRegressionSmokeTests
         Assert.Contains("Text=\"{Binding UninstallCommandPreview, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("Command=\"{Binding TestDetectionCommand}\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("Command=\"{Binding ProofAndPackageCommand}\"", xaml, StringComparison.Ordinal);
+
+        var sandboxProofCommandIndex = xaml.IndexOf("Command=\"{Binding RunSandboxProofCommand}\"", StringComparison.Ordinal);
+        var packageCommandIndex = xaml.IndexOf("Command=\"{Binding PackageCommand}\"", StringComparison.Ordinal);
+        Assert.True(sandboxProofCommandIndex >= 0, "Sandbox Proof command should be visible.");
+        Assert.True(packageCommandIndex >= 0, "Package command should be visible.");
+        Assert.True(
+            sandboxProofCommandIndex < packageCommandIndex,
+            "Sandbox Proof should be presented before Start Packaging in the quick actions.");
     }
 
     [Fact]

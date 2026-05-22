@@ -353,10 +353,6 @@
     <sys:String x:Key="Vm.Detection.OperatorHint.FileCompare">Vergelijkingsmodus: vul Waarde in met de verwachte bestandsproperty.</sys:String>
     <sys:String x:Key="Vm.Detection.OperatorHint.RegistryExists">Exists controleert alleen of sleutel/waarde bestaat. Gebruik voor EXE in productie bij voorkeur Equals op DisplayVersion.</sys:String>
     <sys:String x:Key="Vm.Detection.OperatorHint.RegistryCompare">Gebruik Equals met Waardenaam DisplayVersion en een exacte versiewaarde.</sys:String>
-    <sys:String x:Key="Vm.Detection.TestStatus.Idle">Detectietest is nog niet uitgevoerd.</sys:String>
-    <sys:String x:Key="Vm.Detection.TestStatus.Running">Detectietest wordt uitgevoerd...</sys:String>
-    <sys:String x:Key="Vm.Detection.TestStatus.Passed">Detectietest is geslaagd op dit apparaat.</sys:String>
-    <sys:String x:Key="Vm.Detection.TestStatus.Failed">Detectietest is mislukt. Controleer output en regelinstellingen.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.Idle">Sandbox proof is nog niet uitgevoerd.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.Running">Windows Sandbox proof-run wordt voorbereid...</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ReportPending">Het sandboxrapport is nog niet klaar. Wacht tot de sandbox-run klaar is en probeer opnieuw.</sys:String>
@@ -365,8 +361,6 @@
     <sys:String x:Key="Vm.SandboxProof.Status.DetectionApplied">Sandbox proof-detectie toegepast: {0} ({1}, {2} kandidaat/kandidaten gevonden).</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultMissing">Sandbox proof result.json is nog niet beschikbaar.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultTimedOut">Sandbox proof is niet binnen de verwachte tijd afgerond. Open de runmap om logs te bekijken.</sys:String>
-    <sys:String x:Key="Vm.SandboxProof.Status.NoRuleToTest">Er is nog geen detectieregel ingesteld. Run Sandbox Proof en pas eerst een kandidaat toe.</sys:String>
-    <sys:String x:Key="Vm.SandboxProof.Status.ProofAndPackageWaiting">Sandbox is gestart. Laat hem draaien; packaging start automatisch zodra een bewezen detectiekandidaat is weggeschreven.</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Klaar</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Wachten om te starten.</sys:String>
@@ -447,19 +441,11 @@
     <sys:String x:Key="Vm.Status.CatalogQueueImportPartialMessage">{0} package(s) gelukt, maar {1} package(s) zijn mislukt.</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressTitle">Packaging bezig</sys:String>
     <sys:String x:Key="Vm.Status.PackagingInProgressMessage">IntuneWinAppUtil.exe wordt uitgevoerd...</sys:String>
-    <sys:String x:Key="Vm.Status.DetectionTestRunningTitle">Detectietest wordt uitgevoerd</sys:String>
-    <sys:String x:Key="Vm.Status.DetectionTestRunningMessage">De huidige detectieregel wordt lokaal op dit apparaat getest...</sys:String>
-    <sys:String x:Key="Vm.Status.DetectionTestPassedTitle">Detectietest geslaagd</sys:String>
-    <sys:String x:Key="Vm.Status.DetectionTestFailedTitle">Detectietest mislukt</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofRunningTitle">Sandbox Proof</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofRunningMessage">Proof-workspace wordt gemaakt en Windows Sandbox wordt gestart...</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofLaunchedTitle">Sandbox gestart</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofDetectionAppliedTitle">Detectie toegepast</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofFailedTitle">Sandbox Proof mislukt</sys:String>
-    <sys:String x:Key="Vm.Status.ProofAndPackageRunningTitle">Proof &amp; Package</sys:String>
-    <sys:String x:Key="Vm.Status.ProofAndPackageRunningMessage">Windows Sandbox wordt gestart, detectie wordt bewezen en daarna wordt automatisch gepackaged.</sys:String>
-    <sys:String x:Key="Vm.Status.ProofAndPackageDetectionReadyTitle">Proof geslaagd</sys:String>
-    <sys:String x:Key="Vm.Status.ProofAndPackageFailedTitle">Proof &amp; Package mislukt</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Los preflight-fouten op voordat package-creatie start.</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedTitle">Package gemaakt</sys:String>
     <sys:String x:Key="Vm.Status.PackageCreatedMessage">Gemaakt: {0}</sys:String>

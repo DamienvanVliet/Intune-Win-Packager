@@ -1190,23 +1190,23 @@
                                     <WrapPanel>
                                         <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
                                             <Button Style="{StaticResource PrimaryButtonStyle}"
-                                                    Content="{DynamicResource Ui.StartPackaging}"
-                                                    MinWidth="130"
-                                                    ToolTip="{DynamicResource Ui.Tooltip.StartPackaging}"
-                                                    Command="{Binding PackageCommand}" />
-                                            <Border Style="{StaticResource InfoIconBorderStyle}"
-                                                    ToolTip="{DynamicResource Ui.Tooltip.StartPackaging}">
-                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
-                                            </Border>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
-                                            <Button Style="{StaticResource SecondaryButtonStyle}"
                                                     Content="{DynamicResource Ui.SandboxProof.RunShort}"
                                                     MinWidth="140"
                                                     ToolTip="{DynamicResource Ui.Tooltip.SandboxProof}"
                                                     Command="{Binding RunSandboxProofCommand}" />
                                             <Border Style="{StaticResource InfoIconBorderStyle}"
                                                     ToolTip="{DynamicResource Ui.Tooltip.SandboxProof}">
+                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
+                                            <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="{DynamicResource Ui.StartPackaging}"
+                                                    MinWidth="130"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.StartPackaging}"
+                                                    Command="{Binding PackageCommand}" />
+                                            <Border Style="{StaticResource InfoIconBorderStyle}"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.StartPackaging}">
                                                 <TextBlock Style="{StaticResource InfoIconTextStyle}" />
                                             </Border>
                                         </StackPanel>
@@ -1599,12 +1599,12 @@
                                             <TextBlock Text="{Binding SandboxProofStatus}"
                                                        Style="{StaticResource BodyTextStyle}"
                                                        TextWrapping="Wrap" />
-                                             <TextBlock Text="{Binding SandboxProofRunFolder}"
-                                                        Style="{StaticResource BodyTextStyle}"
-                                                        FontFamily="Consolas"
-                                                        FontSize="11"
-                                                        Margin="0,6,0,0"
-                                                        TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding SandboxProofRunFolder}"
+                                                       Style="{StaticResource BodyTextStyle}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="11"
+                                                       Margin="0,6,0,0"
+                                                       TextWrapping="Wrap" />
                                             <TextBlock Text="{Binding SandboxProofCandidateSummary}"
                                                        Style="{StaticResource BodyTextStyle}"
                                                        Margin="0,6,0,0"
