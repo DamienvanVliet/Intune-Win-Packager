@@ -33,6 +33,8 @@ public class UiRegressionSmokeTests
         Assert.Contains("Ui.Workflow.Title", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding InstallCommandPreview, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding UninstallCommandPreview, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Command=\"{Binding TestDetectionCommand}\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Command=\"{Binding ProofAndPackageCommand}\"", xaml, StringComparison.Ordinal);
     }
 
     [Fact]

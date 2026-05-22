@@ -2547,6 +2547,39 @@ public partial class MainViewModel : ObservableObject
         return CanRunSandboxProof();
     }
 
+    private SandboxProofPrecheck BuildSandboxProofPrecheck()
+    {
+        var detectionRule = BuildDetectionRule();
+        var hasDetectionRule = detectionRule.RuleType != IntuneDetectionRuleType.None;
+        var additionalRuleCount = _additionalDetectionRules.Count(rule => rule.RuleType != IntuneDetectionRuleType.None);
+        var installPreview = BuildCommandPreview(InstallCommand);
+        var uninstallPreview = BuildCommandPreview(UninstallCommand);
+        var installReady = IsExecutableCommandReady(InstallCommand);
+        var uninstallReady = IsExecutableCommandReady(UninstallCommand);
+
+        var detectionSummary = hasDetectionRule
+            ? $"Pre-check: existing {detectionRule.RuleType} detection rule is configured"
+            : "Pre-check: no detection rule is configured yet";
+        if (additionalRuleCount > 0)
+        {
+            detectionSummary += $" with {additionalRuleCount} additional identity rule(s)";
+        }
+
+        var commandSummary = installReady && uninstallReady
+            ? "install and uninstall commands are complete"
+            : "install or uninstall command still has missing required arguments";
+        var nextStep = hasDetectionRule
+            ? "Sandbox Proof will prove that rule before install, after install, and after uninstall."
+            : "Sandbox Proof will discover detection candidates from before/after evidence, then verify they disappear after uninstall.";
+
+        return new SandboxProofPrecheck(
+            $"{detectionSummary}; {commandSummary}. {nextStep}",
+            hasDetectionRule,
+            additionalRuleCount,
+            installPreview,
+            uninstallPreview);
+    }
+
     private async Task RunSandboxProofAsync()
     {
         if (!CanRunSandboxProof())
@@ -2554,18 +2587,21 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        var precheck = BuildSandboxProofPrecheck();
         IsBusy = true;
         SandboxProofStatus = T("Vm.SandboxProof.Status.Running");
+        SandboxProofCandidateSummary = precheck.Summary;
         AppendLog("Preparing Windows Sandbox proof run...");
+        AppendLog(precheck.Summary);
 
         SetStatus(
             OperationState.Running,
             T("Vm.Status.SandboxProofRunningTitle"),
-            T("Vm.Status.SandboxProofRunningMessage"));
+            precheck.Summary);
 
         try
         {
-            var session = await StartSandboxProofSessionAsync();
+            var session = await StartSandboxProofSessionAsync(precheck);
             ApplySandboxProofSession(session);
 
             if (session.Success)
@@ -2638,7 +2674,9 @@ public partial class MainViewModel : ObservableObject
             await PersistSettingsAsync();
 
             var timeoutMinutes = Math.Max(5, MaxRunTimeMinutes);
-            var session = await StartSandboxProofSessionAsync(cancellationToken);
+            var precheck = BuildSandboxProofPrecheck();
+            AppendLog(precheck.Summary);
+            var session = await StartSandboxProofSessionAsync(precheck, cancellationToken);
             ApplySandboxProofSession(session);
 
             if (!session.Success)
@@ -2761,8 +2799,11 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private Task<SandboxProofSession> StartSandboxProofSessionAsync(CancellationToken cancellationToken = default)
+    private Task<SandboxProofSession> StartSandboxProofSessionAsync(
+        SandboxProofPrecheck? precheck = null,
+        CancellationToken cancellationToken = default)
     {
+        precheck ??= BuildSandboxProofPrecheck();
         return _sandboxProofService.StartAsync(new SandboxProofRequest
         {
             InstallerType = InstallerType,
@@ -2771,6 +2812,9 @@ public partial class MainViewModel : ObservableObject
             InstallCommand = InstallCommand,
             UninstallCommand = UninstallCommand,
             DetectionRule = BuildDetectionRule(),
+            PrecheckSummary = precheck.Summary,
+            PrecheckDetectionRuleAvailable = precheck.DetectionRuleAvailable,
+            PrecheckAdditionalDetectionRuleCount = precheck.AdditionalDetectionRuleCount,
             TimeoutMinutes = Math.Max(5, MaxRunTimeMinutes),
             LaunchSandbox = true
         }, cancellationToken);
@@ -3165,7 +3209,11 @@ public partial class MainViewModel : ObservableObject
             return candidate.Reason + additionalRuleSummary;
         }
 
-        return $"{candidate.Reason} {candidate.ProofSummary}{additionalRuleSummary}";
+        var uninstallSummary = string.IsNullOrWhiteSpace(candidate.UninstallProofSummary)
+            ? string.Empty
+            : $" {candidate.UninstallProofSummary}";
+
+        return $"{candidate.Reason} {candidate.ProofSummary}{uninstallSummary}{additionalRuleSummary}";
     }
 
     private async Task TestDetectionAsync()
@@ -5567,6 +5615,12 @@ public partial class MainViewModel : ObservableObject
         }
 
         UpdateValidation();
+        if (InstallerType == InstallerType.Exe && IsSetupFileValid)
+        {
+            var precheck = BuildSandboxProofPrecheck();
+            SandboxProofCandidateSummary = precheck.Summary;
+            AppendLog(precheck.Summary);
+        }
     }
 
     private async Task RefreshMsiMetadataSummaryAsync(string msiPath)
@@ -6227,6 +6281,13 @@ public partial class MainViewModel : ObservableObject
         string InstallerVariantKey,
         string InstallerSha256,
         string InstallerPath);
+
+    private sealed record SandboxProofPrecheck(
+        string Summary,
+        bool DetectionRuleAvailable,
+        int AdditionalDetectionRuleCount,
+        string InstallCommandPreview,
+        string UninstallCommandPreview);
 
     private sealed record CatalogCommandResolution(string Command, string Message);
 

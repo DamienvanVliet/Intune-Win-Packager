@@ -80,6 +80,9 @@ public sealed class SandboxProofService : ISandboxProofService
             InstallCommand = sandboxInstallCommand,
             UninstallCommand = sandboxUninstallCommand,
             DetectionRule = request.DetectionRule,
+            PrecheckSummary = request.PrecheckSummary,
+            PrecheckDetectionRuleAvailable = request.PrecheckDetectionRuleAvailable,
+            PrecheckAdditionalDetectionRuleCount = request.PrecheckAdditionalDetectionRuleCount,
             TimeoutMinutes = Math.Clamp(request.TimeoutMinutes, 5, 240),
             CreatedAtUtc = DateTimeOffset.UtcNow
         };
@@ -187,6 +190,17 @@ public sealed class SandboxProofService : ISandboxProofService
             var hasInstallOutcome = TryGetObject(root, "install", out var installElement);
             var installTimedOut = hasInstallOutcome && GetJsonBoolean(installElement, "timedOut");
             var installExitCode = hasInstallOutcome ? GetJsonInt(installElement, "exitCode") : 0;
+            var hasUninstallOutcome = TryGetObject(root, "uninstall", out var uninstallElement);
+            var uninstallTimedOut = hasUninstallOutcome && GetJsonBoolean(uninstallElement, "timedOut");
+            var uninstallExitCode = hasUninstallOutcome ? GetJsonInt(uninstallElement, "exitCode") : 0;
+            var hasUninstallValidation = TryGetObject(root, "uninstallValidation", out var uninstallValidationElement);
+            var failureKind = GetJsonString(root, "failureKind");
+            var installProven = hasInstallOutcome && IsSuccessfulInstallExitCode(installExitCode, installTimedOut);
+            var uninstallProven = hasUninstallValidation
+                ? GetJsonBoolean(uninstallValidationElement, "success")
+                : !hasUninstallOutcome || IsSuccessfulInstallExitCode(uninstallExitCode, uninstallTimedOut);
+            var launchValidationProven = !TryGetObject(root, "launchValidation", out var launchValidationElement) ||
+                                         GetJsonBoolean(launchValidationElement, "success");
             var candidates = new List<SandboxProofDetectionCandidate>();
             if (root.TryGetProperty("candidates", out var candidatesElement) &&
                 candidatesElement.ValueKind == JsonValueKind.Array)
@@ -212,6 +226,31 @@ public sealed class SandboxProofService : ISandboxProofService
                 .ThenBy(candidate => DetectionTypePriority(candidate.Rule.RuleType))
                 .FirstOrDefault();
 
+            if (GetJsonBoolean(root, "failed") &&
+                !string.IsNullOrWhiteSpace(failureKind) &&
+                !failureKind.Equals("LaunchValidation", StringComparison.OrdinalIgnoreCase))
+            {
+                var error = GetJsonString(root, "error");
+                return new SandboxProofDetectionResult
+                {
+                    Completed = true,
+                    Failed = true,
+                    ResultPath = resultPath,
+                    FailureKind = failureKind,
+                    InstallProven = installProven,
+                    DetectionProven = provenCandidateCount > 0,
+                    UninstallProven = uninstallProven,
+                    LaunchValidationProven = launchValidationProven,
+                    Message = string.IsNullOrWhiteSpace(error)
+                        ? BuildBlockingFailureMessage(failureKind)
+                        : $"Sandbox proof failed: {error}",
+                    CandidateCount = candidates.Count,
+                    ProvenCandidateCount = provenCandidateCount,
+                    BestCandidate = bestCandidate,
+                    Candidates = candidates
+                };
+            }
+
             if (GetJsonBoolean(root, "failed") && bestCandidate is null)
             {
                 var error = GetJsonString(root, "error");
@@ -220,6 +259,11 @@ public sealed class SandboxProofService : ISandboxProofService
                     Completed = true,
                     Failed = true,
                     ResultPath = resultPath,
+                    FailureKind = failureKind,
+                    InstallProven = installProven,
+                    DetectionProven = provenCandidateCount > 0,
+                    UninstallProven = uninstallProven,
+                    LaunchValidationProven = launchValidationProven,
                     Message = string.IsNullOrWhiteSpace(error)
                         ? "Sandbox proof failed."
                         : $"Sandbox proof failed: {error}",
@@ -230,14 +274,18 @@ public sealed class SandboxProofService : ISandboxProofService
             }
 
             if (hasInstallOutcome &&
-                !IsSuccessfulInstallExitCode(installExitCode, installTimedOut) &&
-                provenCandidateCount == 0)
+                !IsSuccessfulInstallExitCode(installExitCode, installTimedOut))
             {
                 return new SandboxProofDetectionResult
                 {
                     Completed = true,
                     Failed = true,
                     ResultPath = resultPath,
+                    FailureKind = "Install",
+                    InstallProven = false,
+                    DetectionProven = provenCandidateCount > 0,
+                    UninstallProven = uninstallProven,
+                    LaunchValidationProven = launchValidationProven,
                     Message = BuildInstallFailureMessage(installExitCode, installTimedOut, candidates.Count),
                     CandidateCount = candidates.Count,
                     ProvenCandidateCount = provenCandidateCount,
@@ -259,6 +307,11 @@ public sealed class SandboxProofService : ISandboxProofService
             {
                 Completed = true,
                 ResultPath = resultPath,
+                FailureKind = failureKind,
+                InstallProven = installProven,
+                DetectionProven = provenCandidateCount > 0,
+                UninstallProven = uninstallProven,
+                LaunchValidationProven = launchValidationProven,
                 Message = message,
                 CandidateCount = candidates.Count,
                 ProvenCandidateCount = provenCandidateCount,
@@ -310,6 +363,17 @@ public sealed class SandboxProofService : ISandboxProofService
         return !timedOut && exitCode is 0 or 3010 or 1641;
     }
 
+    private static string BuildBlockingFailureMessage(string failureKind)
+    {
+        return failureKind switch
+        {
+            "Install" => "Sandbox proof failed: install command did not complete successfully.",
+            "Uninstall" => "Sandbox proof failed: uninstall command did not complete successfully or did not remove the detection evidence.",
+            "Detection" => "Sandbox proof failed: no detection rule passed install and uninstall validation.",
+            _ => "Sandbox proof failed."
+        };
+    }
+
     private static string BuildInstallFailureMessage(int exitCode, bool timedOut, int candidateCount)
     {
         if (timedOut)
@@ -355,6 +419,9 @@ public sealed class SandboxProofService : ISandboxProofService
         var positiveProofSummary = proofAvailable && TryGetObject(proofElement, "positivePhase", out var positivePhase)
             ? GetJsonString(positivePhase, "summary")
             : string.Empty;
+        var uninstallProofSummary = proofAvailable && TryGetObject(proofElement, "uninstallPhase", out var uninstallPhase)
+            ? GetJsonString(uninstallPhase, "summary")
+            : string.Empty;
 
         var additionalRules = new List<IntuneDetectionRule>();
         if (candidateElement.TryGetProperty("additionalRules", out var additionalRulesElement) &&
@@ -386,6 +453,7 @@ public sealed class SandboxProofService : ISandboxProofService
             ProofSummary = proofAvailable ? GetJsonString(proofElement, "summary") : string.Empty,
             NegativeProofSummary = negativeProofSummary,
             PositiveProofSummary = positiveProofSummary,
+            UninstallProofSummary = uninstallProofSummary,
             Rule = rule,
             AdditionalRules = additionalRules
         };
@@ -1217,7 +1285,7 @@ function Test-ProofDetection {
 }
 
 function Invoke-ProofCommand {
-    param([string]$Command, [string]$WorkingDirectory, [int]$TimeoutMinutes)
+    param([string]$Command, [string]$WorkingDirectory, [int]$TimeoutMinutes, [string]$Phase = 'command')
     if ([string]::IsNullOrWhiteSpace($Command)) {
         return [pscustomobject]@{ exitCode = -1; timedOut = $false; stdout = ''; stderr = 'No command was provided.' }
     }
@@ -1226,9 +1294,10 @@ function Invoke-ProofCommand {
         $WorkingDirectory = $ProofRoot
     }
 
-    $stdout = Join-Path $LogsPath 'install-stdout.txt'
-    $stderr = Join-Path $LogsPath 'install-stderr.txt'
-    Write-ProofLog "Running command: $Command"
+    $safePhase = if ([string]::IsNullOrWhiteSpace($Phase)) { 'command' } else { ($Phase -replace '[^a-zA-Z0-9._-]+', '-') }
+    $stdout = Join-Path $LogsPath "$safePhase-stdout.txt"
+    $stderr = Join-Path $LogsPath "$safePhase-stderr.txt"
+    Write-ProofLog "Running ${Phase} command: $Command"
     Write-ProofLog "Working directory: $WorkingDirectory"
 
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
@@ -1247,7 +1316,7 @@ function Invoke-ProofCommand {
     $timeoutMs = [Math]::Max(5, $TimeoutMinutes) * 60 * 1000
     $exited = $process.WaitForExit($timeoutMs)
     if (-not $exited) {
-        Write-ProofLog "Install command timed out after $TimeoutMinutes minute(s); terminating installer process tree."
+        Write-ProofLog "$Phase command timed out after $TimeoutMinutes minute(s); terminating process tree."
         try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }
     }
 
@@ -1257,11 +1326,18 @@ function Invoke-ProofCommand {
     Set-Content -LiteralPath $stderr -Value $stderrText -Encoding UTF8
 
     return [pscustomobject]@{
+        command = $Command
         exitCode = if ($exited) { $process.ExitCode } else { -1 }
         timedOut = -not $exited
         stdout = $stdoutText
         stderr = $stderrText
     }
+}
+
+function Test-ProofCommandSucceeded {
+    param($Result)
+    if ($null -eq $Result) { return $false }
+    return -not [bool]$Result.timedOut -and ([int]$Result.exitCode -in @(0, 3010, 1641))
 }
 
 function Resolve-PathCandidate {
@@ -1396,6 +1472,94 @@ function Complete-CandidateProof {
         positivePhase = $positivePhase
     }
     return $Candidate
+}
+
+function Test-ProofDetectionRuleSetAbsent {
+    param($Candidate)
+    $rules = @($Candidate.rule)
+    if ($null -ne $Candidate.additionalRules) {
+        $rules += @($Candidate.additionalRules)
+    }
+
+    $results = @()
+    $index = 0
+    foreach ($rule in @($rules)) {
+        $index += 1
+        if ($null -eq $rule -or [string]$rule.ruleType -eq 'None') { continue }
+        $result = Test-ProofDetection -Rule $rule
+        $results += [pscustomobject]@{
+            index = $index
+            ruleType = [string]$rule.ruleType
+            success = -not [bool]$result.success
+            summary = if ([bool]$result.success) { 'Rule still matched after uninstall.' } else { 'Rule no longer matched after uninstall.' }
+            details = [string]$result.details
+        }
+    }
+
+    $failed = @($results | Where-Object { -not $_.success })
+    return [pscustomobject]@{
+        success = $results.Count -gt 0 -and $failed.Count -eq 0
+        summary = if ($failed.Count -eq 0 -and $results.Count -gt 0) { "Uninstall validation cleared $($results.Count) detection rule(s)." } else { "Uninstall validation failed for $($failed.Count) of $($results.Count) detection rule(s)." }
+        details = ($results | ForEach-Object { "Rule $($_.index) [$($_.ruleType)]: $($_.summary) $($_.details)" }) -join ' | '
+    }
+}
+
+function Complete-CandidateUninstallProof {
+    param($Candidate)
+    if ($null -eq $Candidate -or $null -eq $Candidate.rule) { return $Candidate }
+
+    $uninstall = Test-ProofDetectionRuleSetAbsent -Candidate $Candidate
+    $uninstallPhase = [pscustomobject]@{
+        success = [bool]$uninstall.success
+        summary = [string]$uninstall.summary
+        details = [string]$uninstall.details
+    }
+
+    if ($null -eq $Candidate.proof) {
+        $Candidate | Add-Member -NotePropertyName proof -NotePropertyValue ([pscustomobject]@{}) -Force
+    }
+
+    $installAndDetectionSuccess = [bool]$Candidate.proof.success
+    $Candidate.proof | Add-Member -NotePropertyName uninstallPhase -NotePropertyValue $uninstallPhase -Force
+    $Candidate.proof.success = $installAndDetectionSuccess -and [bool]$uninstallPhase.success
+    $Candidate.proof.summary = if ([bool]$Candidate.proof.success) {
+        'Candidate passed sandbox install, detection, and uninstall validation.'
+    } elseif (-not $installAndDetectionSuccess) {
+        'Candidate failed sandbox install/detection validation.'
+    } else {
+        'Candidate failed sandbox uninstall validation.'
+    }
+
+    return $Candidate
+}
+
+function New-ConfiguredDetectionCandidate {
+    param($Rule, $PreDetection, $ExistingCandidates)
+    if ($null -eq $Rule -or [string]$Rule.ruleType -eq 'None') { return $null }
+    if (-not (Test-DetectionRuleCandidateAllowed -Rule $Rule)) { return $null }
+
+    $identity = Get-RuleIdentity -Rule $Rule
+    foreach ($candidate in @($ExistingCandidates)) {
+        if ((Get-RuleIdentity -Rule $candidate.rule) -eq $identity) {
+            return $null
+        }
+    }
+
+    $negative = [pscustomobject]@{
+        success = -not [bool]$PreDetection.success
+        summary = if ([bool]$PreDetection.success) { 'Configured detection already matched before install.' } else { 'Configured detection did not match before install.' }
+        details = [string]$PreDetection.details
+    }
+
+    return New-Candidate `
+        -Type 'ConfiguredDetection' `
+        -Confidence 'High' `
+        -Score 93 `
+        -Reason 'Detection rule was already configured before Sandbox Proof and was validated against clean install evidence.' `
+        -Evidence ([pscustomobject]@{ source = 'precheck'; summary = [string]$PreDetection.summary }) `
+        -Rule $Rule `
+        -AdditionalRules @() `
+        -NegativePhase $negative
 }
 
 function Normalize-DetectionText {
@@ -2174,6 +2338,18 @@ function Invoke-LaunchValidation {
             candidates = $targets
         }
     }
+    finally {
+        if ($null -ne $process) {
+            try { $process.Refresh() } catch {}
+            if (-not $process.HasExited) {
+                try { [void]$process.CloseMainWindow(); Start-Sleep -Seconds 2 } catch {}
+                try { $process.Refresh() } catch {}
+                if (-not $process.HasExited) {
+                    try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }
+                }
+            }
+        }
+    }
 }
 
 function Write-Report {
@@ -2184,6 +2360,13 @@ function Write-Report {
     $lines += ''
     $lines += "Installer type: $($Result.request.installerType)"
     $lines += "Setup path: $($Result.request.sandboxSetupFilePath)"
+    $lines += ''
+    $lines += 'Pre-check'
+    $lines += "Detection rule supplied before proof: $($Result.precheck.detectionRuleAvailable)"
+    $lines += "Additional detection rules supplied: $($Result.precheck.additionalDetectionRuleCount)"
+    $lines += "Pre-check summary: $($Result.precheck.summary)"
+    $lines += ''
+    $lines += 'Install proof'
     $lines += "Install command: $($Result.request.installCommand)"
     $lines += "Install exit code: $($Result.install.exitCode)"
     $lines += "Install timed out: $($Result.install.timedOut)"
@@ -2216,10 +2399,13 @@ function Write-Report {
         $lines += "Install verdict: Failed - $exitExplanation."
     }
     $lines += ''
+    $lines += 'Detection proof'
     $lines += "Pre-install detection: $($Result.preInstallDetection.success) - $($Result.preInstallDetection.summary)"
     $lines += "Post-install detection: $($Result.postInstallDetection.success) - $($Result.postInstallDetection.summary)"
+    $lines += "Post-uninstall detection: $($Result.postUninstallDetection.success) - $($Result.postUninstallDetection.summary)"
     $lines += ''
     if ($null -ne $Result.launchValidation) {
+        $lines += 'Launch proof'
         $lines += "Launch validation: $($Result.launchValidation.success) - $($Result.launchValidation.summary)"
         if ($null -ne $Result.launchValidation.target) {
             $lines += "Launch target: $($Result.launchValidation.target.path)"
@@ -2236,6 +2422,20 @@ function Write-Report {
         }
         $lines += ''
     }
+    $lines += 'Uninstall proof'
+    $lines += "Uninstall command: $($Result.request.uninstallCommand)"
+    $lines += "Uninstall exit code: $($Result.uninstall.exitCode)"
+    $lines += "Uninstall timed out: $($Result.uninstall.timedOut)"
+    if ([bool]$Result.uninstallValidation.success) {
+        $lines += "Uninstall verdict: Completed - $($Result.uninstallValidation.summary)"
+    } else {
+        $lines += "Uninstall verdict: Failed - $($Result.uninstallValidation.summary)"
+    }
+    $lines += "Remaining uninstall entries after uninstall: $(@($Result.uninstallValidation.remainingUninstallEntries).Count)"
+    $lines += "Remaining install directories after uninstall: $(@($Result.uninstallValidation.remainingProgramDirectories).Count)"
+    $lines += "Remaining executables after uninstall: $(@($Result.uninstallValidation.remainingExecutables).Count)"
+    $lines += "Remaining shortcuts after uninstall: $(@($Result.uninstallValidation.remainingShortcuts).Count)"
+    $lines += ''
     $lines += "New uninstall entries: $(@($Result.diff.newUninstallEntries).Count)"
     foreach ($entry in @($Result.diff.newUninstallEntries | Select-Object -First 12)) {
         $lines += "- $($entry.displayName) $($entry.displayVersion) [$($entry.hive)\$($entry.keyPath)]"
@@ -2276,6 +2476,9 @@ function Write-Report {
             $lines += "  Additional rules: $(@($candidate.additionalRules).Count)"
         }
         $lines += "  Proof: $($candidate.proof.summary)"
+        if ($null -ne $candidate.proof.uninstallPhase) {
+            $lines += "  Uninstall proof: $($candidate.proof.uninstallPhase.summary)"
+        }
         $lines += "  Rule: $($candidate.rule | ConvertTo-Json -Compress -Depth 8)"
     }
     $lines += ''
@@ -2294,7 +2497,7 @@ try {
     $baseline = Get-Snapshot -Name 'baseline'
     $preDetection = Test-ProofDetection -Rule $inputData.detectionRule
 
-    $installResult = Invoke-ProofCommand -Command ([string]$inputData.installCommand) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes)
+    $installResult = Invoke-ProofCommand -Command ([string]$inputData.installCommand) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes) -Phase 'install'
     Start-Sleep -Seconds 3
 
     $postInstall = Get-Snapshot -Name 'post-install'
@@ -2310,26 +2513,98 @@ try {
     }
 
     $candidates = @(Get-DetectionCandidates -NewUninstallEntries $diff.newUninstallEntries -NewProgramDirectories $diff.newProgramDirectories -NewExecutables $diff.newExecutables -NewShortcuts $diff.newShortcuts -NewServices $diff.newServices -NewScheduledTasks $diff.newScheduledTasks)
+    $configuredCandidate = New-ConfiguredDetectionCandidate -Rule $inputData.detectionRule -PreDetection $preDetection -ExistingCandidates $candidates
+    if ($null -ne $configuredCandidate) {
+        $candidates += $configuredCandidate
+    }
     $candidates = @($candidates | ForEach-Object { Complete-CandidateProof -Candidate $_ })
     $launchRemediation = Invoke-WeintekSoftwareRenderWorkaround -NewExecutables $diff.newExecutables -NewProgramDirectories $diff.newProgramDirectories
     $launchValidation = Invoke-LaunchValidation -NewUninstallEntries $diff.newUninstallEntries -NewShortcuts $diff.newShortcuts -NewExecutables $diff.newExecutables -NewProgramDirectories $diff.newProgramDirectories
+    $uninstallResult = Invoke-ProofCommand -Command ([string]$inputData.uninstallCommand) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes) -Phase 'uninstall'
+    Start-Sleep -Seconds 3
+    $postUninstall = Get-Snapshot -Name 'post-uninstall'
+    $postUninstallDetection = Test-ProofDetection -Rule $inputData.detectionRule
+    $candidates = @($candidates | ForEach-Object { Complete-CandidateUninstallProof -Candidate $_ })
+
+    $uninstallDiff = [pscustomobject]@{
+        remainingUninstallEntries = @(Compare-ById -Before $baseline.uninstallEntries -After $postUninstall.uninstallEntries)
+        remainingProgramDirectories = @(Compare-ById -Before $baseline.programDirectories -After $postUninstall.programDirectories)
+        remainingExecutables = @(Compare-ById -Before $baseline.executables -After $postUninstall.executables)
+        remainingServices = @(Compare-ById -Before $baseline.services -After $postUninstall.services)
+        remainingScheduledTasks = @(Compare-ById -Before $baseline.scheduledTasks -After $postUninstall.scheduledTasks)
+        remainingShortcuts = @(Compare-ById -Before $baseline.shortcuts -After $postUninstall.shortcuts)
+    }
+
+    $installAccepted = Test-ProofCommandSucceeded -Result $installResult
+    $uninstallAccepted = Test-ProofCommandSucceeded -Result $uninstallResult
+    $provenCandidates = @($candidates | Where-Object { $_.proof.success })
+    $installDetectionCandidates = @($candidates | Where-Object { $_.proof.positivePhase.success })
+    $uninstallValidation = [pscustomobject]@{
+        success = $uninstallAccepted -and ($candidates.Count -eq 0 -or $provenCandidates.Count -gt 0)
+        summary = if (-not $uninstallAccepted) {
+            "Uninstall command exited with $($uninstallResult.exitCode)."
+        } elseif ($candidates.Count -gt 0 -and $provenCandidates.Count -eq 0) {
+            "Uninstall command completed, but no detection candidate cleared after uninstall."
+        } elseif ($installDetectionCandidates.Count -gt 0) {
+            "Uninstall command completed and $($provenCandidates.Count) detection candidate(s) cleared after uninstall."
+        } else {
+            'Uninstall command completed; no detection candidates were available to validate.'
+        }
+        remainingUninstallEntries = $uninstallDiff.remainingUninstallEntries
+        remainingProgramDirectories = $uninstallDiff.remainingProgramDirectories
+        remainingExecutables = $uninstallDiff.remainingExecutables
+        remainingServices = $uninstallDiff.remainingServices
+        remainingScheduledTasks = $uninstallDiff.remainingScheduledTasks
+        remainingShortcuts = $uninstallDiff.remainingShortcuts
+    }
+
+    $failureKind = if (-not $installAccepted) {
+        'Install'
+    } elseif (-not [bool]$uninstallValidation.success) {
+        'Uninstall'
+    } elseif ($candidates.Count -eq 0 -or $provenCandidates.Count -eq 0) {
+        'Detection'
+    } elseif (-not [bool]$launchValidation.success) {
+        'LaunchValidation'
+    } else {
+        ''
+    }
+
+    $failureMessage = switch ($failureKind) {
+        'Install' { "Install command failed with exit code $($installResult.exitCode)." }
+        'Uninstall' { [string]$uninstallValidation.summary }
+        'Detection' { 'No detection candidate passed install and uninstall validation.' }
+        'LaunchValidation' { [string]$launchValidation.summary }
+        default { '' }
+    }
 
     $result = [pscustomobject]@{
         schemaVersion = 2
         completedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-        failed = -not [bool]$launchValidation.success
-        error = if ([bool]$launchValidation.success) { '' } else { [string]$launchValidation.summary }
+        failed = -not [string]::IsNullOrWhiteSpace($failureKind)
+        failureKind = $failureKind
+        error = $failureMessage
+        precheck = [pscustomobject]@{
+            detectionRuleAvailable = [bool]$inputData.precheckDetectionRuleAvailable
+            additionalDetectionRuleCount = [int]$inputData.precheckAdditionalDetectionRuleCount
+            summary = [string]$inputData.precheckSummary
+            ruleType = [string]$inputData.detectionRule.ruleType
+        }
         request = $inputData
         install = $installResult
+        uninstall = $uninstallResult
+        uninstallValidation = $uninstallValidation
         launchRemediation = $launchRemediation
         launchValidation = $launchValidation
         preInstallDetection = $preDetection
         postInstallDetection = $postDetection
+        postUninstallDetection = $postUninstallDetection
         diff = $diff
         candidates = $candidates
         snapshots = [pscustomobject]@{
             baseline = $baseline
             postInstall = $postInstall
+            postUninstall = $postUninstall
         }
     }
 
@@ -2372,6 +2647,12 @@ finally {
         public string UninstallCommand { get; init; } = string.Empty;
 
         public IntuneDetectionRule DetectionRule { get; init; } = new();
+
+        public string PrecheckSummary { get; init; } = string.Empty;
+
+        public bool PrecheckDetectionRuleAvailable { get; init; }
+
+        public int PrecheckAdditionalDetectionRuleCount { get; init; }
 
         public int TimeoutMinutes { get; init; }
 

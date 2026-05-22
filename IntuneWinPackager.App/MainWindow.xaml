@@ -1201,34 +1201,12 @@
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
                                             <Button Style="{StaticResource SecondaryButtonStyle}"
-                                                    Content="{DynamicResource Ui.TestDetection}"
-                                                    MinWidth="130"
-                                                    ToolTip="{DynamicResource Ui.Tooltip.TestDetection}"
-                                                    Command="{Binding TestDetectionCommand}" />
-                                            <Border Style="{StaticResource InfoIconBorderStyle}"
-                                                    ToolTip="{DynamicResource Ui.Tooltip.TestDetection}">
-                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
-                                            </Border>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
-                                            <Button Style="{StaticResource SecondaryButtonStyle}"
                                                     Content="{DynamicResource Ui.SandboxProof.RunShort}"
                                                     MinWidth="140"
                                                     ToolTip="{DynamicResource Ui.Tooltip.SandboxProof}"
                                                     Command="{Binding RunSandboxProofCommand}" />
                                             <Border Style="{StaticResource InfoIconBorderStyle}"
                                                     ToolTip="{DynamicResource Ui.Tooltip.SandboxProof}">
-                                                <TextBlock Style="{StaticResource InfoIconTextStyle}" />
-                                            </Border>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
-                                            <Button Style="{StaticResource SecondaryButtonStyle}"
-                                                    Content="{DynamicResource Ui.SandboxProof.ProofAndPackageShort}"
-                                                    MinWidth="150"
-                                                    ToolTip="{DynamicResource Ui.Tooltip.ProofAndPackage}"
-                                                    Command="{Binding ProofAndPackageCommand}" />
-                                            <Border Style="{StaticResource InfoIconBorderStyle}"
-                                                    ToolTip="{DynamicResource Ui.Tooltip.ProofAndPackage}">
                                                 <TextBlock Style="{StaticResource InfoIconTextStyle}" />
                                             </Border>
                                         </StackPanel>
@@ -1266,10 +1244,6 @@
                                             </Border>
                                         </StackPanel>
                                     </WrapPanel>
-                                    <TextBlock Text="{Binding DetectionTestStatus}"
-                                               Style="{StaticResource BodyTextStyle}"
-                                               Margin="0,8,0,0"
-                                               Foreground="{DynamicResource TextSecondaryBrush}" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -1599,12 +1573,8 @@
                                                TextWrapping="Wrap" />
 
                                     <WrapPanel Margin="0,0,0,10">
-                                        <Button Content="{DynamicResource Ui.SandboxProof.ProofAndPackage}"
-                                                Style="{StaticResource PrimaryButtonStyle}"
-                                                Command="{Binding ProofAndPackageCommand}" />
                                         <Button Content="{DynamicResource Ui.SandboxProof.Run}"
-                                                Style="{StaticResource SecondaryButtonStyle}"
-                                                Margin="8,0,0,0"
+                                                Style="{StaticResource PrimaryButtonStyle}"
                                                 Command="{Binding RunSandboxProofCommand}" />
                                         <Button Content="{DynamicResource Ui.SandboxProof.OpenFolder}"
                                                 Style="{StaticResource SecondaryButtonStyle}"

@@ -23,7 +23,11 @@ public sealed class SandboxProofServiceTests
             SourceFolder = tempRoot,
             SetupFilePath = setupPath,
             InstallCommand = $"\"{setupPath}\" /quiet",
+            UninstallCommand = $"\"{setupPath}\" /uninstall /quiet",
             DetectionRule = BuildFileDetectionRule(),
+            PrecheckSummary = "Pre-check: existing File detection rule is configured; install and uninstall commands are complete.",
+            PrecheckDetectionRuleAvailable = true,
+            PrecheckAdditionalDetectionRuleCount = 1,
             LaunchSandbox = false
         });
 
@@ -39,10 +43,16 @@ public sealed class SandboxProofServiceTests
             var input = await ReadInputAsync(session.InputPath);
             var sandboxSetupPath = input.RootElement.GetProperty("sandboxSetupFilePath").GetString();
             var installCommand = input.RootElement.GetProperty("installCommand").GetString();
+            var uninstallCommand = input.RootElement.GetProperty("uninstallCommand").GetString();
 
             Assert.Equal(@"C:\IwpSandboxSource\Example.Setup.exe", sandboxSetupPath);
             Assert.Contains(@"C:\IwpSandboxSource\Example.Setup.exe", installCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(@"C:\IwpSandboxSource\Example.Setup.exe", uninstallCommand, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(setupPath, installCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(setupPath, uninstallCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.True(input.RootElement.GetProperty("precheckDetectionRuleAvailable").GetBoolean());
+            Assert.Equal(1, input.RootElement.GetProperty("precheckAdditionalDetectionRuleCount").GetInt32());
+            Assert.Contains("existing File detection", input.RootElement.GetProperty("precheckSummary").GetString(), StringComparison.OrdinalIgnoreCase);
 
             var wsb = await File.ReadAllTextAsync(session.WsbPath);
             Assert.Contains("<SandboxFolder>C:\\IwpSandboxProof</SandboxFolder>", wsb, StringComparison.Ordinal);
@@ -60,6 +70,13 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("New MSI ProductCode registered after install", script, StringComparison.Ordinal);
             Assert.Contains("Detection candidates", script, StringComparison.Ordinal);
             Assert.Contains("Candidate passed sandbox two-phase validation", script, StringComparison.Ordinal);
+            Assert.Contains("Candidate passed sandbox install, detection, and uninstall validation", script, StringComparison.Ordinal);
+            Assert.Contains("Complete-CandidateUninstallProof", script, StringComparison.Ordinal);
+            Assert.Contains("New-ConfiguredDetectionCandidate", script, StringComparison.Ordinal);
+            Assert.Contains("post-uninstall", script, StringComparison.Ordinal);
+            Assert.Contains("Uninstall proof", script, StringComparison.Ordinal);
+            Assert.Contains("uninstallValidation", script, StringComparison.Ordinal);
+            Assert.Contains("failureKind", script, StringComparison.Ordinal);
             Assert.Contains("Invoke-LaunchValidation", script, StringComparison.Ordinal);
             Assert.Contains("Measure-WhiteWindowRatio", script, StringComparison.Ordinal);
             Assert.Contains("$brightness -ge 185", script, StringComparison.Ordinal);
@@ -646,6 +663,78 @@ public sealed class SandboxProofServiceTests
             Assert.Equal(IntuneDetectionRuleType.Registry, result.BestCandidate.Rule.RuleType);
             Assert.Contains("launch validation failed", result.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("can still be applied", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenUninstallValidationFailsWithProvenCandidates_ReturnsFailedResult()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "failed": true,
+              "failureKind": "Uninstall",
+              "error": "Uninstall command completed, but no detection candidate cleared after uninstall.",
+              "install": {
+                "exitCode": 0,
+                "timedOut": false
+              },
+              "uninstall": {
+                "exitCode": 0,
+                "timedOut": false
+              },
+              "uninstallValidation": {
+                "success": false,
+                "summary": "Uninstall command completed, but no detection candidate cleared after uninstall."
+              },
+              "candidates": [
+                {
+                  "type": "Registry",
+                  "confidence": "High",
+                  "score": 90,
+                  "reason": "New uninstall entry with DisplayVersion after install.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox install, detection, and uninstall validation.",
+                    "negativePhase": { "success": true, "summary": "Registry entry was new.", "details": "" },
+                    "positivePhase": { "success": true, "summary": "Registry comparison passed.", "details": "" },
+                    "uninstallPhase": { "success": false, "summary": "Uninstall validation failed for 1 of 1 detection rule(s).", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "Registry",
+                    "registry": {
+                      "hive": "HKEY_LOCAL_MACHINE",
+                      "keyPath": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Example",
+                      "valueName": "DisplayVersion",
+                      "operator": "GreaterThanOrEqual",
+                      "value": "1.0.0"
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.True(result.Failed);
+            Assert.Equal("Uninstall", result.FailureKind);
+            Assert.True(result.InstallProven);
+            Assert.False(result.UninstallProven);
+            Assert.Equal(1, result.CandidateCount);
+            Assert.Equal(1, result.ProvenCandidateCount);
+            Assert.Contains("Uninstall command completed", result.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

@@ -33,7 +33,7 @@
     <sys:String x:Key="Ui.SilentSwitchVerified">Ik heb silent install/uninstall voor deze EXE geverifieerd</sys:String>
     <sys:String x:Key="Ui.Commands.AutoHint">Commando's worden automatisch ingevuld waar mogelijk. Pas alleen aan als dat nodig is.</sys:String>
     <sys:String x:Key="Ui.Workflow.Title">Aanbevolen volgorde</sys:String>
-    <sys:String x:Key="Ui.Workflow.Description">Gebruik Sandbox Proof voordat je packaget. Proof &amp; Package draait eerst de proof en maakt pas daarna de .intunewin wanneer detectie bruikbaar is.</sys:String>
+    <sys:String x:Key="Ui.Workflow.Description">Gebruik Sandbox Proof voordat je packaget. De flow controleert bestaande detectie, bewijst installatie-evidence, valideert detectie en verifieert daarna uninstall voordat je de .intunewin bouwt.</sys:String>
     <sys:String x:Key="Ui.Workflow.Step1">Kies source en setup</sys:String>
     <sys:String x:Key="Ui.Workflow.Step2">Controleer command previews</sys:String>
     <sys:String x:Key="Ui.Workflow.Step3">Draai Sandbox Proof</sys:String>
@@ -86,14 +86,11 @@
     <sys:String x:Key="Ui.EnforceSignature">Handtekeningcontrole afdwingen</sys:String>
 
     <sys:String x:Key="Ui.StartPackaging">Start Packaging</sys:String>
-    <sys:String x:Key="Ui.TestDetection">Test Detectie</sys:String>
     <sys:String x:Key="Ui.FixForMe">Los Op Voor Mij</sys:String>
     <sys:String x:Key="Ui.Reset">Reset</sys:String>
     <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
     <sys:String x:Key="Ui.Tooltip.StartPackaging">Bouwt de .intunewin-package met de huidige source, setup, commando's, detectieregel en requirements. Gebruik dit pas als validatie groen is. Blokkeert wanneer verplichte argumenten of detectiedata ontbreken.</sys:String>
-    <sys:String x:Key="Ui.Tooltip.TestDetection">Test de gekozen detectieregel op deze pc. Gebruik dit nadat de app lokaal is geinstalleerd of nadat een Sandbox Proof-resultaat is toegepast. Dit bouwt geen package.</sys:String>
-    <sys:String x:Key="Ui.Tooltip.SandboxProof">Maakt en start een Windows Sandbox-run. De sandbox installeert het package, verzamelt before/after evidence en schrijft report.txt/result.json. Vereist complete install/uninstall-commando's.</sys:String>
-    <sys:String x:Key="Ui.Tooltip.ProofAndPackage">Voert eerst Sandbox Proof uit en package't pas nadat een bruikbare detectiekandidaat is toegepast. Beste keuze voor catalogusdownloads en EXE-installers die bewijs nodig hebben.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.SandboxProof">Draait de volledige proof-flow: pre-check op ingestelde detectie, stille install, bewezen detectie-evidence, launch-check, stille uninstall en report.txt/result.json.</sys:String>
     <sys:String x:Key="Ui.Tooltip.FixForMe">Past veilige automatische fixes toe, zoals commandosuggesties, metadata-detectie en gangbare defaults. Controleer daarna de preview en validatie.</sys:String>
     <sys:String x:Key="Ui.Tooltip.Reset">Wist de huidige packageconfiguratie en proof-status. Gebruik dit voordat je met een ander package begint.</sys:String>
     <sys:String x:Key="Ui.Tooltip.OpenOutput">Opent de outputmap of de nieuwste gegenereerde artifactlocatie. Beschikbaar zodra output is ingesteld of een package is gemaakt.</sys:String>
@@ -144,11 +141,9 @@
     <sys:String x:Key="Ui.Verification.Title">Verificatie-aanpak</sys:String>
     <sys:String x:Key="Ui.Verification.Body">1. Run lokale preflight en los alle blokkerende fouten op.&#10;2. Package en controleer de gegenereerde .intune.json en .intune-checklist.md outputs.&#10;3. Valideer install/uninstall/detectie in een schone test-VM voor Intune-import.&#10;4. Maak de app aan in Intune met de checklist en start met een pilot assignment.&#10;5. Bevestig detectie- en uninstall-gedrag via Intune device logs voordat je breed uitrolt.</sys:String>
     <sys:String x:Key="Ui.SandboxProof.Title">Windows Sandbox Proof</sys:String>
-    <sys:String x:Key="Ui.SandboxProof.Description">Start een schone Windows Sandbox-run die het geselecteerde package installeert, before/after evidence vastlegt, de huidige detectieregel test en de beste gedetecteerde regel importeert zodra result.json klaar is.</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.Description">Start een schone Windows Sandbox-run die beschikbare detectie vooraf controleert, het install command bewijst, detection evidence valideert, het uninstall command verifieert en de beste regel importeert zodra result.json klaar is.</sys:String>
     <sys:String x:Key="Ui.SandboxProof.Run">Run Sandbox Proof</sys:String>
     <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
-    <sys:String x:Key="Ui.SandboxProof.ProofAndPackage">Proof &amp; Package</sys:String>
-    <sys:String x:Key="Ui.SandboxProof.ProofAndPackageShort">Proof &amp; Package</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Bewezen detectie toepassen</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Runmap</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Rapport</sys:String>
@@ -291,7 +286,7 @@
     <sys:String x:Key="Vm.PackagingCoach.Badge.ReadyWarning">Klaar met waarschuwingen</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Badge.Ready">Klaar</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Proof.None">Nog geen bewijs. Run Sandbox Proof of kies een deterministische detectieregel.</sys:String>
-    <sys:String x:Key="Vm.PackagingCoach.Proof.Configured">Detectie is ingesteld. Run Test Detectie of Sandbox Proof als je sterker bewijs wilt.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Proof.Configured">Detectie is ingesteld. Run Sandbox Proof als je sterker bewijs wilt voor install, detectie en uninstall.</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Tip.ProofAvailable">Sandbox Proof heeft detectie-evidence gevonden. Pas de bewezen detectie toe voordat je gaat packagen.</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Tip.RunProof">Run Sandbox Proof als je niet zeker weet waar de app installeert of welke detectieregel het veiligst is.</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Tip.Msi">MSI-packages zijn het sterkst met Product Code-detectie. Houd versiechecks exact, behalve bij updatepackages.</sys:String>

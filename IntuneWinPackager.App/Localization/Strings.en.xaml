@@ -33,7 +33,7 @@
     <sys:String x:Key="Ui.SilentSwitchVerified">I verified silent install/uninstall for this EXE</sys:String>
     <sys:String x:Key="Ui.Commands.AutoHint">Commands are auto-filled when possible. Change only if needed.</sys:String>
     <sys:String x:Key="Ui.Workflow.Title">Recommended order</sys:String>
-    <sys:String x:Key="Ui.Workflow.Description">Use Sandbox Proof before packaging. Proof &amp; Package runs proof first, then builds the .intunewin only when detection is usable.</sys:String>
+    <sys:String x:Key="Ui.Workflow.Description">Use Sandbox Proof before packaging. It pre-checks existing detection, proves install evidence, validates detection, then verifies uninstall before you build the .intunewin.</sys:String>
     <sys:String x:Key="Ui.Workflow.Step1">Select source and setup</sys:String>
     <sys:String x:Key="Ui.Workflow.Step2">Check command previews</sys:String>
     <sys:String x:Key="Ui.Workflow.Step3">Run Sandbox Proof</sys:String>
@@ -86,14 +86,11 @@
     <sys:String x:Key="Ui.EnforceSignature">Enforce signature check</sys:String>
 
     <sys:String x:Key="Ui.StartPackaging">Start Packaging</sys:String>
-    <sys:String x:Key="Ui.TestDetection">Test Detection</sys:String>
     <sys:String x:Key="Ui.FixForMe">Fix For Me</sys:String>
     <sys:String x:Key="Ui.Reset">Reset</sys:String>
     <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
     <sys:String x:Key="Ui.Tooltip.StartPackaging">Builds the .intunewin package with the current source, setup file, commands, detection rule, and requirements. Use this only when validation is green. Blocks when required arguments or detection data are missing.</sys:String>
-    <sys:String x:Key="Ui.Tooltip.TestDetection">Tests the selected detection rule on this PC. Use after installing the app locally or after applying a Sandbox Proof result. It does not build a package.</sys:String>
-    <sys:String x:Key="Ui.Tooltip.SandboxProof">Creates and launches a Windows Sandbox run. The sandbox installs the package, captures before/after evidence, and writes report.txt/result.json. Requires complete install/uninstall commands.</sys:String>
-    <sys:String x:Key="Ui.Tooltip.ProofAndPackage">Runs Sandbox Proof first and packages only after a usable detection candidate is applied. Best for catalog downloads and EXE installers that need proof.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.SandboxProof">Runs the full proof workflow: pre-check configured detection, install silently, prove detection evidence, launch-check the app, uninstall silently, and write report.txt/result.json.</sys:String>
     <sys:String x:Key="Ui.Tooltip.FixForMe">Applies safe automatic fixes such as command suggestions, metadata-based detection, and common defaults. Review the preview and validation after it runs.</sys:String>
     <sys:String x:Key="Ui.Tooltip.Reset">Clears the current package configuration and proof state. Use this before starting a different package.</sys:String>
     <sys:String x:Key="Ui.Tooltip.OpenOutput">Opens the output folder or latest generated artifact location. Available after output is configured or a package has been created.</sys:String>
@@ -144,11 +141,9 @@
     <sys:String x:Key="Ui.Verification.Title">Verification Approach</sys:String>
     <sys:String x:Key="Ui.Verification.Body">1. Run local preflight and resolve all blocking errors.&#10;2. Package and review generated .intune.json and .intune-checklist.md outputs.&#10;3. Validate install/uninstall/detection in a clean test VM before Intune import.&#10;4. Create app in Intune using the checklist and run pilot assignment first.&#10;5. Confirm detection and uninstall behavior from Intune device logs before broad rollout.</sys:String>
     <sys:String x:Key="Ui.SandboxProof.Title">Windows Sandbox Proof</sys:String>
-    <sys:String x:Key="Ui.SandboxProof.Description">Launch a clean Windows Sandbox run that installs the selected package, captures before/after evidence, tests the current detection rule, and imports the best detected rule when result.json is ready.</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.Description">Launch a clean Windows Sandbox run that pre-checks available detection, proves the install command, validates detection evidence, verifies the uninstall command, and imports the best rule when result.json is ready.</sys:String>
     <sys:String x:Key="Ui.SandboxProof.Run">Run Sandbox Proof</sys:String>
     <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
-    <sys:String x:Key="Ui.SandboxProof.ProofAndPackage">Proof &amp; Package</sys:String>
-    <sys:String x:Key="Ui.SandboxProof.ProofAndPackageShort">Proof &amp; Package</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Apply Proven Detection</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Run Folder</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Report</sys:String>
@@ -291,7 +286,7 @@
     <sys:String x:Key="Vm.PackagingCoach.Badge.ReadyWarning">Ready with warnings</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Badge.Ready">Ready</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Proof.None">No proof yet. Run Sandbox Proof or choose a deterministic detection rule.</sys:String>
-    <sys:String x:Key="Vm.PackagingCoach.Proof.Configured">Detection is configured. Run Test Detection or Sandbox Proof when you want stronger evidence.</sys:String>
+    <sys:String x:Key="Vm.PackagingCoach.Proof.Configured">Detection is configured. Run Sandbox Proof when you want stronger install, detection, and uninstall evidence.</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Tip.ProofAvailable">Sandbox Proof found detection evidence. Apply the proven detection before packaging.</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Tip.RunProof">Run Sandbox Proof when you are unsure where the app installs or which detection rule is safest.</sys:String>
     <sys:String x:Key="Vm.PackagingCoach.Tip.Msi">MSI packages are strongest with Product Code detection. Keep version checks exact unless this is an update package.</sys:String>

@@ -16,6 +16,12 @@ public sealed record SandboxProofRequest
 
     public IntuneDetectionRule DetectionRule { get; init; } = new();
 
+    public string PrecheckSummary { get; init; } = string.Empty;
+
+    public bool PrecheckDetectionRuleAvailable { get; init; }
+
+    public int PrecheckAdditionalDetectionRuleCount { get; init; }
+
     public int TimeoutMinutes { get; init; } = 20;
 
     public bool LaunchSandbox { get; init; } = true;

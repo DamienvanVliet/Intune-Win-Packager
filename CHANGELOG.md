@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.20] - 2026-05-22
+
+### Changed
+- Sandbox Proof is now the single visible proof workflow: it pre-checks configured detection, proves install evidence, validates detection, verifies uninstall, and then leaves packaging as an explicit separate step.
+- Removed the visible `Test Detection` and `Proof & Package` buttons to reduce workflow ambiguity.
+
+### Fixed
+- Sandbox Proof now runs the uninstall command and only marks detection candidates as proven when they are absent before install, present after install, and cleared again after uninstall.
+- Sandbox reports now include separate pre-check, install proof, detection proof, launch proof, and uninstall proof sections in `report.txt` and `result.json`.
+- Installer builds now generate a matching SHA256 file automatically for release publishing.
+
 ## [3.0.19] - 2026-05-22
 
 ### Fixed

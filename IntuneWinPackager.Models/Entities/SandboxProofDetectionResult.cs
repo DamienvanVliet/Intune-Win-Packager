@@ -10,6 +10,16 @@ public sealed record SandboxProofDetectionResult
 
     public string ResultPath { get; init; } = string.Empty;
 
+    public string FailureKind { get; init; } = string.Empty;
+
+    public bool InstallProven { get; init; }
+
+    public bool DetectionProven { get; init; }
+
+    public bool UninstallProven { get; init; }
+
+    public bool LaunchValidationProven { get; init; }
+
     public int CandidateCount { get; init; }
 
     public int ProvenCandidateCount { get; init; }

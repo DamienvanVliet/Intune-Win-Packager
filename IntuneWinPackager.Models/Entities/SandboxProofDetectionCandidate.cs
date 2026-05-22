@@ -20,6 +20,8 @@ public sealed record SandboxProofDetectionCandidate
 
     public string PositiveProofSummary { get; init; } = string.Empty;
 
+    public string UninstallProofSummary { get; init; } = string.Empty;
+
     public IntuneDetectionRule Rule { get; init; } = new();
 
     public IReadOnlyList<IntuneDetectionRule> AdditionalRules { get; init; } = [];

@@ -159,9 +159,15 @@ $latestInstaller = Get-ChildItem -Path $installerDir -Filter "IntuneWinPackager-
     Select-Object -First 1
 
 if ($latestInstaller) {
+    $sha256Path = $latestInstaller.FullName + ".sha256"
+    $sha256 = (Get-FileHash -LiteralPath $latestInstaller.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath $sha256Path -Value "$sha256  $($latestInstaller.Name)" -Encoding ASCII
+
     Write-Host ""
     Write-Host "Installer ready:" -ForegroundColor Green
     Write-Host $latestInstaller.FullName
+    Write-Host "SHA256 ready:" -ForegroundColor Green
+    Write-Host $sha256Path
 }
 else {
     Write-Warning "Build completed but no installer executable was found in $installerDir"
