@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.18] - 2026-05-22
+
+### Fixed
+- Sandbox Proof now automatically applies the Weintek/cMTViewer `DisplaySetting.exe` Software render workaround before launch validation, preventing Windows Sandbox GPU/OpenGL rendering failures from appearing as unexplained blank app windows.
+- Sandbox Proof reports the launch remediation result and tool path in `report.txt` and `result.json` so cMTViewer rendering fixes are auditable.
+
 ## [3.0.17] - 2026-05-22
 
 ### Fixed

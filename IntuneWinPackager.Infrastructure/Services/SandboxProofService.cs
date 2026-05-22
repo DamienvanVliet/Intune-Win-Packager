@@ -1921,6 +1921,166 @@ function Save-WindowScreenshot {
     }
 }
 
+function Invoke-WeintekSoftwareRenderWorkaround {
+    param($NewExecutables, $NewProgramDirectories)
+
+    $displaySettingPaths = New-Object System.Collections.ArrayList
+    foreach ($exe in @($NewExecutables)) {
+        if ([string]$exe.name -ieq 'DisplaySetting.exe') {
+            [void]$displaySettingPaths.Add([string]$exe.fullName)
+        }
+    }
+
+    foreach ($directory in @($NewProgramDirectories)) {
+        $path = Join-Path ([string]$directory.fullName) 'DisplaySetting.exe'
+        if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
+            [void]$displaySettingPaths.Add($path)
+        }
+    }
+
+    $displaySettingPath = @($displaySettingPaths |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_ -PathType Leaf -ErrorAction SilentlyContinue) } |
+        Select-Object -Unique |
+        Where-Object { $_ -match '(?i)(weintek|cmtviewer|easybuilder|easyaccess|cloudhmi)' } |
+        Select-Object -First 1)
+
+    if ($displaySettingPath.Count -eq 0) {
+        return [pscustomobject]@{
+            attempted = $false
+            success = $true
+            summary = 'No Weintek DisplaySetting.exe runtime workaround was required.'
+            displaySettingPath = ''
+            method = ''
+        }
+    }
+
+    $path = [string]$displaySettingPath[0]
+    Write-ProofLog "Applying Weintek Software render workaround with: $path"
+    $process = $null
+    try {
+        Add-Type -AssemblyName UIAutomationClient
+        Add-Type -AssemblyName UIAutomationTypes
+        Add-Type -AssemblyName System.Windows.Forms
+
+        $process = Start-Process -FilePath $path -WorkingDirectory ([IO.Path]::GetDirectoryName($path)) -PassThru -WindowStyle Normal
+        $handle = [IntPtr]::Zero
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 300
+            try { $process.Refresh() } catch {}
+            if ($process.HasExited) { break }
+            if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+                $handle = $process.MainWindowHandle
+                break
+            }
+        }
+
+        if ($handle -eq [IntPtr]::Zero) {
+            return [pscustomobject]@{
+                attempted = $true
+                success = $false
+                summary = 'DisplaySetting.exe did not open a usable settings window.'
+                displaySettingPath = $path
+                method = 'UIAutomation'
+            }
+        }
+
+        $window = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+        $radioCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::RadioButton)
+        $radioButtons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $radioCondition)
+        $softwareRadio = $null
+        foreach ($radio in $radioButtons) {
+            $name = [string]$radio.Current.Name
+            if ($name -match '(?i)software\s*render') {
+                $softwareRadio = $radio
+                break
+            }
+        }
+
+        if ($null -eq $softwareRadio) {
+            return [pscustomobject]@{
+                attempted = $true
+                success = $false
+                summary = 'DisplaySetting.exe opened, but the Software render option was not found.'
+                displaySettingPath = $path
+                method = 'UIAutomation'
+            }
+        }
+
+        $selectionPattern = $null
+        if ($softwareRadio.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$selectionPattern)) {
+            $selectionPattern.Select()
+        } else {
+            $invokePattern = $null
+            if ($softwareRadio.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invokePattern)) {
+                $invokePattern.Invoke()
+            } else {
+                $softwareRadio.SetFocus()
+                [System.Windows.Forms.SendKeys]::SendWait(' ')
+            }
+        }
+
+        Start-Sleep -Milliseconds 300
+
+        $buttonCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button)
+        $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+        $okButton = $null
+        foreach ($button in $buttons) {
+            $name = [string]$button.Current.Name
+            if ($name -match '^(?i:OK|Ok|Oke|Apply|Toepassen)$') {
+                $okButton = $button
+                break
+            }
+        }
+
+        if ($null -ne $okButton) {
+            $okPattern = $null
+            if ($okButton.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$okPattern)) {
+                $okPattern.Invoke()
+            } else {
+                $okButton.SetFocus()
+                [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+            }
+        } else {
+            $window.SetFocus()
+            [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+        }
+
+        try { $process.WaitForExit(5000) | Out-Null } catch {}
+        if (-not $process.HasExited) {
+            try { $process.CloseMainWindow() | Out-Null } catch {}
+        }
+
+        Write-ProofLog 'Weintek Software render workaround applied.'
+        return [pscustomobject]@{
+            attempted = $true
+            success = $true
+            summary = 'Weintek DisplaySetting.exe was set to Software render before launch validation.'
+            displaySettingPath = $path
+            method = 'UIAutomation'
+        }
+    }
+    catch {
+        Write-ProofLog "Weintek Software render workaround failed: $($_.Exception.Message)"
+        return [pscustomobject]@{
+            attempted = $true
+            success = $false
+            summary = "Weintek Software render workaround failed: $($_.Exception.Message)"
+            displaySettingPath = $path
+            method = 'UIAutomation'
+        }
+    }
+    finally {
+        if ($null -ne $process -and -not $process.HasExited) {
+            try { $process.CloseMainWindow() | Out-Null } catch {}
+        }
+    }
+}
+
 function Invoke-LaunchValidation {
     param($NewUninstallEntries, $NewShortcuts, $NewExecutables, $NewProgramDirectories)
 
@@ -2055,6 +2215,10 @@ function Write-Report {
             $lines += "Launch target: $($Result.launchValidation.target.path)"
             $lines += "Launch source: $($Result.launchValidation.target.source)"
         }
+        if ($null -ne $Result.launchRemediation -and [bool]$Result.launchRemediation.attempted) {
+            $lines += "Launch remediation: $($Result.launchRemediation.success) - $($Result.launchRemediation.summary)"
+            $lines += "Launch remediation tool: $($Result.launchRemediation.displaySettingPath)"
+        }
         $lines += "Launch window detected: $($Result.launchValidation.hasWindow)"
         $lines += "Launch white ratio: $($Result.launchValidation.whiteRatio)"
         if (-not [string]::IsNullOrWhiteSpace($Result.launchValidation.screenshotPath)) {
@@ -2137,6 +2301,7 @@ try {
 
     $candidates = @(Get-DetectionCandidates -NewUninstallEntries $diff.newUninstallEntries -NewProgramDirectories $diff.newProgramDirectories -NewExecutables $diff.newExecutables -NewShortcuts $diff.newShortcuts -NewServices $diff.newServices -NewScheduledTasks $diff.newScheduledTasks)
     $candidates = @($candidates | ForEach-Object { Complete-CandidateProof -Candidate $_ })
+    $launchRemediation = Invoke-WeintekSoftwareRenderWorkaround -NewExecutables $diff.newExecutables -NewProgramDirectories $diff.newProgramDirectories
     $launchValidation = Invoke-LaunchValidation -NewUninstallEntries $diff.newUninstallEntries -NewShortcuts $diff.newShortcuts -NewExecutables $diff.newExecutables -NewProgramDirectories $diff.newProgramDirectories
 
     $result = [pscustomobject]@{
@@ -2146,6 +2311,7 @@ try {
         error = if ([bool]$launchValidation.success) { '' } else { [string]$launchValidation.summary }
         request = $inputData
         install = $installResult
+        launchRemediation = $launchRemediation
         launchValidation = $launchValidation
         preInstallDetection = $preDetection
         postInstallDetection = $postDetection
