@@ -64,6 +64,8 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("Measure-WhiteWindowRatio", script, StringComparison.Ordinal);
             Assert.Contains("launch-window.png", script, StringComparison.Ordinal);
             Assert.Contains("Skipping dependency uninstall entry as primary app detection", script, StringComparison.Ordinal);
+            Assert.Contains("$startProcessParameters = @", script, StringComparison.Ordinal);
+            Assert.Contains("IsNullOrWhiteSpace([string]$target.arguments)", script, StringComparison.Ordinal);
             Assert.Contains("schemaVersion = 2", script, StringComparison.Ordinal);
             Assert.Contains("GreaterThanOrEqual", script, StringComparison.Ordinal);
             Assert.Contains("result.json", script, StringComparison.Ordinal);

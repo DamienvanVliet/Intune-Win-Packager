@@ -1937,7 +1937,17 @@ function Invoke-LaunchValidation {
     $process = $null
     $screenshotPath = Join-Path $LogsPath 'launch-window.png'
     try {
-        $process = Start-Process -FilePath ([string]$target.path) -ArgumentList ([string]$target.arguments) -WorkingDirectory ([string]$target.workingDirectory) -PassThru -WindowStyle Normal
+        $startProcessParameters = @{
+            FilePath = [string]$target.path
+            WorkingDirectory = [string]$target.workingDirectory
+            PassThru = $true
+            WindowStyle = 'Normal'
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$target.arguments)) {
+            $startProcessParameters.ArgumentList = [string]$target.arguments
+        }
+
+        $process = Start-Process @startProcessParameters
         Start-Sleep -Seconds 15
         try { $process.Refresh() } catch {}
 

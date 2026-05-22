@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.0.16] - 2026-05-22
+
+### Fixed
+- Sandbox Proof launch validation now starts applications correctly when the shortcut has no arguments, allowing blank-white window screenshot analysis to run instead of failing on an empty PowerShell `ArgumentList`.
+
 ## [3.0.15] - 2026-05-22
 
 ### Fixed
