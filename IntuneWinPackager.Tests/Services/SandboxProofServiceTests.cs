@@ -592,6 +592,68 @@ public sealed class SandboxProofServiceTests
     }
 
     [Fact]
+    public async Task ReadResultAsync_WhenLaunchValidationFailsWithProvenCandidates_AllowsDetectionImport()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "failed": true,
+              "error": "Installed application launched to a mostly blank/light window.",
+              "install": {
+                "exitCode": 0,
+                "timedOut": false
+              },
+              "candidates": [
+                {
+                  "type": "Registry",
+                  "confidence": "High",
+                  "score": 90,
+                  "reason": "New uninstall entry with DisplayVersion after install.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox two-phase validation.",
+                    "negativePhase": { "success": true, "summary": "Registry entry was new.", "details": "" },
+                    "positivePhase": { "success": true, "summary": "Registry comparison passed.", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "Registry",
+                    "registry": {
+                      "hive": "HKEY_LOCAL_MACHINE",
+                      "keyPath": "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{6E1A4B8C-7DB8-404F-BC14-2CA0F9FE8A41}_is1",
+                      "valueName": "DisplayVersion",
+                      "operator": "GreaterThanOrEqual",
+                      "value": "2.23.29"
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.False(result.Failed);
+            Assert.Equal(1, result.CandidateCount);
+            Assert.Equal(1, result.ProvenCandidateCount);
+            Assert.NotNull(result.BestCandidate);
+            Assert.Equal(IntuneDetectionRuleType.Registry, result.BestCandidate.Rule.RuleType);
+            Assert.Contains("launch validation failed", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("can still be applied", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
     public async Task ReadResultAsync_WhenInstallTimesOutWithoutEvidence_ReturnsFailedResult()
     {
         var tempRoot = CreateTempDirectory();

@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.0.19] - 2026-05-22
+
+### Fixed
+- Proven Sandbox Proof detection candidates can now still be imported when separate launch validation fails, so registry/file rules auto-fill instead of being blocked by a runtime rendering issue.
+
 ## [3.0.18] - 2026-05-22
 
 ### Fixed

@@ -184,20 +184,6 @@ public sealed class SandboxProofService : ISandboxProofService
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
             var root = document.RootElement;
 
-            if (GetJsonBoolean(root, "failed"))
-            {
-                var error = GetJsonString(root, "error");
-                return new SandboxProofDetectionResult
-                {
-                    Completed = true,
-                    Failed = true,
-                    ResultPath = resultPath,
-                    Message = string.IsNullOrWhiteSpace(error)
-                        ? "Sandbox proof failed."
-                        : $"Sandbox proof failed: {error}"
-                };
-            }
-
             var hasInstallOutcome = TryGetObject(root, "install", out var installElement);
             var installTimedOut = hasInstallOutcome && GetJsonBoolean(installElement, "timedOut");
             var installExitCode = hasInstallOutcome ? GetJsonInt(installElement, "exitCode") : 0;
@@ -226,6 +212,23 @@ public sealed class SandboxProofService : ISandboxProofService
                 .ThenBy(candidate => DetectionTypePriority(candidate.Rule.RuleType))
                 .FirstOrDefault();
 
+            if (GetJsonBoolean(root, "failed") && bestCandidate is null)
+            {
+                var error = GetJsonString(root, "error");
+                return new SandboxProofDetectionResult
+                {
+                    Completed = true,
+                    Failed = true,
+                    ResultPath = resultPath,
+                    Message = string.IsNullOrWhiteSpace(error)
+                        ? "Sandbox proof failed."
+                        : $"Sandbox proof failed: {error}",
+                    CandidateCount = candidates.Count,
+                    ProvenCandidateCount = provenCandidateCount,
+                    Candidates = candidates
+                };
+            }
+
             if (hasInstallOutcome &&
                 !IsSuccessfulInstallExitCode(installExitCode, installTimedOut) &&
                 provenCandidateCount == 0)
@@ -244,6 +247,13 @@ public sealed class SandboxProofService : ISandboxProofService
             }
 
             var message = BuildSandboxProofResultMessage(candidates.Count, provenCandidateCount, proofAvailable, bestCandidate);
+            if (GetJsonBoolean(root, "failed"))
+            {
+                var error = GetJsonString(root, "error");
+                message = string.IsNullOrWhiteSpace(error)
+                    ? $"{message} Sandbox launch validation failed, but proven detection evidence can still be applied."
+                    : $"{message} Sandbox launch validation failed: {error}. Proven detection evidence can still be applied.";
+            }
 
             return new SandboxProofDetectionResult
             {
