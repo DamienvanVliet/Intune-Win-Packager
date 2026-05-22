@@ -1566,6 +1566,24 @@ function New-FileCandidateNegativePhase {
     }
 }
 
+function Test-UninstallEntryLooksLikeDependency {
+    param($Entry)
+    $displayName = [string]$Entry.displayName
+    $publisher = [string]$Entry.publisher
+    if ([string]::IsNullOrWhiteSpace($displayName)) { return $false }
+
+    if ($displayName -match '(?i)microsoft\s+visual\s+c\+\+.*redistributable') { return $true }
+    if ($displayName -match '(?i)microsoft\s+visual\s+c\+\+.*runtime') { return $true }
+    if ($displayName -match '(?i)visual\s+c\+\+.*runtime') { return $true }
+    if ($displayName -match '(?i)microsoft\s+edge\s+webview2\s+runtime') { return $true }
+    if ($displayName -match '(?i)microsoft\s+edge\s+update') { return $true }
+    if ($displayName -match '(?i)\.net\s+(desktop\s+)?runtime') { return $true }
+    if ($displayName -match '(?i)windows\s+desktop\s+runtime') { return $true }
+    if ($publisher -match '(?i)^microsoft' -and $displayName -match '(?i)(redistributable|runtime|webview2)') { return $true }
+
+    return $false
+}
+
 function Find-ExecutableDetectionTargets {
     param(
         [string]$Root,
@@ -1645,6 +1663,11 @@ function Get-DetectionCandidates {
     }
 
     foreach ($entry in @($NewUninstallEntries)) {
+        if (Test-UninstallEntryLooksLikeDependency -Entry $entry) {
+            Write-ProofLog "Skipping dependency uninstall entry as primary app detection: $($entry.displayName) $($entry.displayVersion)"
+            continue
+        }
+
         $negative = [pscustomobject]@{
             success = $true
             summary = 'Uninstall registry entry was absent before install and present after install.'
@@ -1757,6 +1780,216 @@ function Get-DetectionCandidates {
     return @($candidates)
 }
 
+function Get-LaunchTargets {
+    param($NewUninstallEntries, $NewShortcuts, $NewExecutables, $NewProgramDirectories)
+    $targets = New-Object System.Collections.ArrayList
+    $seen = @{}
+
+    function Add-LaunchTarget {
+        param([string]$Path, [string]$Arguments, [string]$WorkingDirectory, [string]$Source, [int]$Score)
+        $candidatePath = Resolve-PathCandidate -Value $Path
+        if ([string]::IsNullOrWhiteSpace($candidatePath) -or -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) { return }
+        if ([IO.Path]::GetExtension($candidatePath) -ine '.exe') { return }
+        $name = [IO.Path]::GetFileName($candidatePath)
+        if ($name -match '(?i)(unins|uninstall|setup|installer|update|crash|helper|bootstrap|repair|vcredist|vc_redist)') { return }
+        if ([string]::IsNullOrWhiteSpace($WorkingDirectory) -or -not (Test-Path -LiteralPath $WorkingDirectory -PathType Container)) {
+            try { $WorkingDirectory = [IO.Path]::GetDirectoryName($candidatePath) } catch { $WorkingDirectory = '' }
+        }
+
+        $key = $candidatePath.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { return }
+        $seen[$key] = $true
+        [void]$targets.Add([pscustomobject]@{
+            path = $candidatePath
+            arguments = [string]$Arguments
+            workingDirectory = [string]$WorkingDirectory
+            source = [string]$Source
+            score = $Score
+        })
+    }
+
+    foreach ($shortcut in @($NewShortcuts)) {
+        Add-LaunchTarget -Path ([string]$shortcut.targetPath) -Arguments ([string]$shortcut.arguments) -WorkingDirectory ([string]$shortcut.workingDirectory) -Source "Shortcut: $($shortcut.fullName)" -Score 100
+    }
+
+    foreach ($entry in @($NewUninstallEntries)) {
+        if (Test-UninstallEntryLooksLikeDependency -Entry $entry) { continue }
+        foreach ($value in @([string]$entry.displayIcon, [string]$entry.installLocation)) {
+            if ([string]::IsNullOrWhiteSpace($value)) { continue }
+            $candidatePath = Resolve-PathCandidate -Value $value
+            if ([string]::IsNullOrWhiteSpace($candidatePath) -and (Test-Path -LiteralPath $value -PathType Container -ErrorAction SilentlyContinue)) {
+                foreach ($exe in @(Find-ExecutableDetectionTargets -Root $value -DisplayName ([string]$entry.displayName) -Publisher ([string]$entry.publisher) -DisplayVersion ([string]$entry.displayVersion) | Select-Object -First 2)) {
+                    Add-LaunchTarget -Path ([string]$exe.fullName) -Arguments '' -WorkingDirectory '' -Source "Uninstall entry: $($entry.displayName)" -Score 92
+                }
+                continue
+            }
+
+            Add-LaunchTarget -Path $candidatePath -Arguments '' -WorkingDirectory '' -Source "Uninstall entry: $($entry.displayName)" -Score 90
+        }
+    }
+
+    foreach ($exe in @($NewExecutables)) {
+        Add-LaunchTarget -Path ([string]$exe.fullName) -Arguments '' -WorkingDirectory '' -Source 'New executable' -Score 75
+    }
+
+    foreach ($directory in @($NewProgramDirectories | Select-Object -First 10)) {
+        foreach ($exe in @(Find-ExecutableDetectionTargets -Root ([string]$directory.fullName) -DisplayName ([string]$directory.name) -Publisher '' -DisplayVersion '' | Select-Object -First 2)) {
+            Add-LaunchTarget -Path ([string]$exe.fullName) -Arguments '' -WorkingDirectory '' -Source "Install directory: $($directory.fullName)" -Score 70
+        }
+    }
+
+    return @($targets | Sort-Object -Property @{ Expression = { $_.score }; Descending = $true }, @{ Expression = { $_.path }; Ascending = $true })
+}
+
+function Get-WindowRect {
+    param([IntPtr]$Handle)
+    if ($Handle -eq [IntPtr]::Zero) { return $null }
+    if (-not ('IwpNativeWindow' -as [type])) {
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class IwpNativeWindow {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+}
+"@
+    }
+
+    $rect = New-Object IwpNativeWindow+RECT
+    if (-not [IwpNativeWindow]::GetWindowRect($Handle, [ref]$rect)) { return $null }
+    $width = [Math]::Max(0, $rect.Right - $rect.Left)
+    $height = [Math]::Max(0, $rect.Bottom - $rect.Top)
+    if ($width -lt 120 -or $height -lt 120) { return $null }
+    return [pscustomobject]@{ left = $rect.Left; top = $rect.Top; width = $width; height = $height }
+}
+
+function Measure-WhiteWindowRatio {
+    param([string]$ImagePath)
+    if ([string]::IsNullOrWhiteSpace($ImagePath) -or -not (Test-Path -LiteralPath $ImagePath)) { return 0.0 }
+    Add-Type -AssemblyName System.Drawing
+    $bitmap = $null
+    try {
+        $bitmap = [System.Drawing.Bitmap]::FromFile($ImagePath)
+        $sample = 0
+        $white = 0
+        $stepX = [Math]::Max(1, [int]($bitmap.Width / 80))
+        $stepY = [Math]::Max(1, [int]($bitmap.Height / 60))
+        for ($y = 0; $y -lt $bitmap.Height; $y += $stepY) {
+            for ($x = 0; $x -lt $bitmap.Width; $x += $stepX) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $sample += 1
+                if ($pixel.R -ge 245 -and $pixel.G -ge 245 -and $pixel.B -ge 245) { $white += 1 }
+            }
+        }
+
+        if ($sample -eq 0) { return 0.0 }
+        return [Math]::Round(($white / $sample), 4)
+    }
+    finally {
+        if ($null -ne $bitmap) { $bitmap.Dispose() }
+    }
+}
+
+function Save-WindowScreenshot {
+    param($Rect, [string]$Path)
+    if ($null -eq $Rect) { return $false }
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -AssemblyName System.Windows.Forms
+    $bitmap = $null
+    $graphics = $null
+    try {
+        $bitmap = New-Object System.Drawing.Bitmap ([int]$Rect.width), ([int]$Rect.height)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen([int]$Rect.left, [int]$Rect.top, 0, 0, $bitmap.Size)
+        $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+        return $true
+    }
+    catch {
+        Write-ProofLog "Window screenshot failed: $($_.Exception.Message)"
+        return $false
+    }
+    finally {
+        if ($null -ne $graphics) { $graphics.Dispose() }
+        if ($null -ne $bitmap) { $bitmap.Dispose() }
+    }
+}
+
+function Invoke-LaunchValidation {
+    param($NewUninstallEntries, $NewShortcuts, $NewExecutables, $NewProgramDirectories)
+
+    $targets = @(Get-LaunchTargets -NewUninstallEntries $NewUninstallEntries -NewShortcuts $NewShortcuts -NewExecutables $NewExecutables -NewProgramDirectories $NewProgramDirectories)
+    if ($targets.Count -eq 0) {
+        return [pscustomobject]@{
+            success = $true
+            summary = 'No launchable installed application target was found; launch validation was skipped.'
+            target = $null
+            processId = 0
+            hasWindow = $false
+            whiteRatio = 0.0
+            screenshotPath = ''
+            candidates = $targets
+        }
+    }
+
+    $target = $targets | Select-Object -First 1
+    Write-ProofLog "Launch validation target: $($target.path) [$($target.source)]"
+    $process = $null
+    $screenshotPath = Join-Path $LogsPath 'launch-window.png'
+    try {
+        $process = Start-Process -FilePath ([string]$target.path) -ArgumentList ([string]$target.arguments) -WorkingDirectory ([string]$target.workingDirectory) -PassThru -WindowStyle Normal
+        Start-Sleep -Seconds 15
+        try { $process.Refresh() } catch {}
+
+        $handle = $process.MainWindowHandle
+        if ($handle -eq [IntPtr]::Zero) {
+            foreach ($child in @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.Path -ieq [string]$target.path } | Select-Object -First 1)) {
+                $handle = $child.MainWindowHandle
+                $process = $child
+            }
+        }
+
+        $rect = Get-WindowRect -Handle $handle
+        $hasWindow = $null -ne $rect
+        $whiteRatio = 0.0
+        if ($hasWindow -and (Save-WindowScreenshot -Rect $rect -Path $screenshotPath)) {
+            $whiteRatio = Measure-WhiteWindowRatio -ImagePath $screenshotPath
+        }
+
+        $success = $hasWindow -and $whiteRatio -lt 0.82
+        $summary = if (-not $hasWindow) {
+            'Installed application launched but no usable window was detected.'
+        } elseif ($whiteRatio -ge 0.82) {
+            "Installed application launched to a mostly blank white window (white ratio $whiteRatio)."
+        } else {
+            "Installed application launched with a non-blank window (white ratio $whiteRatio)."
+        }
+
+        return [pscustomobject]@{
+            success = $success
+            summary = $summary
+            target = $target
+            processId = if ($null -ne $process) { $process.Id } else { 0 }
+            hasWindow = $hasWindow
+            whiteRatio = $whiteRatio
+            screenshotPath = if (Test-Path -LiteralPath $screenshotPath) { $screenshotPath } else { '' }
+            candidates = $targets
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            success = $false
+            summary = "Launch validation failed: $($_.Exception.Message)"
+            target = $target
+            processId = if ($null -ne $process) { $process.Id } else { 0 }
+            hasWindow = $false
+            whiteRatio = 0.0
+            screenshotPath = if (Test-Path -LiteralPath $screenshotPath) { $screenshotPath } else { '' }
+            candidates = $targets
+        }
+    }
+}
+
 function Write-Report {
     param($Result)
     $lines = @()
@@ -1800,6 +2033,19 @@ function Write-Report {
     $lines += "Pre-install detection: $($Result.preInstallDetection.success) - $($Result.preInstallDetection.summary)"
     $lines += "Post-install detection: $($Result.postInstallDetection.success) - $($Result.postInstallDetection.summary)"
     $lines += ''
+    if ($null -ne $Result.launchValidation) {
+        $lines += "Launch validation: $($Result.launchValidation.success) - $($Result.launchValidation.summary)"
+        if ($null -ne $Result.launchValidation.target) {
+            $lines += "Launch target: $($Result.launchValidation.target.path)"
+            $lines += "Launch source: $($Result.launchValidation.target.source)"
+        }
+        $lines += "Launch window detected: $($Result.launchValidation.hasWindow)"
+        $lines += "Launch white ratio: $($Result.launchValidation.whiteRatio)"
+        if (-not [string]::IsNullOrWhiteSpace($Result.launchValidation.screenshotPath)) {
+            $lines += "Launch screenshot: $($Result.launchValidation.screenshotPath)"
+        }
+        $lines += ''
+    }
     $lines += "New uninstall entries: $(@($Result.diff.newUninstallEntries).Count)"
     foreach ($entry in @($Result.diff.newUninstallEntries | Select-Object -First 12)) {
         $lines += "- $($entry.displayName) $($entry.displayVersion) [$($entry.hive)\$($entry.keyPath)]"
@@ -1875,12 +2121,16 @@ try {
 
     $candidates = @(Get-DetectionCandidates -NewUninstallEntries $diff.newUninstallEntries -NewProgramDirectories $diff.newProgramDirectories -NewExecutables $diff.newExecutables -NewShortcuts $diff.newShortcuts -NewServices $diff.newServices -NewScheduledTasks $diff.newScheduledTasks)
     $candidates = @($candidates | ForEach-Object { Complete-CandidateProof -Candidate $_ })
+    $launchValidation = Invoke-LaunchValidation -NewUninstallEntries $diff.newUninstallEntries -NewShortcuts $diff.newShortcuts -NewExecutables $diff.newExecutables -NewProgramDirectories $diff.newProgramDirectories
 
     $result = [pscustomobject]@{
         schemaVersion = 2
         completedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        failed = -not [bool]$launchValidation.success
+        error = if ([bool]$launchValidation.success) { '' } else { [string]$launchValidation.summary }
         request = $inputData
         install = $installResult
+        launchValidation = $launchValidation
         preInstallDetection = $preDetection
         postInstallDetection = $postDetection
         diff = $diff

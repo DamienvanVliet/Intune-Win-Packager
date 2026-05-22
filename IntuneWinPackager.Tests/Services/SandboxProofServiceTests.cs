@@ -60,6 +60,10 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("New MSI ProductCode registered after install", script, StringComparison.Ordinal);
             Assert.Contains("Detection candidates", script, StringComparison.Ordinal);
             Assert.Contains("Candidate passed sandbox two-phase validation", script, StringComparison.Ordinal);
+            Assert.Contains("Invoke-LaunchValidation", script, StringComparison.Ordinal);
+            Assert.Contains("Measure-WhiteWindowRatio", script, StringComparison.Ordinal);
+            Assert.Contains("launch-window.png", script, StringComparison.Ordinal);
+            Assert.Contains("Skipping dependency uninstall entry as primary app detection", script, StringComparison.Ordinal);
             Assert.Contains("schemaVersion = 2", script, StringComparison.Ordinal);
             Assert.Contains("GreaterThanOrEqual", script, StringComparison.Ordinal);
             Assert.Contains("result.json", script, StringComparison.Ordinal);

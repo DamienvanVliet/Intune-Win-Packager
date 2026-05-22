@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.15] - 2026-05-22
+
+### Fixed
+- Sandbox Proof now launches the installed application after setup, captures a launch screenshot, measures blank-white window ratio, and fails proof when the app opens to a mostly white window.
+- Sandbox Proof reports the launch target, source, window state, white ratio, and screenshot path so broken runtime/UI launches are visible in the report instead of being hidden behind successful detection evidence.
+- Dependency uninstall entries such as Microsoft Visual C++ Redistributable, Visual C++ runtime, WebView2 Runtime, Edge Update, and .NET Runtime are skipped as primary app detection candidates.
+
 ## [3.0.14] - 2026-05-21
 
 ### Changed
