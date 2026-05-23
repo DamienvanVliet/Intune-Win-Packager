@@ -173,6 +173,12 @@ public sealed class SandboxProofService : ISandboxProofService
 
         if (!File.Exists(resultPath))
         {
+            var runnerStartFailure = TryBuildRunnerStartFailure(resultPath);
+            if (runnerStartFailure is not null)
+            {
+                return runnerStartFailure;
+            }
+
             return new SandboxProofDetectionResult
             {
                 Completed = false,
@@ -373,6 +379,51 @@ public sealed class SandboxProofService : ISandboxProofService
         {
             Success = false,
             Message = message
+        };
+    }
+
+    private static SandboxProofDetectionResult? TryBuildRunnerStartFailure(string resultPath)
+    {
+        var runDirectory = Path.GetDirectoryName(resultPath);
+        if (string.IsNullOrWhiteSpace(runDirectory) || !Directory.Exists(runDirectory))
+        {
+            return null;
+        }
+
+        var proofLogPath = Path.Combine(runDirectory, "logs", "proof.log");
+        if (File.Exists(proofLogPath))
+        {
+            return null;
+        }
+
+        var inputPath = Path.Combine(runDirectory, "proof-input.json");
+        var referencePath = File.Exists(inputPath) ? inputPath : runDirectory;
+        DateTimeOffset lastWriteUtc;
+        try
+        {
+            lastWriteUtc = File.Exists(referencePath)
+                ? File.GetLastWriteTimeUtc(referencePath)
+                : Directory.GetLastWriteTimeUtc(referencePath);
+        }
+        catch
+        {
+            return null;
+        }
+
+        if (DateTimeOffset.UtcNow - lastWriteUtc < TimeSpan.FromMinutes(4))
+        {
+            return null;
+        }
+
+        return new SandboxProofDetectionResult
+        {
+            Completed = true,
+            Failed = true,
+            ResultPath = resultPath,
+            FailureKind = "RunnerStart",
+            Message =
+                "Sandbox proof failed before the runner started. Windows Sandbox launched, but run-proof.ps1 did not write logs within 4 minutes. " +
+                "Close any existing Windows Sandbox windows, wait for vmmemWindowsSandbox to stop, then run Sandbox Proof again."
         };
     }
 

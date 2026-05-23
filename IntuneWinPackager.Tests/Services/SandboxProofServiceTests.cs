@@ -753,6 +753,35 @@ public sealed class SandboxProofServiceTests
     }
 
     [Fact]
+    public async Task ReadResultAsync_WhenRunnerNeverStarts_ReturnsActionableFailure()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        var logsPath = Path.Combine(tempRoot, "logs");
+        var inputPath = Path.Combine(tempRoot, "proof-input.json");
+        Directory.CreateDirectory(logsPath);
+        await File.WriteAllTextAsync(inputPath, "{}");
+        File.SetLastWriteTimeUtc(inputPath, DateTime.UtcNow.AddMinutes(-5));
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.True(result.Failed);
+            Assert.Equal("RunnerStart", result.FailureKind);
+            Assert.Contains("run-proof.ps1 did not write logs", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("vmmemWindowsSandbox", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
     public async Task ReadResultAsync_WhenUninstallValidationFailsWithProvenCandidates_ReturnsFailedResult()
     {
         var tempRoot = CreateTempDirectory();

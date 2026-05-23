@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.0.23] - 2026-05-23
+
+### Fixed
+- Sandbox Proof now detects when Windows Sandbox launches but `run-proof.ps1` never starts writing logs, and reports a dedicated `RunnerStart` failure with recovery guidance instead of waiting silently or confusing it with package behavior.
+
 ## [3.0.22] - 2026-05-23
 
 ### Changed
