@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.0.22] - 2026-05-23
+
+### Changed
+- Sandbox Proof now runs install and uninstall commands through a temporary SYSTEM scheduled task, with direct user execution kept as a fallback, so proof runs better match Intune system-context behavior.
+- Sandbox Proof can start when the install command is complete but EXE uninstall is still unknown; the sandbox now discovers the real uninstall command from new uninstall registry entries.
+- Sandbox reports now include command source, execution mode, and uninstall resolution evidence.
+- Foxit PDF Reader EXE detection now uses a vendor profile based on official deployment guidance, with the minimal `/verysilent` install switch and sandbox-discovered uninstall validation.
+
+### Fixed
+- Fixed EXE command execution quoting in the fallback runner path by using `cmd /s /c call`.
+- Proven install, detection, and uninstall evidence is no longer marked as a failed proof solely because interactive launch-window validation is inconclusive.
+- Applying a successful Sandbox Proof can now fill an unresolved uninstall command placeholder when the resolved command is portable outside the sandbox.
+
 ## [3.0.21] - 2026-05-22
 
 ### Changed

@@ -63,6 +63,33 @@ public class InstallerCommandServiceTests
     }
 
     [Fact]
+    public void CreateSuggestion_ForFoxitReaderExe_UsesVendorInstallProfileAndAutoUninstallDiscovery()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-foxit-exe-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var setupFile = Path.Combine(tempRoot, "FoxitPDFReader20253_L10N_Setup_x64.exe");
+        File.WriteAllText(setupFile, "Foxit Setup Bootstrapper FOXIT SOFTWARE INC.");
+
+        try
+        {
+            var sut = new InstallerCommandService();
+            var suggestion = sut.CreateSuggestion(
+                setupFilePath: setupFile,
+                installerType: InstallerType.Exe);
+
+            Assert.Contains("/verysilent", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("/DisableInternet", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("\"FoxitPDFReader20253_L10N_Setup_x64.exe\" <auto-detect-uninstall>", suggestion.UninstallCommand);
+            Assert.Equal("Foxit PDF Reader EXE", suggestion.SuggestedRules.AppliedTemplateName);
+            Assert.True(suggestion.SuggestedRules.RequireSilentSwitchReview);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void CreateSuggestion_ForExeWithIncompleteMetadata_DoesNotAutoSelectScriptDetection()
     {
         var sut = new InstallerCommandService();

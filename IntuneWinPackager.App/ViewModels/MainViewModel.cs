@@ -2501,7 +2501,7 @@ public partial class MainViewModel : ObservableObject
                InstallerType != InstallerType.Unknown &&
                !string.IsNullOrWhiteSpace(SetupFilePath) &&
                File.Exists(SetupFilePath) &&
-               AreExecutionCommandsReady;
+               IsExecutableCommandReady(InstallCommand);
     }
 
     private SandboxProofPrecheck BuildSandboxProofPrecheck()
@@ -2524,7 +2524,9 @@ public partial class MainViewModel : ObservableObject
 
         var commandSummary = installReady && uninstallReady
             ? "install and uninstall commands are complete"
-            : "install or uninstall command still has missing required arguments";
+            : installReady
+                ? "install command is complete; Sandbox Proof will try to discover and validate uninstall from the clean install evidence"
+                : "install command still has missing required arguments";
         var nextStep = hasDetectionRule
             ? "Sandbox Proof will prove that rule before install, after install, and after uninstall."
             : "Sandbox Proof will discover detection candidates from before/after evidence, then verify they disappear after uninstall.";
@@ -2869,6 +2871,7 @@ public partial class MainViewModel : ObservableObject
         ApplyDetectionRule(bestCandidate.Rule);
         _additionalDetectionRules = bestCandidate.AdditionalRules ?? [];
         ApplyInstallContextFromDetectionEvidence(bestCandidate);
+        ApplySandboxProofCommands(result);
         SandboxProofStatus = TF(
             "Vm.SandboxProof.Status.DetectionApplied",
             bestCandidate.Rule.RuleType,
@@ -2892,6 +2895,26 @@ public partial class MainViewModel : ObservableObject
 
         UpdateValidation();
         return true;
+    }
+
+    private void ApplySandboxProofCommands(SandboxProofDetectionResult result)
+    {
+        if (IsExecutableCommandReady(result.UninstallCommand) &&
+            !IsSandboxOnlyCommand(result.UninstallCommand) &&
+            !IsExecutableCommandReady(UninstallCommand))
+        {
+            UninstallCommand = result.UninstallCommand;
+            var source = string.IsNullOrWhiteSpace(result.UninstallCommandSource)
+                ? "sandbox proof"
+                : result.UninstallCommandSource;
+            AppendLog($"Applied uninstall command from {source}: {UninstallCommand}");
+        }
+    }
+
+    private static bool IsSandboxOnlyCommand(string command)
+    {
+        return command.Contains(@"C:\IwpSandbox", StringComparison.OrdinalIgnoreCase) ||
+               command.Contains("WDAGUtilityAccount", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ApplyInstallContextFromDetectionEvidence(SandboxProofDetectionCandidate candidate)

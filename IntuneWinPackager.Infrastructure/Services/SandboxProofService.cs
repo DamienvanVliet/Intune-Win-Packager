@@ -190,10 +190,15 @@ public sealed class SandboxProofService : ISandboxProofService
             var hasInstallOutcome = TryGetObject(root, "install", out var installElement);
             var installTimedOut = hasInstallOutcome && GetJsonBoolean(installElement, "timedOut");
             var installExitCode = hasInstallOutcome ? GetJsonInt(installElement, "exitCode") : 0;
+            var installCommand = hasInstallOutcome ? GetJsonString(installElement, "command") : string.Empty;
             var hasUninstallOutcome = TryGetObject(root, "uninstall", out var uninstallElement);
             var uninstallTimedOut = hasUninstallOutcome && GetJsonBoolean(uninstallElement, "timedOut");
             var uninstallExitCode = hasUninstallOutcome ? GetJsonInt(uninstallElement, "exitCode") : 0;
+            var uninstallCommand = hasUninstallOutcome ? GetJsonString(uninstallElement, "command") : string.Empty;
             var hasUninstallValidation = TryGetObject(root, "uninstallValidation", out var uninstallValidationElement);
+            var uninstallCommandSource = TryGetObject(root, "uninstallResolution", out var uninstallResolutionElement)
+                ? GetJsonString(uninstallResolutionElement, "source")
+                : string.Empty;
             var failureKind = GetJsonString(root, "failureKind");
             var installProven = hasInstallOutcome && IsSuccessfulInstallExitCode(installExitCode, installTimedOut);
             var uninstallProven = hasUninstallValidation
@@ -237,6 +242,9 @@ public sealed class SandboxProofService : ISandboxProofService
                     Failed = true,
                     ResultPath = resultPath,
                     FailureKind = failureKind,
+                    InstallCommand = installCommand,
+                    UninstallCommand = uninstallCommand,
+                    UninstallCommandSource = uninstallCommandSource,
                     InstallProven = installProven,
                     DetectionProven = provenCandidateCount > 0,
                     UninstallProven = uninstallProven,
@@ -260,6 +268,9 @@ public sealed class SandboxProofService : ISandboxProofService
                     Failed = true,
                     ResultPath = resultPath,
                     FailureKind = failureKind,
+                    InstallCommand = installCommand,
+                    UninstallCommand = uninstallCommand,
+                    UninstallCommandSource = uninstallCommandSource,
                     InstallProven = installProven,
                     DetectionProven = provenCandidateCount > 0,
                     UninstallProven = uninstallProven,
@@ -282,6 +293,9 @@ public sealed class SandboxProofService : ISandboxProofService
                     Failed = true,
                     ResultPath = resultPath,
                     FailureKind = "Install",
+                    InstallCommand = installCommand,
+                    UninstallCommand = uninstallCommand,
+                    UninstallCommandSource = uninstallCommandSource,
                     InstallProven = false,
                     DetectionProven = provenCandidateCount > 0,
                     UninstallProven = uninstallProven,
@@ -295,12 +309,13 @@ public sealed class SandboxProofService : ISandboxProofService
             }
 
             var message = BuildSandboxProofResultMessage(candidates.Count, provenCandidateCount, proofAvailable, bestCandidate);
-            if (GetJsonBoolean(root, "failed"))
+            if (GetJsonBoolean(root, "failed") ||
+                string.Equals(failureKind, "LaunchValidation", StringComparison.OrdinalIgnoreCase))
             {
                 var error = GetJsonString(root, "error");
                 message = string.IsNullOrWhiteSpace(error)
-                    ? $"{message} Sandbox launch validation failed, but proven detection evidence can still be applied."
-                    : $"{message} Sandbox launch validation failed: {error}. Proven detection evidence can still be applied.";
+                    ? $"{message} Sandbox launch validation warning: launch check did not prove an interactive app window, but install/detection/uninstall proof is still valid."
+                    : $"{message} Sandbox launch validation warning: {error}. Install/detection/uninstall proof is still valid.";
             }
 
             return new SandboxProofDetectionResult
@@ -308,6 +323,9 @@ public sealed class SandboxProofService : ISandboxProofService
                 Completed = true,
                 ResultPath = resultPath,
                 FailureKind = failureKind,
+                InstallCommand = installCommand,
+                UninstallCommand = uninstallCommand,
+                UninstallCommandSource = uninstallCommandSource,
                 InstallProven = installProven,
                 DetectionProven = provenCandidateCount > 0,
                 UninstallProven = uninstallProven,
@@ -1300,9 +1318,104 @@ function Invoke-ProofCommand {
     Write-ProofLog "Running ${Phase} command: $Command"
     Write-ProofLog "Working directory: $WorkingDirectory"
 
+    try {
+        return Invoke-ProofCommandAsSystem -Command $Command -WorkingDirectory $WorkingDirectory -TimeoutMinutes $TimeoutMinutes -Phase $safePhase -StdoutPath $stdout -StderrPath $stderr
+    }
+    catch {
+        Write-ProofLog "SYSTEM scheduled task execution failed for ${Phase}; falling back to direct command: $($_.Exception.Message)"
+        return Invoke-ProofCommandDirect -Command $Command -WorkingDirectory $WorkingDirectory -TimeoutMinutes $TimeoutMinutes -Phase $Phase -StdoutPath $stdout -StderrPath $stderr
+    }
+}
+
+function Invoke-ProofCommandAsSystem {
+    param(
+        [string]$Command,
+        [string]$WorkingDirectory,
+        [int]$TimeoutMinutes,
+        [string]$Phase,
+        [string]$StdoutPath,
+        [string]$StderrPath
+    )
+
+    $exitCodePath = Join-Path $LogsPath "$Phase-exitcode.txt"
+    $cmdPath = Join-Path $LogsPath "$Phase-command.cmd"
+    $taskName = "IwpSandboxProof-$Phase-$([guid]::NewGuid().ToString('N'))"
+    $escapedWorkingDirectory = $WorkingDirectory.Replace('"', '""')
+    $escapedStdout = $StdoutPath.Replace('"', '""')
+    $escapedStderr = $StderrPath.Replace('"', '""')
+    $escapedExitCode = $exitCodePath.Replace('"', '""')
+
+    $cmdLines = @(
+        '@echo off',
+        "cd /d `"$escapedWorkingDirectory`"",
+        "call $Command > `"$escapedStdout`" 2> `"$escapedStderr`"",
+        "echo %ERRORLEVEL%> `"$escapedExitCode`"",
+        "exit /b %ERRORLEVEL%"
+    )
+    Set-Content -LiteralPath $cmdPath -Value $cmdLines -Encoding ASCII
+
+    Write-ProofLog "Executing ${Phase} command as SYSTEM via scheduled task $taskName."
+    $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/d /c `"$cmdPath`""
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+
+    $timedOut = $false
+    try {
+        Start-ScheduledTask -TaskName $taskName
+        $deadline = (Get-Date).AddMilliseconds([Math]::Max(5, $TimeoutMinutes) * 60 * 1000)
+        do {
+            Start-Sleep -Milliseconds 500
+            if (Test-Path -LiteralPath $exitCodePath) { break }
+
+            $state = (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State
+            if ($state -ne 'Running' -and $state -ne 'Ready') {
+                Start-Sleep -Milliseconds 500
+                if (Test-Path -LiteralPath $exitCodePath) { break }
+                break
+            }
+        } while ((Get-Date) -lt $deadline)
+
+        if (-not (Test-Path -LiteralPath $exitCodePath)) {
+            $timedOut = $true
+            Write-ProofLog "$Phase command timed out after $TimeoutMinutes minute(s); stopping scheduled task."
+            try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    finally {
+        try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+    }
+
+    $stdoutText = if (Test-Path -LiteralPath $StdoutPath) { Get-Content -LiteralPath $StdoutPath -Raw } else { '' }
+    $stderrText = if (Test-Path -LiteralPath $StderrPath) { Get-Content -LiteralPath $StderrPath -Raw } else { '' }
+    $exitCodeText = if (Test-Path -LiteralPath $exitCodePath) { (Get-Content -LiteralPath $exitCodePath -Raw).Trim() } else { '' }
+    $exitCode = 0
+    if (-not [int]::TryParse($exitCodeText, [ref]$exitCode)) {
+        $exitCode = if ($timedOut) { -1 } else { 1 }
+    }
+
+    return [pscustomobject]@{
+        command = $Command
+        executionMode = 'ScheduledTaskSystem'
+        exitCode = if ($timedOut) { -1 } else { $exitCode }
+        timedOut = $timedOut
+        stdout = $stdoutText
+        stderr = $stderrText
+    }
+}
+
+function Invoke-ProofCommandDirect {
+    param(
+        [string]$Command,
+        [string]$WorkingDirectory,
+        [int]$TimeoutMinutes,
+        [string]$Phase,
+        [string]$StdoutPath,
+        [string]$StderrPath
+    )
+
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'cmd.exe'
-    $psi.Arguments = "/d /c $Command"
+    $psi.Arguments = "/d /s /c call $Command"
     $psi.WorkingDirectory = $WorkingDirectory
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -1322,11 +1435,12 @@ function Invoke-ProofCommand {
 
     $stdoutText = $stdOutTask.GetAwaiter().GetResult()
     $stderrText = $stdErrTask.GetAwaiter().GetResult()
-    Set-Content -LiteralPath $stdout -Value $stdoutText -Encoding UTF8
-    Set-Content -LiteralPath $stderr -Value $stderrText -Encoding UTF8
+    Set-Content -LiteralPath $StdoutPath -Value $stdoutText -Encoding UTF8
+    Set-Content -LiteralPath $StderrPath -Value $stderrText -Encoding UTF8
 
     return [pscustomobject]@{
         command = $Command
+        executionMode = 'DirectUser'
         exitCode = if ($exited) { $process.ExitCode } else { -1 }
         timedOut = -not $exited
         stdout = $stdoutText
@@ -1756,6 +1870,79 @@ function Test-UninstallEntryLooksLikeDependency {
     if ($publisher -match '(?i)^microsoft' -and $displayName -match '(?i)(redistributable|runtime|webview2)') { return $true }
 
     return $false
+}
+
+function Test-CommandHasPlaceholder {
+    param([string]$Command)
+    if ([string]::IsNullOrWhiteSpace($Command)) { return $true }
+    return $Command.Contains('<') -and $Command.Contains('>')
+}
+
+function Convert-ToSilentUninstallCommand {
+    param($Entry, [string]$Command, [string]$Source)
+    $trimmed = ([string]$Command).Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) { return $null }
+
+    if ($trimmed -match '(?i)\bmsiexec(\.exe)?\b') {
+        $normalized = $trimmed -replace '(?i)/(i|package)(?=\{)', '/x'
+        $normalized = $normalized -replace '(?i)/(i|package)\s+', '/x '
+        if ($normalized -notmatch '(?i)(^|\s)/(q|qn|quiet|passive)(\s|$)') {
+            $normalized = "$normalized /quiet"
+        }
+        if ($normalized -notmatch '(?i)(^|\s)/norestart(\s|$)') {
+            $normalized = "$normalized /norestart"
+        }
+
+        return [pscustomobject]@{
+            command = $normalized.Trim()
+            source = $Source
+            summary = 'MSI uninstall command normalized from the new uninstall registry entry.'
+        }
+    }
+
+    $displayName = [string]$Entry.displayName
+    $publisher = [string]$Entry.publisher
+    $looksInno = $trimmed -match '(?i)\\unins\d*\.exe\b'
+    $looksFoxit = $displayName -match '(?i)foxit' -or $publisher -match '(?i)foxit' -or $trimmed -match '(?i)foxit'
+    if (($looksInno -or $looksFoxit) -and
+        $trimmed -notmatch '(?i)(^|\s)/(verysilent|silent|quiet|s)(\s|$)') {
+        $trimmed = "$trimmed /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+    }
+
+    return [pscustomobject]@{
+        command = $trimmed
+        source = $Source
+        summary = 'Uninstall command discovered from the new uninstall registry entry.'
+    }
+}
+
+function Resolve-ProofUninstallCommand {
+    param([string]$RequestedCommand, $NewUninstallEntries)
+    if (-not (Test-CommandHasPlaceholder -Command $RequestedCommand)) {
+        return [pscustomobject]@{
+            command = $RequestedCommand
+            source = 'Configured uninstall command'
+            summary = 'Using the uninstall command already configured before Sandbox Proof.'
+        }
+    }
+
+    foreach ($entry in @($NewUninstallEntries | Where-Object { -not (Test-UninstallEntryLooksLikeDependency -Entry $_) })) {
+        $quiet = Convert-ToSilentUninstallCommand -Entry $entry -Command ([string]$entry.quietUninstallString) -Source "Auto-discovered QuietUninstallString: $($entry.displayName)"
+        if ($null -ne $quiet -and -not (Test-CommandHasPlaceholder -Command $quiet.command)) {
+            return $quiet
+        }
+
+        $regular = Convert-ToSilentUninstallCommand -Entry $entry -Command ([string]$entry.uninstallString) -Source "Auto-discovered UninstallString: $($entry.displayName)"
+        if ($null -ne $regular -and -not (Test-CommandHasPlaceholder -Command $regular.command)) {
+            return $regular
+        }
+    }
+
+    return [pscustomobject]@{
+        command = ''
+        source = 'Auto-discovery failed'
+        summary = 'Sandbox Proof could not find a usable uninstall command in new uninstall registry entries.'
+    }
 }
 
 function Find-ExecutableDetectionTargets {
@@ -2368,6 +2555,9 @@ function Write-Report {
     $lines += ''
     $lines += 'Install proof'
     $lines += "Install command: $($Result.request.installCommand)"
+    if (-not [string]::IsNullOrWhiteSpace([string]$Result.install.executionMode)) {
+        $lines += "Install execution mode: $($Result.install.executionMode)"
+    }
     $lines += "Install exit code: $($Result.install.exitCode)"
     $lines += "Install timed out: $($Result.install.timedOut)"
     $installExitCode = [int]$Result.install.exitCode
@@ -2423,7 +2613,14 @@ function Write-Report {
         $lines += ''
     }
     $lines += 'Uninstall proof'
-    $lines += "Uninstall command: $($Result.request.uninstallCommand)"
+    $lines += "Uninstall command: $($Result.uninstall.command)"
+    if (-not [string]::IsNullOrWhiteSpace([string]$Result.uninstall.executionMode)) {
+        $lines += "Uninstall execution mode: $($Result.uninstall.executionMode)"
+    }
+    if ($null -ne $Result.uninstallResolution) {
+        $lines += "Uninstall command source: $($Result.uninstallResolution.source)"
+        $lines += "Uninstall command resolution: $($Result.uninstallResolution.summary)"
+    }
     $lines += "Uninstall exit code: $($Result.uninstall.exitCode)"
     $lines += "Uninstall timed out: $($Result.uninstall.timedOut)"
     if ([bool]$Result.uninstallValidation.success) {
@@ -2520,7 +2717,10 @@ try {
     $candidates = @($candidates | ForEach-Object { Complete-CandidateProof -Candidate $_ })
     $launchRemediation = Invoke-WeintekSoftwareRenderWorkaround -NewExecutables $diff.newExecutables -NewProgramDirectories $diff.newProgramDirectories
     $launchValidation = Invoke-LaunchValidation -NewUninstallEntries $diff.newUninstallEntries -NewShortcuts $diff.newShortcuts -NewExecutables $diff.newExecutables -NewProgramDirectories $diff.newProgramDirectories
-    $uninstallResult = Invoke-ProofCommand -Command ([string]$inputData.uninstallCommand) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes) -Phase 'uninstall'
+    $uninstallResolution = Resolve-ProofUninstallCommand -RequestedCommand ([string]$inputData.uninstallCommand) -NewUninstallEntries $diff.newUninstallEntries
+    Write-ProofLog "Resolved uninstall command source: $($uninstallResolution.source)"
+    Write-ProofLog "Resolved uninstall command: $($uninstallResolution.command)"
+    $uninstallResult = Invoke-ProofCommand -Command ([string]$uninstallResolution.command) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes) -Phase 'uninstall'
     Start-Sleep -Seconds 3
     $postUninstall = Get-Snapshot -Name 'post-uninstall'
     $postUninstallDetection = Test-ProofDetection -Rule $inputData.detectionRule
@@ -2578,10 +2778,12 @@ try {
         default { '' }
     }
 
+    $blockingFailureKind = if ($failureKind -eq 'LaunchValidation') { '' } else { $failureKind }
+
     $result = [pscustomobject]@{
         schemaVersion = 2
         completedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-        failed = -not [string]::IsNullOrWhiteSpace($failureKind)
+        failed = -not [string]::IsNullOrWhiteSpace($blockingFailureKind)
         failureKind = $failureKind
         error = $failureMessage
         precheck = [pscustomobject]@{
@@ -2593,6 +2795,7 @@ try {
         request = $inputData
         install = $installResult
         uninstall = $uninstallResult
+        uninstallResolution = $uninstallResolution
         uninstallValidation = $uninstallValidation
         launchRemediation = $launchRemediation
         launchValidation = $launchValidation

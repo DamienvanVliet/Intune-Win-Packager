@@ -108,6 +108,16 @@ public sealed class InstallerCommandService : IInstallerCommandService
     {
         new()
         {
+            Framework = ExeInstallerFramework.VendorSpecific,
+            Name = "Foxit PDF Reader EXE",
+            InstallArguments = "/verysilent",
+            UninstallArguments = "<auto-detect-uninstall>",
+            DetectionMarkers = ["foxitpdfreader", "foxit pdf reader", "foxit setup bootstrapper", "foxit software inc"],
+            Guidance = "Foxit PDF Reader vendor profile detected from file metadata/signature. Official Foxit deployment documentation supports /verysilent for EXE installs; Sandbox Proof will discover and validate the registered uninstaller after install.",
+            BaseConfidenceScore = 76
+        },
+        new()
+        {
             Framework = ExeInstallerFramework.InnoSetup,
             Name = "EXE - Inno Setup",
             InstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
@@ -2159,6 +2169,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
         WixBurn = 4,
         Squirrel = 5,
         AdvancedInstaller = 6,
-        Manual = 7
+        Manual = 7,
+        VendorSpecific = 8
     }
 }

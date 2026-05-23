@@ -12,6 +12,12 @@ public sealed record SandboxProofDetectionResult
 
     public string FailureKind { get; init; } = string.Empty;
 
+    public string InstallCommand { get; init; } = string.Empty;
+
+    public string UninstallCommand { get; init; } = string.Empty;
+
+    public string UninstallCommandSource { get; init; } = string.Empty;
+
     public bool InstallProven { get; init; }
 
     public bool DetectionProven { get; init; }

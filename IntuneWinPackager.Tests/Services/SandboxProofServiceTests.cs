@@ -76,6 +76,13 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("post-uninstall", script, StringComparison.Ordinal);
             Assert.Contains("Uninstall proof", script, StringComparison.Ordinal);
             Assert.Contains("uninstallValidation", script, StringComparison.Ordinal);
+            Assert.Contains("Install execution mode", script, StringComparison.Ordinal);
+            Assert.Contains("Uninstall execution mode", script, StringComparison.Ordinal);
+            Assert.Contains("New-ScheduledTaskPrincipal -UserId 'SYSTEM'", script, StringComparison.Ordinal);
+            Assert.Contains("ScheduledTaskSystem", script, StringComparison.Ordinal);
+            Assert.Contains("Resolve-ProofUninstallCommand", script, StringComparison.Ordinal);
+            Assert.Contains("uninstallResolution", script, StringComparison.Ordinal);
+            Assert.Contains("$blockingFailureKind = if ($failureKind -eq 'LaunchValidation')", script, StringComparison.Ordinal);
             Assert.Contains("failureKind", script, StringComparison.Ordinal);
             Assert.Contains("Invoke-LaunchValidation", script, StringComparison.Ordinal);
             Assert.Contains("Measure-WhiteWindowRatio", script, StringComparison.Ordinal);
@@ -94,6 +101,7 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("schemaVersion = 2", script, StringComparison.Ordinal);
             Assert.Contains("GreaterThanOrEqual", script, StringComparison.Ordinal);
             Assert.Contains("result.json", script, StringComparison.Ordinal);
+            Assert.Contains("/d /s /c call $Command", script, StringComparison.Ordinal);
         }
         finally
         {
@@ -661,8 +669,82 @@ public sealed class SandboxProofServiceTests
             Assert.Equal(1, result.ProvenCandidateCount);
             Assert.NotNull(result.BestCandidate);
             Assert.Equal(IntuneDetectionRuleType.Registry, result.BestCandidate.Rule.RuleType);
-            Assert.Contains("launch validation failed", result.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("can still be applied", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("launch validation warning", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("proof is still valid", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenLaunchValidationWarningIsNonBlocking_PreservesProofCommands()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "failed": false,
+              "failureKind": "LaunchValidation",
+              "error": "Installed application launched to a mostly blank/light window.",
+              "install": {
+                "command": "\"Setup.exe\" /quiet",
+                "exitCode": 0,
+                "timedOut": false
+              },
+              "uninstall": {
+                "command": "\"C:\\Program Files\\Vendor\\unins000.exe\" /VERYSILENT /NORESTART",
+                "exitCode": 0,
+                "timedOut": false
+              },
+              "uninstallResolution": {
+                "source": "Auto-discovered UninstallString: Vendor App",
+                "summary": "Uninstall command discovered from the new uninstall registry entry."
+              },
+              "uninstallValidation": {
+                "success": true
+              },
+              "candidates": [
+                {
+                  "type": "File",
+                  "confidence": "High",
+                  "score": 92,
+                  "reason": "New uninstall entry InstallLocation contains an executable install footprint.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox install, detection, and uninstall validation.",
+                    "negativePhase": { "success": true, "summary": "Executable target was absent before install and present after install.", "details": "" },
+                    "positivePhase": { "success": true, "summary": "Rule set validation passed for 1 rule(s).", "details": "" },
+                    "uninstallPhase": { "success": true, "summary": "Uninstall validation cleared 1 detection rule(s).", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "File",
+                    "file": {
+                      "path": "C:\\Program Files\\Vendor",
+                      "fileOrFolderName": "Vendor.exe",
+                      "operator": "Exists"
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.False(result.Failed);
+            Assert.Equal("\"Setup.exe\" /quiet", result.InstallCommand);
+            Assert.Equal("\"C:\\Program Files\\Vendor\\unins000.exe\" /VERYSILENT /NORESTART", result.UninstallCommand);
+            Assert.Equal("Auto-discovered UninstallString: Vendor App", result.UninstallCommandSource);
+            Assert.True(result.UninstallProven);
+            Assert.Contains("launch validation warning", result.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
