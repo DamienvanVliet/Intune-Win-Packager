@@ -5,6 +5,7 @@ using System.IO;
 using System.Reflection;
 using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 using WpfBrush = System.Windows.Media.Brush;
@@ -253,6 +254,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private bool isBusy;
+
+    [ObservableProperty]
+    private bool isRunningAsAdministrator;
 
     [ObservableProperty]
     private bool isDragOver;
@@ -521,6 +525,7 @@ public partial class MainViewModel : ObservableObject
         SelectedLanguage = _localizationService.CurrentLanguage;
         SelectedTheme = _themeService.CurrentTheme;
         SelectedDensity = _densityService.CurrentDensity;
+        isRunningAsAdministrator = IsCurrentProcessElevated();
 
         BrowseSourceFolderCommand = new RelayCommand(BrowseSourceFolder);
         BrowseSetupFileCommand = new AsyncRelayCommand(BrowseSetupFileAsync);
@@ -529,6 +534,7 @@ public partial class MainViewModel : ObservableObject
         CreateWorkspaceFoldersCommand = new AsyncRelayCommand(CreateWorkspaceFoldersAsync, () => !IsBusy);
         OpenWorkspaceRootCommand = new RelayCommand(OpenWorkspaceRoot, CanOpenWorkspaceRoot);
         EnableWindowsSandboxCommand = new AsyncRelayCommand(EnableWindowsSandboxAsync, () => !IsBusy);
+        RestartAsAdministratorCommand = new RelayCommand(RestartAsAdministrator, CanRestartAsAdministrator);
         RefreshSetupWizardCommand = new RelayCommand(RefreshSetupWizard);
         GoToPackagingCommand = new RelayCommand(() => SelectedMainTabIndex = PackagingTabIndex);
         BrowseToolPathCommand = new RelayCommand(BrowseToolPath);
@@ -776,17 +782,25 @@ public partial class MainViewModel : ObservableObject
         ? T("Vm.SetupWizard.Sandbox.Ready")
         : T("Vm.SetupWizard.Sandbox.Missing");
 
+    public string AdminDependencyStatus => IsRunningAsAdministrator
+        ? T("Vm.SetupWizard.Admin.Ready")
+        : T("Vm.SetupWizard.Admin.Missing");
+
+    public bool ShouldShowRestartAsAdministrator => OperatingSystem.IsWindows() && !IsRunningAsAdministrator;
+
     public string ToolDependencyStatus => IsToolPathValid
         ? TF("Vm.SetupWizard.Tool.Ready", IntuneWinAppUtilPath)
         : T("Vm.SetupWizard.Tool.Missing");
 
     public string SetupWizardSummary => string.Join(
         Environment.NewLine,
+        $"{T("Vm.SetupWizard.Admin.Label")}: {(IsRunningAsAdministrator ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Recommended"))}",
         $"{T("Vm.SetupWizard.Sandbox.Label")}: {(IsWindowsSandboxAvailable ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}",
         $"{T("Vm.SetupWizard.Tool.Label")}: {(IsToolPathValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}",
         $"{T("Vm.SetupWizard.Workspace.Label")}: {(IsWorkspaceReady ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}");
 
     public string ReadinessSummary =>
+        $"{T("Vm.SetupWizard.Admin.Label")}: {(IsRunningAsAdministrator ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Recommended"))}{Environment.NewLine}" +
         $"{T("Vm.Readiness.ToolPath")}: {(IsToolPathValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}{Environment.NewLine}" +
         $"{T("Vm.Readiness.InstallerFile")}: {(IsSetupFileValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}{Environment.NewLine}" +
         $"{T("Vm.Readiness.SourceFolder")}: {(IsSourceFolderValid ? T("Vm.Readiness.Ready") : T("Vm.Readiness.Missing"))}{Environment.NewLine}" +
@@ -1002,6 +1016,8 @@ public partial class MainViewModel : ObservableObject
     public IRelayCommand OpenWorkspaceRootCommand { get; }
 
     public IAsyncRelayCommand EnableWindowsSandboxCommand { get; }
+
+    public IRelayCommand RestartAsAdministratorCommand { get; }
 
     public IRelayCommand RefreshSetupWizardCommand { get; }
 
@@ -1591,6 +1607,7 @@ public partial class MainViewModel : ObservableObject
         ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
         CreateWorkspaceFoldersCommand.NotifyCanExecuteChanged();
         EnableWindowsSandboxCommand.NotifyCanExecuteChanged();
+        RestartAsAdministratorCommand.NotifyCanExecuteChanged();
         InstallToolCommand.NotifyCanExecuteChanged();
         QuickFixCommand.NotifyCanExecuteChanged();
         ResetCommand.NotifyCanExecuteChanged();
@@ -1611,6 +1628,14 @@ public partial class MainViewModel : ObservableObject
         ClearCatalogQueueCommand.NotifyCanExecuteChanged();
         RemoveQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
         UseQueuedCatalogEntryCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsRunningAsAdministratorChanged(bool value)
+    {
+        RestartAsAdministratorCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(AdminDependencyStatus));
+        OnPropertyChanged(nameof(ShouldShowRestartAsAdministrator));
+        NotifyReadinessChanged();
     }
 
     partial void OnResultOutputPathChanged(string value)
@@ -2072,8 +2097,66 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    private bool CanRestartAsAdministrator()
+    {
+        return OperatingSystem.IsWindows() && !IsBusy && !IsRunningAsAdministrator;
+    }
+
+    private void RestartAsAdministrator()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        IsRunningAsAdministrator = IsCurrentProcessElevated();
+        if (IsRunningAsAdministrator)
+        {
+            SetStatus(
+                OperationState.Success,
+                T("Vm.Status.AdminReadyTitle"),
+                T("Vm.Status.AdminReadyMessage"));
+            return;
+        }
+
+        try
+        {
+            var executablePath = ResolveCurrentExecutablePath();
+            if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
+            {
+                throw new InvalidOperationException("The current application executable could not be found.");
+            }
+
+            var arguments = string.Join(" ", Environment.GetCommandLineArgs().Skip(1).Select(QuoteProcessArgument));
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = executablePath,
+                Arguments = arguments,
+                WorkingDirectory = AppContext.BaseDirectory,
+                UseShellExecute = true,
+                Verb = "runas"
+            });
+
+            SetStatus(
+                OperationState.Running,
+                T("Vm.Status.AdminRestartStartedTitle"),
+                T("Vm.Status.AdminRestartStartedMessage"));
+            AppendLog("Restarting application as administrator.");
+            WpfApplication.Current.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            SetStatus(
+                OperationState.Error,
+                T("Vm.Status.AdminRestartFailedTitle"),
+                ex.Message);
+            AppendLog($"Restart as administrator failed: {ex.Message}");
+        }
+    }
+
     private void RefreshSetupWizard()
     {
+        IsRunningAsAdministrator = IsCurrentProcessElevated();
         NotifySetupWizardChanged();
         SetStatus(
             OperationState.Idle,
@@ -5591,6 +5674,9 @@ public partial class MainViewModel : ObservableObject
 
     private void NotifyReadinessChanged()
     {
+        OnPropertyChanged(nameof(IsRunningAsAdministrator));
+        OnPropertyChanged(nameof(AdminDependencyStatus));
+        OnPropertyChanged(nameof(ShouldShowRestartAsAdministrator));
         OnPropertyChanged(nameof(IsToolPathValid));
         OnPropertyChanged(nameof(IsSetupFileValid));
         OnPropertyChanged(nameof(IsSourceFolderValid));
@@ -5612,6 +5698,9 @@ public partial class MainViewModel : ObservableObject
 
     private void NotifySetupWizardChanged()
     {
+        OnPropertyChanged(nameof(IsRunningAsAdministrator));
+        OnPropertyChanged(nameof(AdminDependencyStatus));
+        OnPropertyChanged(nameof(ShouldShowRestartAsAdministrator));
         OnPropertyChanged(nameof(IsWindowsSandboxAvailable));
         OnPropertyChanged(nameof(SandboxDependencyStatus));
         OnPropertyChanged(nameof(ToolDependencyStatus));
@@ -5996,6 +6085,54 @@ public partial class MainViewModel : ObservableObject
         {
             return null;
         }
+    }
+
+    private static bool IsCurrentProcessElevated()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ResolveCurrentExecutablePath()
+    {
+        if (!string.IsNullOrWhiteSpace(Environment.ProcessPath))
+        {
+            return Environment.ProcessPath;
+        }
+
+        try
+        {
+            return Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string QuoteProcessArgument(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return "\"\"";
+        }
+
+        return value.Any(char.IsWhiteSpace) || value.Contains('"', StringComparison.Ordinal)
+            ? $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
+            : value;
     }
 
     private string BuildDefaultProfileName()

@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.25] - 2026-05-24
+
+### Changed
+- The Start setup wizard now shows whether the app is running as administrator, so Sandbox Proof readiness is explicit instead of assumed.
+- Added a one-click restart-as-administrator action for packaging workstations where Sandbox Proof or Windows feature management needs elevation.
+
 ## [3.0.24] - 2026-05-24
 
 ### Changed

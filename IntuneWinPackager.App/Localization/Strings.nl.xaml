@@ -99,6 +99,7 @@
     <sys:String x:Key="Ui.SetupWizard.Description">Bereid deze pc voor op schone packaging voordat je een installer selecteert.</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Summary">Readiness</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Refresh">Status verversen</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.RestartAdmin">Herstart als admin</sys:String>
     <sys:String x:Key="Ui.SetupWizard.GoPackaging">Open Packaging</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Step1.Title">1. Sandbox activeren</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Step1.Description">Windows Sandbox wordt gebruikt om installatie- en detectiegedrag op een schone machine te bewijzen.</sys:String>
@@ -254,12 +255,16 @@
     <sys:String x:Key="Vm.Readiness.DetectionRule">Detectieregel</sys:String>
     <sys:String x:Key="Vm.Readiness.SmartStaging">Slimme staging</sys:String>
     <sys:String x:Key="Vm.Readiness.Ready">Klaar</sys:String>
+    <sys:String x:Key="Vm.Readiness.Recommended">Aanbevolen</sys:String>
     <sys:String x:Key="Vm.Readiness.Missing">Ontbreekt</sys:String>
     <sys:String x:Key="Vm.Readiness.Configured">Geconfigureerd</sys:String>
     <sys:String x:Key="Vm.Readiness.Enabled">Ingeschakeld</sys:String>
     <sys:String x:Key="Vm.Readiness.Disabled">Uitgeschakeld</sys:String>
 
     <sys:String x:Key="Vm.SetupWizard.Sandbox.Label">Windows Sandbox</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Admin.Label">Administrator</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Admin.Ready">De app draait elevated. Sandbox Proof kan hostcontroles en cleanup betrouwbaarder uitvoeren.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Admin.Missing">Aanbevolen: herstart de app als administrator voordat je Sandbox Proof draait of Windows-features activeert.</sys:String>
     <sys:String x:Key="Vm.SetupWizard.Tool.Label">IntuneWinAppUtil</sys:String>
     <sys:String x:Key="Vm.SetupWizard.Workspace.Label">Werkmap</sys:String>
     <sys:String x:Key="Vm.SetupWizard.Sandbox.Ready">Windows Sandbox is beschikbaar.</sys:String>
@@ -402,6 +407,11 @@
     <sys:String x:Key="Vm.Status.SandboxEnableStartedTitle">Sandbox-activatie gestart</sys:String>
     <sys:String x:Key="Vm.Status.SandboxEnableStartedMessage">Keur het verhoogde PowerShell-venster goed. Herstart Windows als de feature daarom vraagt.</sys:String>
     <sys:String x:Key="Vm.Status.SandboxEnableFailedTitle">Sandbox-activatie mislukt</sys:String>
+    <sys:String x:Key="Vm.Status.AdminReadyTitle">Administratormodus</sys:String>
+    <sys:String x:Key="Vm.Status.AdminReadyMessage">De app draait al als administrator.</sys:String>
+    <sys:String x:Key="Vm.Status.AdminRestartStartedTitle">Herstart als administrator</sys:String>
+    <sys:String x:Key="Vm.Status.AdminRestartStartedMessage">Keur de Windows-melding goed om de app elevated te heropenen.</sys:String>
+    <sys:String x:Key="Vm.Status.AdminRestartFailedTitle">Admin-herstart mislukt</sys:String>
     <sys:String x:Key="Vm.Status.SetupWizardRefreshedTitle">Setup ververst</sys:String>
     <sys:String x:Key="Vm.Status.SetupWizardRefreshedMessage">Dependency- en werkmapstatus is ververst.</sys:String>
     <sys:String x:Key="Vm.Status.InstallErrorTitle">Installatiefout</sys:String>

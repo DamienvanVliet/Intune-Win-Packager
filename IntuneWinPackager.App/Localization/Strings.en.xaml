@@ -99,6 +99,7 @@
     <sys:String x:Key="Ui.SetupWizard.Description">Prepare this PC for clean packaging before selecting an installer.</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Summary">Readiness</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Refresh">Refresh Status</sys:String>
+    <sys:String x:Key="Ui.SetupWizard.RestartAdmin">Restart as Admin</sys:String>
     <sys:String x:Key="Ui.SetupWizard.GoPackaging">Open Packaging</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Step1.Title">1. Activate Windows Sandbox</sys:String>
     <sys:String x:Key="Ui.SetupWizard.Step1.Description">Windows Sandbox is used to prove install and detection behavior on a clean machine.</sys:String>
@@ -254,12 +255,16 @@
     <sys:String x:Key="Vm.Readiness.DetectionRule">Detection rule</sys:String>
     <sys:String x:Key="Vm.Readiness.SmartStaging">Smart staging</sys:String>
     <sys:String x:Key="Vm.Readiness.Ready">Ready</sys:String>
+    <sys:String x:Key="Vm.Readiness.Recommended">Recommended</sys:String>
     <sys:String x:Key="Vm.Readiness.Missing">Missing</sys:String>
     <sys:String x:Key="Vm.Readiness.Configured">Configured</sys:String>
     <sys:String x:Key="Vm.Readiness.Enabled">Enabled</sys:String>
     <sys:String x:Key="Vm.Readiness.Disabled">Disabled</sys:String>
 
     <sys:String x:Key="Vm.SetupWizard.Sandbox.Label">Windows Sandbox</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Admin.Label">Administrator</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Admin.Ready">The app is running elevated. Sandbox Proof can perform host checks and cleanup more reliably.</sys:String>
+    <sys:String x:Key="Vm.SetupWizard.Admin.Missing">Recommended: restart the app as administrator before running Sandbox Proof or enabling Windows features.</sys:String>
     <sys:String x:Key="Vm.SetupWizard.Tool.Label">IntuneWinAppUtil</sys:String>
     <sys:String x:Key="Vm.SetupWizard.Workspace.Label">Workspace</sys:String>
     <sys:String x:Key="Vm.SetupWizard.Sandbox.Ready">Windows Sandbox is available.</sys:String>
@@ -394,6 +399,11 @@
     <sys:String x:Key="Vm.Status.SandboxEnableStartedTitle">Sandbox Activation Started</sys:String>
     <sys:String x:Key="Vm.Status.SandboxEnableStartedMessage">Approve the elevated PowerShell window. Restart Windows if the feature asks for it.</sys:String>
     <sys:String x:Key="Vm.Status.SandboxEnableFailedTitle">Sandbox Activation Failed</sys:String>
+    <sys:String x:Key="Vm.Status.AdminReadyTitle">Administrator Mode</sys:String>
+    <sys:String x:Key="Vm.Status.AdminReadyMessage">The app is already running as administrator.</sys:String>
+    <sys:String x:Key="Vm.Status.AdminRestartStartedTitle">Restarting as Administrator</sys:String>
+    <sys:String x:Key="Vm.Status.AdminRestartStartedMessage">Approve the Windows prompt to reopen the app elevated.</sys:String>
+    <sys:String x:Key="Vm.Status.AdminRestartFailedTitle">Admin Restart Failed</sys:String>
     <sys:String x:Key="Vm.Status.SetupWizardRefreshedTitle">Setup Refreshed</sys:String>
     <sys:String x:Key="Vm.Status.SetupWizardRefreshedMessage">Dependency and workspace status was refreshed.</sys:String>
     <sys:String x:Key="Vm.Status.InstallErrorTitle">Install Error</sys:String>

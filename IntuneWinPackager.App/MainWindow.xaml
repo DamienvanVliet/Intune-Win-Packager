@@ -176,10 +176,20 @@
                                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                                    TextWrapping="Wrap" />
                                     </Border>
+                                    <TextBlock Text="{Binding AdminDependencyStatus}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,10" />
                                     <WrapPanel>
                                         <Button Content="{DynamicResource Ui.SetupWizard.Refresh}"
                                                 Style="{StaticResource SecondaryButtonStyle}"
                                                 Command="{Binding RefreshSetupWizardCommand}" />
+                                        <Button Content="{DynamicResource Ui.SetupWizard.RestartAdmin}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding RestartAsAdministratorCommand}"
+                                                Visibility="{Binding ShouldShowRestartAsAdministrator, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                         <Button Content="{DynamicResource Ui.SetupWizard.GoPackaging}"
                                                 Style="{StaticResource PrimaryButtonStyle}"
                                                 Margin="8,0,0,0"
