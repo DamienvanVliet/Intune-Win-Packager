@@ -53,18 +53,18 @@ public sealed class InstallerCommandService : IInstallerCommandService
             Name = "Most Common (Very Silent)",
             Description = "First fallback for many setup-style installers.",
             InstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
-            UninstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+            UninstallArguments = "<auto-detect-uninstall>",
             RequiresVerification = true,
-            Guidance = "Fallback profile. Use this when the default command does not work. Verify with one local test."
+            Guidance = "Fallback profile. Use this when the default command does not work. Sandbox Proof should discover the registered uninstaller after install."
         },
         new()
         {
             Name = "Alternative (/S Silent)",
             Description = "Use when the installer supports /S style silent mode.",
             InstallArguments = "/S",
-            UninstallArguments = "/S",
+            UninstallArguments = "<auto-detect-uninstall>",
             RequiresVerification = true,
-            Guidance = "Fallback profile for /S installers. Verify with one local test."
+            Guidance = "Fallback profile for /S installers. Sandbox Proof should discover the registered uninstaller after install."
         },
         new()
         {
@@ -110,20 +110,20 @@ public sealed class InstallerCommandService : IInstallerCommandService
         {
             Framework = ExeInstallerFramework.VendorSpecific,
             Name = "Foxit PDF Reader EXE",
-            InstallArguments = "/verysilent",
+            InstallArguments = "/SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
             UninstallArguments = "<auto-detect-uninstall>",
             DetectionMarkers = ["foxitpdfreader", "foxit pdf reader", "foxit setup bootstrapper", "foxit software inc"],
-            Guidance = "Foxit PDF Reader vendor profile detected from file metadata/signature. Official Foxit deployment documentation supports /verysilent for EXE installs; Sandbox Proof will discover and validate the registered uninstaller after install.",
-            BaseConfidenceScore = 76
+            Guidance = "Foxit PDF Reader EXE detected. Prefer the official Foxit Enterprise MSI for Intune packaging; Foxit EXE builds can hang in unattended Sandbox Proof. If this EXE is used, require a successful Sandbox Proof before packaging.",
+            BaseConfidenceScore = 58
         },
         new()
         {
             Framework = ExeInstallerFramework.InnoSetup,
             Name = "EXE - Inno Setup",
             InstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
-            UninstallArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+            UninstallArguments = "<auto-detect-uninstall>",
             DetectionMarkers = ["inno setup", "innounp", "isxdl"],
-            Guidance = "Inno Setup framework detected from installer metadata/signatures.",
+            Guidance = "Inno Setup framework detected from installer metadata/signatures. Sandbox Proof should discover the registered uninstaller after install.",
             BaseConfidenceScore = 84
         },
         new()
@@ -131,9 +131,9 @@ public sealed class InstallerCommandService : IInstallerCommandService
             Framework = ExeInstallerFramework.Nsis,
             Name = "EXE - NSIS",
             InstallArguments = "/S",
-            UninstallArguments = "/S",
+            UninstallArguments = "<auto-detect-uninstall>",
             DetectionMarkers = ["nullsoft", "nsis error", "software\\nsis"],
-            Guidance = "NSIS framework detected from installer metadata/signatures.",
+            Guidance = "NSIS framework detected from installer metadata/signatures. Sandbox Proof should discover the registered uninstaller after install.",
             BaseConfidenceScore = 80
         },
         new()
@@ -161,9 +161,9 @@ public sealed class InstallerCommandService : IInstallerCommandService
             Framework = ExeInstallerFramework.Squirrel,
             Name = "EXE - Squirrel",
             InstallArguments = "--silent",
-            UninstallArguments = "--uninstall --silent",
+            UninstallArguments = "<auto-detect-uninstall>",
             DetectionMarkers = ["squirrel", "--squirrel-install", "--squirrel-uninstall", "update.exe --processstart"],
-            Guidance = "Squirrel-style updater/installer markers detected. Verify vendor behavior carefully.",
+            Guidance = "Squirrel-style updater/installer markers detected. Sandbox Proof should use the registered QuietUninstallString, usually Update.exe --uninstall -s, instead of replaying the installer.",
             BaseConfidenceScore = 62
         },
         new()

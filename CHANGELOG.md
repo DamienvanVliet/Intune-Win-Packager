@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.0.26] - 2026-05-24
+
+### Fixed
+- Sandbox Proof now auto-discovers validated uninstall commands for NSIS, Inno, and Squirrel EXE installers instead of replaying unsafe installer uninstall arguments.
+- Squirrel apps such as GitHub Desktop now use the registered `QuietUninstallString` (`Update.exe --uninstall -s`) during proof validation.
+- Sandbox Proof command execution is more reliable for SYSTEM/User contexts and avoids stalled output reads during long-running installers.
+
+### Changed
+- Detection candidate output is stricter: helper apps, update agents, package cache files, service/updater footprints, and non-EXE shortcuts are filtered out.
+- MSI/ProductCode-backed installs now keep the strongest MSI/registry/shortcut evidence and suppress weaker folder/tool candidates.
+- Foxit PDF Reader EXE suggestions are marked lower confidence with guidance to prefer the official Enterprise MSI for Intune packaging.
+
 ## [3.0.25] - 2026-05-24
 
 ### Changed

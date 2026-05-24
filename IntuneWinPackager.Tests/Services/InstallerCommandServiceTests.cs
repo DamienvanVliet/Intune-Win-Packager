@@ -39,9 +39,9 @@ public class InstallerCommandServiceTests
             preset: preset);
 
         Assert.Equal("\"AcmeSetup.exe\" /S", suggestion.InstallCommand);
-        Assert.Equal("\"AcmeSetup.exe\" /S", suggestion.UninstallCommand);
-        Assert.False(suggestion.SuggestedRules.RequireSilentSwitchReview);
-        Assert.True(suggestion.SuggestedRules.SilentSwitchesVerified);
+        Assert.Equal("\"AcmeSetup.exe\" <auto-detect-uninstall>", suggestion.UninstallCommand);
+        Assert.True(suggestion.SuggestedRules.RequireSilentSwitchReview);
+        Assert.False(suggestion.SuggestedRules.SilentSwitchesVerified);
     }
 
     [Fact]
@@ -81,7 +81,9 @@ public class InstallerCommandServiceTests
             Assert.DoesNotContain("/DisableInternet", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
             Assert.Equal("\"FoxitPDFReader20253_L10N_Setup_x64.exe\" <auto-detect-uninstall>", suggestion.UninstallCommand);
             Assert.Equal("Foxit PDF Reader EXE", suggestion.SuggestedRules.AppliedTemplateName);
+            Assert.Contains("Enterprise MSI", suggestion.SuggestedRules.TemplateGuidance, StringComparison.OrdinalIgnoreCase);
             Assert.True(suggestion.SuggestedRules.RequireSilentSwitchReview);
+            Assert.Equal(SuggestionConfidenceLevel.Low, suggestion.ConfidenceLevel);
         }
         finally
         {
@@ -132,7 +134,9 @@ public class InstallerCommandServiceTests
                 installerType: InstallerType.Exe);
 
             Assert.Contains("--silent", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("\"ClaudeSetup.exe\" <auto-detect-uninstall>", suggestion.UninstallCommand);
             Assert.Equal(IntuneInstallContext.User, suggestion.SuggestedRules.InstallContext);
+            Assert.True(suggestion.SuggestedRules.RequireSilentSwitchReview);
         }
         finally
         {

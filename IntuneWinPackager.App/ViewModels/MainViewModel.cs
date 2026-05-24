@@ -2687,6 +2687,7 @@ public partial class MainViewModel : ObservableObject
         return _sandboxProofService.StartAsync(new SandboxProofRequest
         {
             InstallerType = InstallerType,
+            InstallContext = InstallContext,
             SourceFolder = SourceFolder,
             SetupFilePath = SetupFilePath,
             InstallCommand = InstallCommand,

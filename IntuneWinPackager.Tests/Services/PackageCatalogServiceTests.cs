@@ -715,6 +715,7 @@ public sealed class PackageCatalogServiceTests
         Assert.Equal(InstallerType.Exe, variant.InstallerType);
         Assert.Contains("/AllUsers", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/NoRestart", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<auto-detect-uninstall>", variant.SuggestedUninstallCommand, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(IntuneDetectionRuleType.Registry, variant.DetectionRule.RuleType);
         Assert.Equal(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Contoso Exe App", variant.DetectionRule.Registry.KeyPath);
         Assert.Equal("DisplayVersion", variant.DetectionRule.Registry.ValueName);
@@ -824,6 +825,7 @@ public sealed class PackageCatalogServiceTests
         Assert.Contains("/SUPPRESSMSGBOXES", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/NORESTART", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/mergetasks=!runapp", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<auto-detect-uninstall>", variant.SuggestedUninstallCommand, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -913,12 +915,12 @@ public sealed class PackageCatalogServiceTests
         Assert.NotNull(details);
         var variant = Assert.Single(details!.InstallerVariants);
         Assert.Equal(InstallerType.Exe, variant.InstallerType);
-        Assert.Contains("/install", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("/quiet", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/SP-", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/VERYSILENT", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/SUPPRESSMSGBOXES", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/norestart", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("/VERYSILENT", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("/uninstall", variant.SuggestedUninstallCommand, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("/quiet", variant.SuggestedUninstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<auto-detect-uninstall>", variant.SuggestedUninstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.True(variant.ConfidenceScore < 60);
         Assert.Equal(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Foxit Reader_is1", variant.DetectionRule.Registry.KeyPath);
     }
 

@@ -52,12 +52,14 @@ public sealed class SandboxProofServiceTests
             Assert.DoesNotContain(setupPath, uninstallCommand, StringComparison.OrdinalIgnoreCase);
             Assert.True(input.RootElement.GetProperty("precheckDetectionRuleAvailable").GetBoolean());
             Assert.Equal(1, input.RootElement.GetProperty("precheckAdditionalDetectionRuleCount").GetInt32());
+            Assert.Equal("System", input.RootElement.GetProperty("installContext").GetString());
             Assert.Contains("existing File detection", input.RootElement.GetProperty("precheckSummary").GetString(), StringComparison.OrdinalIgnoreCase);
 
             var wsb = await File.ReadAllTextAsync(session.WsbPath);
             Assert.Contains("<SandboxFolder>C:\\IwpSandboxProof</SandboxFolder>", wsb, StringComparison.Ordinal);
             Assert.Contains("<SandboxFolder>C:\\IwpSandboxSource</SandboxFolder>", wsb, StringComparison.Ordinal);
             Assert.Contains("<ReadOnly>true</ReadOnly>", wsb, StringComparison.Ordinal);
+            Assert.Contains("shutdown.exe /s /t 0 /f", wsb, StringComparison.Ordinal);
 
             var script = await File.ReadAllTextAsync(session.RunnerScriptPath);
             Assert.Contains("Get-UninstallSnapshot", script, StringComparison.Ordinal);
@@ -68,6 +70,7 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("Package Cache", script, StringComparison.Ordinal);
             Assert.Contains("targetName -match", script, StringComparison.Ordinal);
             Assert.Contains("New MSI ProductCode registered after install", script, StringComparison.Ordinal);
+            Assert.Contains("$hasMsiProductCandidates", script, StringComparison.Ordinal);
             Assert.Contains("Detection candidates", script, StringComparison.Ordinal);
             Assert.Contains("Candidate passed sandbox two-phase validation", script, StringComparison.Ordinal);
             Assert.Contains("Candidate passed sandbox install, detection, and uninstall validation", script, StringComparison.Ordinal);
@@ -82,17 +85,51 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("ScheduledTaskSystem", script, StringComparison.Ordinal);
             Assert.Contains("Get-ScheduledTaskInfo -TaskName $taskName", script, StringComparison.Ordinal);
             Assert.Contains("$state -eq 'Running'", script, StringComparison.Ordinal);
+            Assert.Contains("Executing ${Phase} command directly because Intune install context is User.", script, StringComparison.Ordinal);
+            Assert.Contains("Install context: $($Result.request.installContext)", script, StringComparison.Ordinal);
             Assert.Contains("scheduled task finished without writing exit code file", script, StringComparison.Ordinal);
             Assert.Contains("Resolve-ProofUninstallCommand", script, StringComparison.Ordinal);
             Assert.Contains("uninstallResolution", script, StringComparison.Ordinal);
+            Assert.Contains("$looksNsis", script, StringComparison.Ordinal);
+            Assert.Contains("$trimmed = \"$trimmed /S\"", script, StringComparison.Ordinal);
+            Assert.Contains("$looksSquirrel", script, StringComparison.Ordinal);
+            Assert.Contains("$trimmed = \"$trimmed --uninstall\"", script, StringComparison.Ordinal);
+            Assert.Contains("$trimmed = \"$trimmed -s\"", script, StringComparison.Ordinal);
             Assert.Contains("$blockingFailureKind = if ($failureKind -eq 'LaunchValidation')", script, StringComparison.Ordinal);
             Assert.Contains("failureKind", script, StringComparison.Ordinal);
             Assert.Contains("Invoke-LaunchValidation", script, StringComparison.Ordinal);
             Assert.Contains("Measure-WhiteWindowRatio", script, StringComparison.Ordinal);
             Assert.Contains("$brightness -ge 185", script, StringComparison.Ordinal);
             Assert.Contains("$spread -le 70", script, StringComparison.Ordinal);
+            Assert.Contains("$whiteRatio -lt 0.985", script, StringComparison.Ordinal);
             Assert.Contains("blank/light window", script, StringComparison.Ordinal);
+            Assert.Contains("activate|activation", script, StringComparison.Ordinal);
+            Assert.Contains("$sourceName", script, StringComparison.Ordinal);
+            Assert.Contains("Test-ExecutablePathLooksAuxiliary", script, StringComparison.Ordinal);
+            Assert.Contains("private_browsing", script, StringComparison.Ordinal);
+            Assert.Contains("default-browser-agent", script, StringComparison.Ordinal);
+            Assert.Contains("desktop-launcher", script, StringComparison.Ordinal);
+            Assert.Contains("pingsender", script, StringComparison.Ordinal);
+            Assert.Contains("^gup$", script, StringComparison.Ordinal);
+            Assert.Contains("^chrmstp$", script, StringComparison.Ordinal);
+            Assert.Contains("^squirrel$", script, StringComparison.Ordinal);
+            Assert.Contains("^armsvc$", script, StringComparison.Ordinal);
+            Assert.Contains("^adobearm$", script, StringComparison.Ordinal);
+            Assert.Contains("elevated_tracing_service", script, StringComparison.Ordinal);
+            Assert.Contains("Common Files\\\\Adobe\\\\ARM", script, StringComparison.Ordinal);
+            Assert.Contains("resources\\\\app\\\\git", script, StringComparison.Ordinal);
+            Assert.Contains("\\\\(update|updates|updater|installer|maintenance|temp|cache)\\\\", script, StringComparison.Ordinal);
+            Assert.Contains("maintenance\\s+service", script, StringComparison.Ordinal);
+            Assert.Contains("Test-DetectionFolderLooksAuxiliary", script, StringComparison.Ordinal);
+            Assert.Contains("^C:\\\\ProgramData\\\\", script, StringComparison.Ordinal);
+            Assert.Contains("ProgramData\\\\[^\\\\]+-[0-9a-f]{8}", script, StringComparison.Ordinal);
+            Assert.Contains("$skipFolderFallback", script, StringComparison.Ordinal);
+            Assert.Contains("Program Files \\(x86\\)\\\\Google", script, StringComparison.Ordinal);
+            Assert.Contains("GetExtension($fileTarget.fullName) -ine '.exe'", script, StringComparison.Ordinal);
+            Assert.Contains("$candidates[$existingIndex] = $candidate", script, StringComparison.Ordinal);
             Assert.Contains("launch-window.png", script, StringComparison.Ordinal);
+            Assert.Contains("$handle = [IntPtr]::Zero", script, StringComparison.Ordinal);
+            Assert.Contains("$rect = $null", script, StringComparison.Ordinal);
             Assert.Contains("Invoke-WeintekSoftwareRenderWorkaround", script, StringComparison.Ordinal);
             Assert.Contains("DisplaySetting.exe", script, StringComparison.Ordinal);
             Assert.Contains("Software render", script, StringComparison.Ordinal);
@@ -104,7 +141,48 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("schemaVersion = 2", script, StringComparison.Ordinal);
             Assert.Contains("GreaterThanOrEqual", script, StringComparison.Ordinal);
             Assert.Contains("result.json", script, StringComparison.Ordinal);
-            Assert.Contains("/d /s /c call $Command", script, StringComparison.Ordinal);
+            Assert.Contains("New-ProofCommandBatch", script, StringComparison.Ordinal);
+            Assert.Contains("system-runner.ps1", script, StringComparison.Ordinal);
+            Assert.Contains("timed out inside SYSTEM runner; terminating process tree", script, StringComparison.Ordinal);
+            Assert.DoesNotContain("ReadToEndAsync", script, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDeleteDirectory(session.RunDirectory);
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_WithUserInstallContext_WritesUserProofMode()
+    {
+        var tempRoot = CreateTempDirectory();
+        var setupPath = Path.Combine(tempRoot, "UserSetup.exe");
+        await File.WriteAllTextAsync(setupPath, "not a real exe");
+
+        var sut = new SandboxProofService();
+
+        var session = await sut.StartAsync(new SandboxProofRequest
+        {
+            InstallerType = InstallerType.Exe,
+            InstallContext = IntuneInstallContext.User,
+            SourceFolder = tempRoot,
+            SetupFilePath = setupPath,
+            InstallCommand = $"\"{setupPath}\" /quiet",
+            UninstallCommand = $"\"{setupPath}\" /uninstall /quiet",
+            DetectionRule = BuildFileDetectionRule(),
+            LaunchSandbox = false
+        });
+
+        try
+        {
+            Assert.True(session.Success);
+            var input = await ReadInputAsync(session.InputPath);
+            var script = await File.ReadAllTextAsync(session.RunnerScriptPath);
+
+            Assert.Equal("User", input.RootElement.GetProperty("installContext").GetString());
+            Assert.Contains("$executionMode = if ([string]$inputData.installContext -eq 'User')", script, StringComparison.Ordinal);
+            Assert.Contains("Executing ${Phase} command directly because Intune install context is User.", script, StringComparison.Ordinal);
         }
         finally
         {

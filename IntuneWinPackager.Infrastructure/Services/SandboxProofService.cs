@@ -73,6 +73,7 @@ public sealed class SandboxProofService : ISandboxProofService
         var proofInput = new SandboxProofInput
         {
             InstallerType = request.InstallerType,
+            InstallContext = request.InstallContext,
             HostSetupFilePath = setupPath,
             HostSourceFolder = sourceFolder,
             SandboxSetupFilePath = setupSandboxPath,
@@ -189,8 +190,19 @@ public sealed class SandboxProofService : ISandboxProofService
 
         try
         {
-            return Process.GetProcesses()
+            var processes = Process.GetProcesses()
                 .Where(process => processNames.Contains(process.ProcessName))
+                .ToArray();
+            var hasRunningSandboxVm = processes.Any(process =>
+                process.ProcessName.Equals("vmmemWindowsSandbox", StringComparison.OrdinalIgnoreCase) ||
+                process.ProcessName.Equals("WindowsSandbox", StringComparison.OrdinalIgnoreCase) ||
+                process.ProcessName.Equals("WindowsSandboxClient", StringComparison.OrdinalIgnoreCase));
+            if (!hasRunningSandboxVm)
+            {
+                return Array.Empty<string>();
+            }
+
+            return processes
                 .Select(process => $"{process.ProcessName} ({process.Id})")
                 .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -944,7 +956,7 @@ public sealed class SandboxProofService : ISandboxProofService
 
     private static string BuildWsbConfiguration(string runDirectory, string sourceFolder)
     {
-        var command = @"powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ""C:\IwpSandboxProof\run-proof.ps1""";
+        var command = @"powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ""& 'C:\IwpSandboxProof\run-proof.ps1'; Start-Sleep -Seconds 2; shutdown.exe /s /t 0 /f""";
 
         var settings = new XmlWriterSettings
         {
@@ -1433,7 +1445,7 @@ function Test-ProofDetection {
 }
 
 function Invoke-ProofCommand {
-    param([string]$Command, [string]$WorkingDirectory, [int]$TimeoutMinutes, [string]$Phase = 'command')
+    param([string]$Command, [string]$WorkingDirectory, [int]$TimeoutMinutes, [string]$Phase = 'command', [string]$ExecutionMode = 'System')
     if ([string]::IsNullOrWhiteSpace($Command)) {
         return [pscustomobject]@{ exitCode = -1; timedOut = $false; stdout = ''; stderr = 'No command was provided.' }
     }
@@ -1447,6 +1459,11 @@ function Invoke-ProofCommand {
     $stderr = Join-Path $LogsPath "$safePhase-stderr.txt"
     Write-ProofLog "Running ${Phase} command: $Command"
     Write-ProofLog "Working directory: $WorkingDirectory"
+
+    if ($ExecutionMode -eq 'User') {
+        Write-ProofLog "Executing ${Phase} command directly because Intune install context is User."
+        return Invoke-ProofCommandDirect -Command $Command -WorkingDirectory $WorkingDirectory -TimeoutMinutes $TimeoutMinutes -Phase $Phase -StdoutPath $stdout -StderrPath $stderr
+    }
 
     try {
         return Invoke-ProofCommandAsSystem -Command $Command -WorkingDirectory $WorkingDirectory -TimeoutMinutes $TimeoutMinutes -Phase $safePhase -StdoutPath $stdout -StderrPath $stderr
@@ -1468,24 +1485,49 @@ function Invoke-ProofCommandAsSystem {
     )
 
     $exitCodePath = Join-Path $LogsPath "$Phase-exitcode.txt"
-    $cmdPath = Join-Path $LogsPath "$Phase-command.cmd"
+    $cmdPath = New-ProofCommandBatch -Command $Command -WorkingDirectory $WorkingDirectory -Phase $Phase -StdoutPath $StdoutPath -StderrPath $StderrPath -ExitCodePath $exitCodePath
+    $runnerPath = Join-Path $LogsPath "$Phase-system-runner.ps1"
     $taskName = "IwpSandboxProof-$Phase-$([guid]::NewGuid().ToString('N'))"
-    $escapedWorkingDirectory = $WorkingDirectory.Replace('"', '""')
-    $escapedStdout = $StdoutPath.Replace('"', '""')
-    $escapedStderr = $StderrPath.Replace('"', '""')
-    $escapedExitCode = $exitCodePath.Replace('"', '""')
-
-    $cmdLines = @(
-        '@echo off',
-        "cd /d `"$escapedWorkingDirectory`"",
-        "call $Command > `"$escapedStdout`" 2> `"$escapedStderr`"",
-        "echo %ERRORLEVEL%> `"$escapedExitCode`"",
-        "exit /b %ERRORLEVEL%"
+    $timeoutMs = [Math]::Max(5, $TimeoutMinutes) * 60 * 1000
+    $logPath = Join-Path $LogsPath 'proof.log'
+    $runnerLines = @(
+        '$ErrorActionPreference = ''Continue''',
+        '$ProgressPreference = ''SilentlyContinue''',
+        '$cmdPath = ' + (ConvertTo-PowerShellLiteral $cmdPath),
+        '$exitCodePath = ' + (ConvertTo-PowerShellLiteral $exitCodePath),
+        '$logPath = ' + (ConvertTo-PowerShellLiteral $logPath),
+        '$timeoutMs = ' + $timeoutMs.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+        '$phase = ' + (ConvertTo-PowerShellLiteral $Phase),
+        'function Add-ProofLine {',
+        '    param([string]$Message)',
+        '    $line = "[{0}] {1}" -f (Get-Date -Format ''yyyy-MM-dd HH:mm:ss''), $Message',
+        '    Add-Content -LiteralPath $logPath -Value $line',
+        '}',
+        'try {',
+        '    $process = Start-Process -FilePath ''cmd.exe'' -ArgumentList (''/d /c "'' + $cmdPath + ''"'') -WindowStyle Hidden -PassThru',
+        '    $exited = $process.WaitForExit($timeoutMs)',
+        '    if (-not $exited) {',
+        '        Add-ProofLine "$phase command timed out inside SYSTEM runner; terminating process tree."',
+        '        try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }',
+        '        try { $process.WaitForExit(5000) | Out-Null } catch {}',
+        '        Set-Content -LiteralPath $exitCodePath -Value ''-1'' -Encoding ASCII',
+        '        exit -1',
+        '    }',
+        '    if (-not (Test-Path -LiteralPath $exitCodePath)) {',
+        '        Set-Content -LiteralPath $exitCodePath -Value ([string]$process.ExitCode) -Encoding ASCII',
+        '    }',
+        '    exit $process.ExitCode',
+        '}',
+        'catch {',
+        '    Add-ProofLine "$phase SYSTEM runner failed: $($_.Exception.Message)"',
+        '    Set-Content -LiteralPath $exitCodePath -Value ''1'' -Encoding ASCII',
+        '    exit 1',
+        '}'
     )
-    Set-Content -LiteralPath $cmdPath -Value $cmdLines -Encoding ASCII
+    Set-Content -LiteralPath $runnerPath -Value $runnerLines -Encoding UTF8
 
     Write-ProofLog "Executing ${Phase} command as SYSTEM via scheduled task $taskName."
-    $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/d /c `"$cmdPath`""
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$runnerPath`""
     $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
     Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
 
@@ -1494,7 +1536,7 @@ function Invoke-ProofCommandAsSystem {
     try {
         $startedAt = Get-Date
         Start-ScheduledTask -TaskName $taskName
-        $deadline = (Get-Date).AddMilliseconds([Math]::Max(5, $TimeoutMinutes) * 60 * 1000)
+        $deadline = (Get-Date).AddMilliseconds($timeoutMs + 30000)
         do {
             Start-Sleep -Milliseconds 500
             if (Test-Path -LiteralPath $exitCodePath) { break }
@@ -1562,6 +1604,42 @@ function Invoke-ProofCommandAsSystem {
     }
 }
 
+function ConvertTo-PowerShellLiteral {
+    param([string]$Value)
+    if ($null -eq $Value) { return "''" }
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
+function New-ProofCommandBatch {
+    param(
+        [string]$Command,
+        [string]$WorkingDirectory,
+        [string]$Phase,
+        [string]$StdoutPath,
+        [string]$StderrPath,
+        [string]$ExitCodePath
+    )
+
+    $cmdPath = Join-Path $LogsPath "$Phase-command.cmd"
+    $escapedWorkingDirectory = $WorkingDirectory.Replace('"', '""')
+    $escapedStdout = $StdoutPath.Replace('"', '""')
+    $escapedStderr = $StderrPath.Replace('"', '""')
+    $escapedExitCode = $ExitCodePath.Replace('"', '""')
+
+    $cmdLines = @(
+        '@echo off',
+        'setlocal EnableExtensions EnableDelayedExpansion',
+        "cd /d `"$escapedWorkingDirectory`"",
+        "call $Command > `"$escapedStdout`" 2> `"$escapedStderr`"",
+        'set "_iwpExitCode=!ERRORLEVEL!"',
+        'if "!_iwpExitCode!"=="" set "_iwpExitCode=1"',
+        "echo !_iwpExitCode!> `"$escapedExitCode`"",
+        'exit /b !_iwpExitCode!'
+    )
+    Set-Content -LiteralPath $cmdPath -Value $cmdLines -Encoding ASCII
+    return $cmdPath
+}
+
 function Invoke-ProofCommandDirect {
     param(
         [string]$Command,
@@ -1572,35 +1650,40 @@ function Invoke-ProofCommandDirect {
         [string]$StderrPath
     )
 
+    $safePhase = if ([string]::IsNullOrWhiteSpace($Phase)) { 'command' } else { ($Phase -replace '[^a-zA-Z0-9._-]+', '-') }
+    $exitCodePath = Join-Path $LogsPath "$safePhase-exitcode.txt"
+    $cmdPath = New-ProofCommandBatch -Command $Command -WorkingDirectory $WorkingDirectory -Phase $safePhase -StdoutPath $StdoutPath -StderrPath $StderrPath -ExitCodePath $exitCodePath
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'cmd.exe'
-    $psi.Arguments = "/d /s /c call $Command"
+    $psi.Arguments = "/d /c `"$cmdPath`""
     $psi.WorkingDirectory = $WorkingDirectory
     $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $psi
     [void]$process.Start()
 
-    $stdOutTask = $process.StandardOutput.ReadToEndAsync()
-    $stdErrTask = $process.StandardError.ReadToEndAsync()
     $timeoutMs = [Math]::Max(5, $TimeoutMinutes) * 60 * 1000
     $exited = $process.WaitForExit($timeoutMs)
     if (-not $exited) {
         Write-ProofLog "$Phase command timed out after $TimeoutMinutes minute(s); terminating process tree."
         try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }
+        try { $process.WaitForExit(5000) | Out-Null } catch {}
+        Set-Content -LiteralPath $exitCodePath -Value '-1' -Encoding ASCII
     }
 
-    $stdoutText = $stdOutTask.GetAwaiter().GetResult()
-    $stderrText = $stdErrTask.GetAwaiter().GetResult()
-    Set-Content -LiteralPath $StdoutPath -Value $stdoutText -Encoding UTF8
-    Set-Content -LiteralPath $StderrPath -Value $stderrText -Encoding UTF8
+    $stdoutText = if (Test-Path -LiteralPath $StdoutPath) { Get-Content -LiteralPath $StdoutPath -Raw } else { '' }
+    $stderrText = if (Test-Path -LiteralPath $StderrPath) { Get-Content -LiteralPath $StderrPath -Raw } else { '' }
+    $exitCodeText = if (Test-Path -LiteralPath $exitCodePath) { (Get-Content -LiteralPath $exitCodePath -Raw).Trim() } else { '' }
+    $exitCode = if ($exited) { $process.ExitCode } else { -1 }
+    $parsedExitCode = 0
+    if ([int]::TryParse($exitCodeText, [ref]$parsedExitCode)) {
+        $exitCode = $parsedExitCode
+    }
 
     return [pscustomobject]@{
         command = $Command
         executionMode = 'DirectUser'
-        exitCode = if ($exited) { $process.ExitCode } else { -1 }
+        exitCode = $exitCode
         timedOut = -not $exited
         stdout = $stdoutText
         stderr = $stderrText
@@ -2024,6 +2107,7 @@ function Test-UninstallEntryLooksLikeDependency {
     if ($displayName -match '(?i)visual\s+c\+\+.*runtime') { return $true }
     if ($displayName -match '(?i)microsoft\s+edge\s+webview2\s+runtime') { return $true }
     if ($displayName -match '(?i)microsoft\s+edge\s+update') { return $true }
+    if ($displayName -match '(?i)(maintenance\s+service|update\s+service|update\s+helper|auto\s*update|updater)') { return $true }
     if ($displayName -match '(?i)\.net\s+(desktop\s+)?runtime') { return $true }
     if ($displayName -match '(?i)windows\s+desktop\s+runtime') { return $true }
     if ($publisher -match '(?i)^microsoft' -and $displayName -match '(?i)(redistributable|runtime|webview2)') { return $true }
@@ -2063,6 +2147,23 @@ function Convert-ToSilentUninstallCommand {
     $publisher = [string]$Entry.publisher
     $looksInno = $trimmed -match '(?i)\\unins\d*\.exe\b'
     $looksFoxit = $displayName -match '(?i)foxit' -or $publisher -match '(?i)foxit' -or $trimmed -match '(?i)foxit'
+    $looksNsis = $trimmed -match '(?i)\\(uninstall\\helper|uninstall|uninst)\.exe\b' -or
+        (($displayName -match '(?i)(firefox|mozilla)' -or $publisher -match '(?i)mozilla' -or $trimmed -match '(?i)(firefox|mozilla)') -and $trimmed -match '(?i)\\helper\.exe\b')
+    $looksSquirrel = $trimmed -match '(?i)\\Update\.exe\b' -and
+        ($trimmed -match '(?i)--uninstall' -or $displayName -match '(?i)(github|squirrel|electron)' -or $publisher -match '(?i)(github|squirrel|electron)')
+    if ($looksSquirrel) {
+        if ($trimmed -notmatch '(?i)(^|\s)--uninstall(\s|$)') {
+            $trimmed = "$trimmed --uninstall"
+        }
+        if ($trimmed -notmatch '(?i)(^|\s)(-s|--silent|/s|/silent)(\s|$)') {
+            $trimmed = "$trimmed -s"
+        }
+    }
+
+    if ($looksNsis -and $trimmed -notmatch '(?i)(^|\s)/s(\s|$)') {
+        $trimmed = "$trimmed /S"
+    }
+
     if (($looksInno -or $looksFoxit) -and
         $trimmed -notmatch '(?i)(^|\s)/(verysilent|silent|quiet|s)(\s|$)') {
         $trimmed = "$trimmed /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
@@ -2125,6 +2226,7 @@ function Find-ExecutableDetectionTargets {
     foreach ($exe in @(Get-ChildItem -LiteralPath $folder -Filter '*.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 80)) {
         $target = Split-FileDetectionTarget -Target $exe.FullName
         if ($null -eq $target -or -not $target.isFile) { continue }
+        if (Test-ExecutablePathLooksAuxiliary -Path $target.fullName) { continue }
 
         $rank = 10
         if (-not [string]::IsNullOrWhiteSpace($target.version)) { $rank += 8 }
@@ -2133,7 +2235,7 @@ function Find-ExecutableDetectionTargets {
         if (Test-DetectionTextMatch -First $target.fileDescription -Second $DisplayName) { $rank += 18 }
         if (Test-DetectionTextMatch -First $target.companyName -Second $Publisher) { $rank += 16 }
         if (Test-DetectionTextMatch -First ([IO.Path]::GetFileNameWithoutExtension($target.name)) -Second $DisplayName) { $rank += 14 }
-        if ($target.name -match '(?i)(unins|uninstall|setup|installer|update|crash|helper|bootstrap|repair)') { $rank -= 25 }
+        if ($target.name -match '(?i)(unins|uninstall|setup|installer|update|updater|crash|helper|bootstrap|repair|activate|activation|licen[cs]e|register|registration|plugin|mailagent|reader_sl)') { $rank -= 40 }
 
         $relative = $target.fullName.Substring([Math]::Min($folder.Length, $target.fullName.Length)).TrimStart('\')
         $depth = if ([string]::IsNullOrWhiteSpace($relative)) { 0 } else { ($relative -split '\\').Count }
@@ -2148,6 +2250,32 @@ function Find-ExecutableDetectionTargets {
     return @($ranked |
         Sort-Object -Property @{ Expression = { $_.rank }; Descending = $true }, @{ Expression = { $_.depth }; Ascending = $true }, @{ Expression = { $_.fullName }; Ascending = $true } |
         Select-Object -First 5)
+}
+
+function Test-ExecutablePathLooksAuxiliary {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
+    $name = ''
+    try { $name = [IO.Path]::GetFileNameWithoutExtension($Path) } catch { $name = [string]$Path }
+    if ($Path -match '(?i)\\(update|updates|updater|installer|maintenance|temp|cache)\\') { return $true }
+    if ($Path -match '(?i)\\Common Files\\Adobe\\ARM\\') { return $true }
+    if ($Path -match '(?i)\\resources\\app\\git\\') { return $true }
+
+    return $name -match '(?i)(^unins|^uninstall|^setup|^installer|^gup$|^chrmstp$|^squirrel$|^armsvc$|^adobearm$|update|updater|crash|helper|bootstrap|repair|activate|activation|licen[cs]e|register|registration|plugin|mailagent|reader_sl|trackreview|previewhost|preview|thumbnail|private_browsing|default-browser-agent|desktop-launcher|pingsender|proxy|pwa_launcher|elevation_service|elevated_tracing_service|maintenanceservice)'
+}
+
+function Test-DetectionFolderLooksAuxiliary {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
+    $name = ''
+    try { $name = [IO.Path]::GetFileName($Path.TrimEnd('\')) } catch { $name = [string]$Path }
+
+    if ($name -match '(?i)(maintenance\s+service|update\s+service|update\s+helper|auto\s*update|updater|cache|logs?|temp)') { return $true }
+    if ($Path -match '(?i)^C:\\ProgramData\\') { return $true }
+    if ($Path -match '(?i)^C:\\ProgramData\\[^\\]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { return $true }
+    if ($Path -match '(?i)^C:\\Program Files \(x86\)\\Google$') { return $true }
+
+    return $false
 }
 
 function Get-DetectionCandidates {
@@ -2170,16 +2298,37 @@ function Get-DetectionCandidates {
         }
     }
 
+    $hasMsiProductCandidates = $false
+    foreach ($entry in @($NewUninstallEntries)) {
+        if (-not [string]::IsNullOrWhiteSpace($entry.productCode)) {
+            $hasMsiProductCandidates = $true
+            break
+        }
+    }
+
     function Add-DetectionCandidate {
         param([string]$Type, [string]$Confidence, [int]$Score, [string]$Reason, $Rule, $AdditionalRules, $Evidence, $NegativePhase)
         if ($null -eq $Rule -or [string]::IsNullOrWhiteSpace([string]$Rule.ruleType)) { return }
         if (-not (Test-DetectionRuleCandidateAllowed -Rule $Rule)) { return }
+        if ([string]$Rule.ruleType -eq 'File' -and -not [string]::IsNullOrWhiteSpace([string]$Rule.file.path) -and -not [string]::IsNullOrWhiteSpace([string]$Rule.file.fileOrFolderName) -and [string]$Rule.file.fileOrFolderName -like '*.exe') {
+            $fileRulePath = Join-Path ([string]$Rule.file.path) ([string]$Rule.file.fileOrFolderName)
+            if (Test-ExecutablePathLooksAuxiliary -Path $fileRulePath) { return }
+        }
 
         $identity = Get-RuleIdentity -Rule $Rule
-        if ([string]::IsNullOrWhiteSpace($identity) -or $seen.ContainsKey($identity)) { return }
+        if ([string]::IsNullOrWhiteSpace($identity)) { return }
 
-        $seen[$identity] = $true
-        [void]$candidates.Add((New-Candidate -Type $Type -Confidence $Confidence -Score $Score -Reason $Reason -Evidence $Evidence -Rule $Rule -AdditionalRules $AdditionalRules -NegativePhase $NegativePhase))
+        $candidate = New-Candidate -Type $Type -Confidence $Confidence -Score $Score -Reason $Reason -Evidence $Evidence -Rule $Rule -AdditionalRules $AdditionalRules -NegativePhase $NegativePhase
+        if ($seen.ContainsKey($identity)) {
+            $existingIndex = [int]$seen[$identity]
+            $existingCandidate = $candidates[$existingIndex]
+            if ($null -ne $existingCandidate -and [int]$existingCandidate.score -ge $Score) { return }
+            $candidates[$existingIndex] = $candidate
+            return
+        }
+
+        $seen[$identity] = $candidates.Count
+        [void]$candidates.Add($candidate)
     }
 
     foreach ($entry in @($NewUninstallEntries)) {
@@ -2205,6 +2354,10 @@ function Get-DetectionCandidates {
             Add-DetectionCandidate -Type 'Registry' -Confidence 'Medium' -Score 72 -Reason 'New uninstall entry with DisplayName after install.' -Evidence $entry -Rule (New-RegistryDetectionRule -Entry $entry -ValueName 'DisplayName' -Operator 'Equals' -Value ([string]$entry.displayName)) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName 'DisplayName') -NegativePhase $negative
         }
 
+        if (-not [string]::IsNullOrWhiteSpace($entry.productCode)) {
+            continue
+        }
+
         $targets = @(
             @{ Value = $entry.displayIcon; Source = 'DisplayIcon'; Score = 88; Confidence = 'High'; Reason = 'New uninstall entry DisplayIcon points to an installed executable.' },
             @{ Value = $entry.installLocation; Source = 'InstallLocation'; Score = 84; Confidence = 'High'; Reason = 'New uninstall entry InstallLocation contains an executable install footprint.' },
@@ -2217,46 +2370,59 @@ function Get-DetectionCandidates {
             if ($null -eq $fileTarget) { continue }
 
             if ($fileTarget.isFile) {
+                if ([IO.Path]::GetExtension($fileTarget.fullName) -ine '.exe') { continue }
+                if (Test-ExecutablePathLooksAuxiliary -Path $fileTarget.fullName) { continue }
+
                 $fileNegative = New-FileCandidateNegativePhase -FileTarget $fileTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
                 Add-DetectionCandidate -Type 'File' -Confidence ([string]$targetValue.Confidence) -Score ([int]$targetValue.Score) -Reason ([string]$targetValue.Reason) -Evidence $entry -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName '') -NegativePhase $fileNegative
                 continue
             }
 
-            foreach ($executable in @(Find-ExecutableDetectionTargets -Root $fileTarget.fullName -DisplayName ([string]$entry.displayName) -Publisher ([string]$entry.publisher) -DisplayVersion ([string]$entry.displayVersion) | Select-Object -First 3)) {
+            $executableTargets = @(Find-ExecutableDetectionTargets -Root $fileTarget.fullName -DisplayName ([string]$entry.displayName) -Publisher ([string]$entry.publisher) -DisplayVersion ([string]$entry.displayVersion) | Select-Object -First 3)
+            foreach ($executable in $executableTargets) {
                 $score = [Math]::Min(92, ([int]$targetValue.Score + [Math]::Max(0, [int]($executable.rank / 10))))
                 $fileNegative = New-FileCandidateNegativePhase -FileTarget $executable.target -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
                 Add-DetectionCandidate -Type 'File' -Confidence ([string]$targetValue.Confidence) -Score $score -Reason ([string]$targetValue.Reason) -Evidence $entry -Rule (New-FileDetectionRule -FileTarget $executable.target) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName '') -NegativePhase $fileNegative
             }
 
-            $folderNegative = New-FileCandidateNegativePhase -FileTarget $fileTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
-            Add-DetectionCandidate -Type 'File' -Confidence 'Low' -Score 46 -Reason 'New uninstall entry InstallLocation folder exists; executable target was not stronger than folder detection.' -Evidence $entry -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName '') -NegativePhase $folderNegative
+            if ($executableTargets.Count -eq 0 -and -not (Test-DetectionFolderLooksAuxiliary -Path $fileTarget.fullName)) {
+                $folderNegative = New-FileCandidateNegativePhase -FileTarget $fileTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
+                Add-DetectionCandidate -Type 'File' -Confidence 'Low' -Score 46 -Reason 'New uninstall entry InstallLocation folder exists; executable target was not stronger than folder detection.' -Evidence $entry -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules (New-RegistryIdentityAdditionalRules -Entry $entry -PrimaryValueName '') -NegativePhase $folderNegative
+            }
         }
     }
 
+    if (-not $hasMsiProductCandidates) {
     foreach ($directory in @($NewProgramDirectories | Select-Object -First 10)) {
+        $skipFolderFallback = Test-DetectionFolderLooksAuxiliary -Path ([string]$directory.fullName)
+
         $negative = [pscustomobject]@{
             success = $true
             summary = 'Install directory was absent before install and present after install.'
             details = $directory.fullName
         }
 
-        foreach ($executable in @(Find-ExecutableDetectionTargets -Root ([string]$directory.fullName) -DisplayName ([string]$directory.name) -Publisher '' -DisplayVersion '' | Select-Object -First 3)) {
+        $executableTargets = @(Find-ExecutableDetectionTargets -Root ([string]$directory.fullName) -DisplayName ([string]$directory.name) -Publisher '' -DisplayVersion '' | Select-Object -First 3)
+        foreach ($executable in $executableTargets) {
             $score = [Math]::Min(86, 78 + [Math]::Max(0, [int]($executable.rank / 12)))
             $fileNegative = New-FileCandidateNegativePhase -FileTarget $executable.target -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
             Add-DetectionCandidate -Type 'File' -Confidence 'Medium' -Score $score -Reason 'New install directory contains an executable footprint.' -Evidence $directory -Rule (New-FileDetectionRule -FileTarget $executable.target) -AdditionalRules @() -NegativePhase $fileNegative
         }
 
         $folderTarget = Split-FileDetectionTarget -Target ([string]$directory.fullName)
-        if ($null -ne $folderTarget) {
+        if ($null -ne $folderTarget -and $executableTargets.Count -eq 0 -and -not $skipFolderFallback) {
             $folderNegative = New-FileCandidateNegativePhase -FileTarget $folderTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
             Add-DetectionCandidate -Type 'File' -Confidence 'Low' -Score 45 -Reason 'New top-level install directory appeared after install.' -Evidence $directory -Rule (New-FileDetectionRule -FileTarget $folderTarget) -AdditionalRules @() -NegativePhase $folderNegative
         }
+    }
     }
 
     foreach ($shortcut in @($NewShortcuts)) {
         $candidatePath = Resolve-PathCandidate -Value ([string]$shortcut.targetPath)
         $fileTarget = Split-FileDetectionTarget -Target $candidatePath
         if ($null -eq $fileTarget -or -not $fileTarget.isFile) { continue }
+        if ([IO.Path]::GetExtension($fileTarget.fullName) -ine '.exe') { continue }
+        if (Test-ExecutablePathLooksAuxiliary -Path $fileTarget.fullName) { continue }
 
         $negative = [pscustomobject]@{
             success = $true
@@ -2267,10 +2433,12 @@ function Get-DetectionCandidates {
         Add-DetectionCandidate -Type 'File' -Confidence 'High' -Score 94 -Reason 'New shortcut target points to the installed application executable.' -Evidence $shortcut -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules @() -NegativePhase $fileNegative
     }
 
+    if (-not $hasMsiProductCandidates) {
     foreach ($service in @($NewServices)) {
         $candidatePath = Resolve-PathCandidate -Value ([string]$service.pathName)
         $fileTarget = Split-FileDetectionTarget -Target $candidatePath
         if ($null -eq $fileTarget -or -not $fileTarget.isFile) { continue }
+        if (Test-ExecutablePathLooksAuxiliary -Path $fileTarget.fullName) { continue }
 
         $negative = [pscustomobject]@{
             success = $true
@@ -2286,6 +2454,7 @@ function Get-DetectionCandidates {
             $candidatePath = Resolve-PathCandidate -Value ("$($action.execute) $($action.arguments)")
             $fileTarget = Split-FileDetectionTarget -Target $candidatePath
             if ($null -eq $fileTarget -or -not $fileTarget.isFile) { continue }
+            if (Test-ExecutablePathLooksAuxiliary -Path $fileTarget.fullName) { continue }
 
             $negative = [pscustomobject]@{
                 success = $true
@@ -2295,6 +2464,7 @@ function Get-DetectionCandidates {
             $fileNegative = New-FileCandidateNegativePhase -FileTarget $fileTarget -NewExecutableMap $newExecutableMap -NewProgramDirectoryMap $newProgramDirectoryMap -FallbackSummary $negative.summary -FallbackDetails $negative.details
             Add-DetectionCandidate -Type 'File' -Confidence 'Medium' -Score 82 -Reason 'New scheduled task action points to an installed executable.' -Evidence $task -Rule (New-FileDetectionRule -FileTarget $fileTarget) -AdditionalRules @() -NegativePhase $fileNegative
         }
+    }
     }
 
     return @($candidates)
@@ -2311,7 +2481,12 @@ function Get-LaunchTargets {
         if ([string]::IsNullOrWhiteSpace($candidatePath) -or -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) { return }
         if ([IO.Path]::GetExtension($candidatePath) -ine '.exe') { return }
         $name = [IO.Path]::GetFileName($candidatePath)
-        if ($name -match '(?i)(unins|uninstall|setup|installer|update|crash|helper|bootstrap|repair|vcredist|vc_redist)') { return }
+        $sourceName = ''
+        if ($Source -match '^Shortcut:\s*(.+)$') {
+            try { $sourceName = [IO.Path]::GetFileNameWithoutExtension($Matches[1]) } catch { $sourceName = '' }
+        }
+        $launchText = "$name $sourceName"
+        if ($launchText -match '(?i)(unins|uninstall|setup|installer|update|updater|crash|helper|bootstrap|repair|vcredist|vc_redist|activate|activation|licen[cs]e|register|registration|plugin|service|mailagent|reader_sl|trackreview|previewhost|preview|thumbnail)') { return }
         if ([string]::IsNullOrWhiteSpace($WorkingDirectory) -or -not (Test-Path -LiteralPath $WorkingDirectory -PathType Container)) {
             try { $WorkingDirectory = [IO.Path]::GetDirectoryName($candidatePath) } catch { $WorkingDirectory = '' }
         }
@@ -2637,25 +2812,47 @@ function Invoke-LaunchValidation {
         Start-Sleep -Seconds 15
         try { $process.Refresh() } catch {}
 
-        $handle = $process.MainWindowHandle
+        $handle = [IntPtr]::Zero
+        if ($null -ne $process) {
+            try {
+                $mainHandle = $process.MainWindowHandle
+                if ($null -ne $mainHandle -and $mainHandle -ne [IntPtr]::Zero) {
+                    $handle = $mainHandle
+                }
+            } catch {}
+        }
+
         if ($handle -eq [IntPtr]::Zero) {
-            foreach ($child in @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.Path -ieq [string]$target.path } | Select-Object -First 1)) {
-                $handle = $child.MainWindowHandle
-                $process = $child
+            foreach ($child in @(Get-Process -ErrorAction SilentlyContinue)) {
+                $childHandle = [IntPtr]::Zero
+                $childPath = ''
+                try { $childHandle = $child.MainWindowHandle } catch {}
+                try { $childPath = [string]$child.Path } catch {}
+                if ($null -ne $childHandle -and
+                    $childHandle -ne [IntPtr]::Zero -and
+                    -not [string]::IsNullOrWhiteSpace($childPath) -and
+                    $childPath -ieq [string]$target.path) {
+                    $handle = $childHandle
+                    $process = $child
+                    break
+                }
             }
         }
 
-        $rect = Get-WindowRect -Handle $handle
+        $rect = $null
+        if ($null -ne $handle -and $handle -ne [IntPtr]::Zero) {
+            $rect = Get-WindowRect -Handle $handle
+        }
         $hasWindow = $null -ne $rect
         $whiteRatio = 0.0
         if ($hasWindow -and (Save-WindowScreenshot -Rect $rect -Path $screenshotPath)) {
             $whiteRatio = Measure-WhiteWindowRatio -ImagePath $screenshotPath
         }
 
-        $success = $hasWindow -and $whiteRatio -lt 0.82
+        $success = $hasWindow -and $whiteRatio -lt 0.985
         $summary = if (-not $hasWindow) {
             'Installed application launched but no usable window was detected.'
-        } elseif ($whiteRatio -ge 0.82) {
+        } elseif ($whiteRatio -ge 0.985) {
             "Installed application launched to a mostly blank/light window (blank ratio $whiteRatio)."
         } else {
             "Installed application launched with a non-blank window (blank ratio $whiteRatio)."
@@ -2705,6 +2902,7 @@ function Write-Report {
     $lines += '================================================'
     $lines += ''
     $lines += "Installer type: $($Result.request.installerType)"
+    $lines += "Install context: $($Result.request.installContext)"
     $lines += "Setup path: $($Result.request.sandboxSetupFilePath)"
     $lines += ''
     $lines += 'Pre-check'
@@ -2853,7 +3051,8 @@ try {
     $baseline = Get-Snapshot -Name 'baseline'
     $preDetection = Test-ProofDetection -Rule $inputData.detectionRule
 
-    $installResult = Invoke-ProofCommand -Command ([string]$inputData.installCommand) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes) -Phase 'install'
+    $executionMode = if ([string]$inputData.installContext -eq 'User') { 'User' } else { 'System' }
+    $installResult = Invoke-ProofCommand -Command ([string]$inputData.installCommand) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes) -Phase 'install' -ExecutionMode $executionMode
     Start-Sleep -Seconds 3
 
     $postInstall = Get-Snapshot -Name 'post-install'
@@ -2879,7 +3078,7 @@ try {
     $uninstallResolution = Resolve-ProofUninstallCommand -RequestedCommand ([string]$inputData.uninstallCommand) -NewUninstallEntries $diff.newUninstallEntries
     Write-ProofLog "Resolved uninstall command source: $($uninstallResolution.source)"
     Write-ProofLog "Resolved uninstall command: $($uninstallResolution.command)"
-    $uninstallResult = Invoke-ProofCommand -Command ([string]$uninstallResolution.command) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes) -Phase 'uninstall'
+    $uninstallResult = Invoke-ProofCommand -Command ([string]$uninstallResolution.command) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes) -Phase 'uninstall' -ExecutionMode $executionMode
     Start-Sleep -Seconds 3
     $postUninstall = Get-Snapshot -Name 'post-uninstall'
     $postUninstallDetection = Test-ProofDetection -Rule $inputData.detectionRule
@@ -2995,6 +3194,8 @@ finally {
     private sealed record SandboxProofInput
     {
         public InstallerType InstallerType { get; init; }
+
+        public IntuneInstallContext InstallContext { get; init; }
 
         public string HostSetupFilePath { get; init; } = string.Empty;
 

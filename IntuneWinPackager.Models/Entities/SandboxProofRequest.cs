@@ -6,6 +6,8 @@ public sealed record SandboxProofRequest
 {
     public InstallerType InstallerType { get; init; } = InstallerType.Unknown;
 
+    public IntuneInstallContext InstallContext { get; init; } = IntuneInstallContext.System;
+
     public string SourceFolder { get; init; } = string.Empty;
 
     public string SetupFilePath { get; init; } = string.Empty;

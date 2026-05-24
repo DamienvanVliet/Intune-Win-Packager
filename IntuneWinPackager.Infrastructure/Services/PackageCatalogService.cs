@@ -5729,10 +5729,10 @@ public sealed class PackageCatalogService : IPackageCatalogService
         if (installerType == InstallerType.Exe && IsFoxitPdfReaderPackage(packageId))
         {
             return new(
-                "\"<installer-file>.exe\" /install /quiet /norestart",
-                "\"<installer-file>.exe\" /uninstall /quiet /norestart",
-                "Foxit PDF Reader bundle detected. Use the vendor/packaging proven quiet bundle switches and validate in Sandbox Proof.",
-                84);
+                "\"<installer-file>.exe\" /SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+                "\"<installer-file>.exe\" <auto-detect-uninstall>",
+                "Foxit PDF Reader EXE detected. Prefer the official Foxit Enterprise MSI for Intune packaging; Foxit EXE builds can hang in unattended Sandbox Proof. If this EXE is used, require a successful Sandbox Proof before packaging.",
+                50);
         }
 
         if (installerType == InstallerType.Msi)
@@ -5752,12 +5752,17 @@ public sealed class PackageCatalogService : IPackageCatalogService
 
         if (installerType == InstallerType.Exe && normalized.Contains("inno", StringComparison.Ordinal))
         {
-            return new("\"<installer-file>.exe\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-", "\"<installer-file>.exe\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART", "Inno profile detected. Validate switches once.", 78);
+            return new("\"<installer-file>.exe\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-", "\"<installer-file>.exe\" <auto-detect-uninstall>", "Inno profile detected. Sandbox Proof should discover and validate the registered uninstaller after install.", 78);
         }
 
         if (installerType == InstallerType.Exe && (normalized.Contains("nsis", StringComparison.Ordinal) || normalized.Contains("nullsoft", StringComparison.Ordinal)))
         {
-            return new("\"<installer-file>.exe\" /S", "\"<installer-file>.exe\" /S", "NSIS profile detected. Validate switches once.", 74);
+            return new("\"<installer-file>.exe\" /S", "\"<installer-file>.exe\" <auto-detect-uninstall>", "NSIS profile detected. Sandbox Proof should discover and validate the registered uninstaller after install.", 74);
+        }
+
+        if (installerType == InstallerType.Exe && normalized.Contains("squirrel", StringComparison.Ordinal))
+        {
+            return new("\"<installer-file>.exe\" --silent", "\"<installer-file>.exe\" <auto-detect-uninstall>", "Squirrel profile detected. Sandbox Proof should discover and validate the registered QuietUninstallString after install.", 62);
         }
 
         if (installerType == InstallerType.Exe)
