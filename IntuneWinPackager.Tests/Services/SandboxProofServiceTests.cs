@@ -80,6 +80,9 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("Uninstall execution mode", script, StringComparison.Ordinal);
             Assert.Contains("New-ScheduledTaskPrincipal -UserId 'SYSTEM'", script, StringComparison.Ordinal);
             Assert.Contains("ScheduledTaskSystem", script, StringComparison.Ordinal);
+            Assert.Contains("Get-ScheduledTaskInfo -TaskName $taskName", script, StringComparison.Ordinal);
+            Assert.Contains("$state -eq 'Running'", script, StringComparison.Ordinal);
+            Assert.Contains("scheduled task finished without writing exit code file", script, StringComparison.Ordinal);
             Assert.Contains("Resolve-ProofUninstallCommand", script, StringComparison.Ordinal);
             Assert.Contains("uninstallResolution", script, StringComparison.Ordinal);
             Assert.Contains("$blockingFailureKind = if ($failureKind -eq 'LaunchValidation')", script, StringComparison.Ordinal);
@@ -774,6 +777,38 @@ public sealed class SandboxProofServiceTests
             Assert.Equal("RunnerStart", result.FailureKind);
             Assert.Contains("run-proof.ps1 did not write logs", result.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("vmmemWindowsSandbox", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenRunnerStartsButNeverWritesResult_ReturnsIncompleteFailure()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        var logsPath = Path.Combine(tempRoot, "logs");
+        var inputPath = Path.Combine(tempRoot, "proof-input.json");
+        var proofLogPath = Path.Combine(logsPath, "proof.log");
+        Directory.CreateDirectory(logsPath);
+        await File.WriteAllTextAsync(inputPath, """{ "timeoutMinutes": 5 }""");
+        await File.WriteAllTextAsync(proofLogPath, "[2026-05-23 23:54:26] Executing install command as SYSTEM.");
+        File.SetLastWriteTimeUtc(inputPath, DateTime.UtcNow.AddMinutes(-12));
+        File.SetLastWriteTimeUtc(proofLogPath, DateTime.UtcNow.AddMinutes(-9));
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.True(result.Failed);
+            Assert.Equal("RunnerIncomplete", result.FailureKind);
+            Assert.Contains("started but did not write result.json", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("install stdout/stderr", result.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

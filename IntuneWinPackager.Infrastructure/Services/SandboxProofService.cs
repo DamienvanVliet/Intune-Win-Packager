@@ -130,6 +130,19 @@ public sealed class SandboxProofService : ISandboxProofService
                 resultPath);
         }
 
+        var activeSandboxProcesses = GetActiveWindowsSandboxProcesses();
+        if (activeSandboxProcesses.Count > 0)
+        {
+            return SessionFailure(
+                $"Windows Sandbox is already running ({string.Join(", ", activeSandboxProcesses)}). Close existing Sandbox windows and wait until WindowsSandbox/vmmemWindowsSandbox stops before starting a new Sandbox Proof run.",
+                runDirectory,
+                wsbPath,
+                inputPath,
+                scriptPath,
+                reportPath,
+                resultPath);
+        }
+
         try
         {
             Process.Start(new ProcessStartInfo
@@ -158,6 +171,36 @@ public sealed class SandboxProofService : ISandboxProofService
         }
     }
 
+    private static IReadOnlyList<string> GetActiveWindowsSandboxProcesses()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return Array.Empty<string>();
+        }
+
+        var processNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "WindowsSandbox",
+            "WindowsSandboxClient",
+            "WindowsSandboxRemoteSession",
+            "WindowsSandboxServer",
+            "vmmemWindowsSandbox"
+        };
+
+        try
+        {
+            return Process.GetProcesses()
+                .Where(process => processNames.Contains(process.ProcessName))
+                .Select(process => $"{process.ProcessName} ({process.Id})")
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
     public async Task<SandboxProofDetectionResult> ReadResultAsync(
         string resultPath,
         CancellationToken cancellationToken = default)
@@ -173,10 +216,10 @@ public sealed class SandboxProofService : ISandboxProofService
 
         if (!File.Exists(resultPath))
         {
-            var runnerStartFailure = TryBuildRunnerStartFailure(resultPath);
-            if (runnerStartFailure is not null)
+            var runnerFailure = TryBuildMissingResultFailure(resultPath);
+            if (runnerFailure is not null)
             {
-                return runnerStartFailure;
+                return runnerFailure;
             }
 
             return new SandboxProofDetectionResult
@@ -382,7 +425,7 @@ public sealed class SandboxProofService : ISandboxProofService
         };
     }
 
-    private static SandboxProofDetectionResult? TryBuildRunnerStartFailure(string resultPath)
+    private static SandboxProofDetectionResult? TryBuildMissingResultFailure(string resultPath)
     {
         var runDirectory = Path.GetDirectoryName(resultPath);
         if (string.IsNullOrWhiteSpace(runDirectory) || !Directory.Exists(runDirectory))
@@ -391,11 +434,6 @@ public sealed class SandboxProofService : ISandboxProofService
         }
 
         var proofLogPath = Path.Combine(runDirectory, "logs", "proof.log");
-        if (File.Exists(proofLogPath))
-        {
-            return null;
-        }
-
         var inputPath = Path.Combine(runDirectory, "proof-input.json");
         var referencePath = File.Exists(inputPath) ? inputPath : runDirectory;
         DateTimeOffset lastWriteUtc;
@@ -410,7 +448,29 @@ public sealed class SandboxProofService : ISandboxProofService
             return null;
         }
 
-        if (DateTimeOffset.UtcNow - lastWriteUtc < TimeSpan.FromMinutes(4))
+        if (!File.Exists(proofLogPath))
+        {
+            if (DateTimeOffset.UtcNow - lastWriteUtc < TimeSpan.FromMinutes(4))
+            {
+                return null;
+            }
+
+            return new SandboxProofDetectionResult
+            {
+                Completed = true,
+                Failed = true,
+                ResultPath = resultPath,
+                FailureKind = "RunnerStart",
+                Message =
+                    "Sandbox proof failed before the runner started. Windows Sandbox launched, but run-proof.ps1 did not write logs within 4 minutes. " +
+                    "Close any existing Windows Sandbox windows, wait for vmmemWindowsSandbox to stop, then run Sandbox Proof again."
+            };
+        }
+
+        var timeoutMinutes = TryReadSandboxProofTimeoutMinutes(inputPath);
+        var staleAfter = TimeSpan.FromMinutes(Math.Clamp(timeoutMinutes + 3, 8, 245));
+        var proofLogLastWriteUtc = File.GetLastWriteTimeUtc(proofLogPath);
+        if (DateTimeOffset.UtcNow - proofLogLastWriteUtc < staleAfter)
         {
             return null;
         }
@@ -420,11 +480,30 @@ public sealed class SandboxProofService : ISandboxProofService
             Completed = true,
             Failed = true,
             ResultPath = resultPath,
-            FailureKind = "RunnerStart",
+            FailureKind = "RunnerIncomplete",
             Message =
-                "Sandbox proof failed before the runner started. Windows Sandbox launched, but run-proof.ps1 did not write logs within 4 minutes. " +
-                "Close any existing Windows Sandbox windows, wait for vmmemWindowsSandbox to stop, then run Sandbox Proof again."
+                "Sandbox proof started but did not write result.json after the expected timeout window. " +
+                "The install command may have hung, Windows Sandbox may have been closed, or the runner stopped before writing final evidence. " +
+                "Open the run folder and review logs/proof.log and the install stdout/stderr files."
         };
+    }
+
+    private static int TryReadSandboxProofTimeoutMinutes(string inputPath)
+    {
+        if (string.IsNullOrWhiteSpace(inputPath) || !File.Exists(inputPath))
+        {
+            return 20;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(inputPath));
+            return Math.Clamp(GetJsonInt(document.RootElement, "timeoutMinutes"), 5, 240);
+        }
+        catch
+        {
+            return 20;
+        }
     }
 
     private static bool IsSuccessfulInstallExitCode(int exitCode, bool timedOut)
@@ -1411,17 +1490,40 @@ function Invoke-ProofCommandAsSystem {
     Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
 
     $timedOut = $false
+    $taskLastResult = $null
     try {
+        $startedAt = Get-Date
         Start-ScheduledTask -TaskName $taskName
         $deadline = (Get-Date).AddMilliseconds([Math]::Max(5, $TimeoutMinutes) * 60 * 1000)
         do {
             Start-Sleep -Milliseconds 500
             if (Test-Path -LiteralPath $exitCodePath) { break }
 
-            $state = (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State
-            if ($state -ne 'Running' -and $state -ne 'Ready') {
+            $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            $state = if ($null -eq $task) { '' } else { [string]$task.State }
+            $taskInfo = $null
+            try { $taskInfo = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue } catch {}
+            if ($null -ne $taskInfo) { $taskLastResult = $taskInfo.LastTaskResult }
+
+            if ($state -eq 'Running') {
+                continue
+            }
+
+            if ($state -eq 'Ready') {
+                if ($null -ne $taskInfo -and $taskInfo.LastRunTime -gt $startedAt.AddSeconds(-2)) {
+                    Start-Sleep -Milliseconds 500
+                    if (Test-Path -LiteralPath $exitCodePath) { break }
+                    Write-ProofLog "$Phase scheduled task finished without writing exit code file. State: $state; LastTaskResult: $taskLastResult."
+                    break
+                }
+
+                continue
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($state)) {
                 Start-Sleep -Milliseconds 500
                 if (Test-Path -LiteralPath $exitCodePath) { break }
+                Write-ProofLog "$Phase scheduled task stopped before writing exit code file. State: $state; LastTaskResult: $taskLastResult."
                 break
             }
         } while ((Get-Date) -lt $deadline)
@@ -1441,7 +1543,13 @@ function Invoke-ProofCommandAsSystem {
     $exitCodeText = if (Test-Path -LiteralPath $exitCodePath) { (Get-Content -LiteralPath $exitCodePath -Raw).Trim() } else { '' }
     $exitCode = 0
     if (-not [int]::TryParse($exitCodeText, [ref]$exitCode)) {
-        $exitCode = if ($timedOut) { -1 } else { 1 }
+        $taskLastResultText = if ($null -eq $taskLastResult) { '' } else { [string]$taskLastResult }
+        if ($timedOut) {
+            $exitCode = -1
+        }
+        elseif (-not [int]::TryParse($taskLastResultText, [ref]$exitCode)) {
+            $exitCode = 1
+        }
     }
 
     return [pscustomobject]@{

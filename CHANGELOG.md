@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.0.24] - 2026-05-24
+
+### Changed
+- Sandbox Proof now blocks starting a new proof run while an existing Windows Sandbox or `vmmemWindowsSandbox` session is still active, preventing false package failures caused by overlapping or stuck sandbox VMs.
+- The SYSTEM scheduled-task runner now treats completed `Ready` tasks as finished instead of waiting until timeout, and uses Task Scheduler's result code when the command did not write an exit-code file.
+
+### Fixed
+- Sandbox Proof now reports a dedicated `RunnerIncomplete` failure when `run-proof.ps1` starts but never writes `result.json`, making hung installers or interrupted sandbox runs visible instead of looking indefinitely pending.
+
 ## [3.0.23] - 2026-05-23
 
 ### Fixed
