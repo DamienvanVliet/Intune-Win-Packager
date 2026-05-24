@@ -16,6 +16,15 @@ public sealed class SandboxProofService : ISandboxProofService
 {
     private const string SandboxProofRoot = @"C:\IwpSandboxProof";
     private const string SandboxSourceRoot = @"C:\IwpSandboxSource";
+    private static readonly string[] WindowsSandboxProcessNames =
+    [
+        "WindowsSandbox",
+        "WindowsSandboxClient",
+        "WindowsSandboxRemoteSession",
+        "WindowsSandboxServer",
+        "vmmemWindowsSandbox"
+    ];
+
     private static readonly Regex UnsafeFileNameCharacters = new(@"[^a-zA-Z0-9._-]+", RegexOptions.Compiled);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -179,20 +188,9 @@ public sealed class SandboxProofService : ISandboxProofService
             return Array.Empty<string>();
         }
 
-        var processNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "WindowsSandbox",
-            "WindowsSandboxClient",
-            "WindowsSandboxRemoteSession",
-            "WindowsSandboxServer",
-            "vmmemWindowsSandbox"
-        };
-
         try
         {
-            var processes = Process.GetProcesses()
-                .Where(process => processNames.Contains(process.ProcessName))
-                .ToArray();
+            var processes = GetWindowsSandboxProcesses();
             var hasRunningSandboxVm = processes.Any(process =>
                 process.ProcessName.Equals("vmmemWindowsSandbox", StringComparison.OrdinalIgnoreCase) ||
                 process.ProcessName.Equals("WindowsSandbox", StringComparison.OrdinalIgnoreCase) ||
@@ -210,6 +208,93 @@ public sealed class SandboxProofService : ISandboxProofService
         catch
         {
             return Array.Empty<string>();
+        }
+    }
+
+    public Task CloseActiveSandboxAsync(CancellationToken cancellationToken = default)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return Task.CompletedTask;
+        }
+
+        return Task.Run(() => CloseActiveWindowsSandboxProcesses(cancellationToken), cancellationToken);
+    }
+
+    private static Process[] GetWindowsSandboxProcesses()
+    {
+        var processNames = new HashSet<string>(WindowsSandboxProcessNames, StringComparer.OrdinalIgnoreCase);
+        return Process.GetProcesses()
+            .Where(process => processNames.Contains(process.ProcessName))
+            .ToArray();
+    }
+
+    private static void CloseActiveWindowsSandboxProcesses(CancellationToken cancellationToken)
+    {
+        Process[] processes;
+        try
+        {
+            processes = GetWindowsSandboxProcesses();
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var process in processes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                if (!process.HasExited && process.MainWindowHandle != IntPtr.Zero)
+                {
+                    process.CloseMainWindow();
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup only. Failure to close must not invalidate proof evidence.
+            }
+        }
+
+        try
+        {
+            Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Ignore wait failures and continue with best-effort cleanup.
+        }
+
+        try
+        {
+            processes = GetWindowsSandboxProcesses()
+                .OrderBy(process => process.ProcessName.Equals("WindowsSandboxRemoteSession", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .ToArray();
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var process in processes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup only. Windows may already be tearing the sandbox down.
+            }
         }
     }
 
@@ -1005,6 +1090,7 @@ $LogsPath = Join-Path $ProofRoot 'logs'
 $TranscriptPath = Join-Path $LogsPath 'transcript.txt'
 $DetectionScriptPath = Join-Path $ProofRoot 'detection-script.ps1'
 $CompletedMarkerPath = Join-Path $ProofRoot 'completed.marker'
+$ShutdownRequestedMarkerPath = Join-Path $ProofRoot 'shutdown-requested.marker'
 
 New-Item -ItemType Directory -Path $LogsPath -Force | Out-Null
 
@@ -1013,6 +1099,26 @@ function Write-ProofLog {
     $line = "[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
     Write-Host $line
     Add-Content -LiteralPath (Join-Path $LogsPath 'proof.log') -Value $line
+}
+
+function Request-SandboxAutoClose {
+    param([int]$DelaySeconds = 3)
+
+    try {
+        if (-not ([string]$env:USERNAME).Equals('WDAGUtilityAccount', [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-ProofLog "Sandbox auto-close skipped because the proof runner is not running as the Windows Sandbox user. Current user: $env:USERNAME"
+            return
+        }
+
+        Set-Content -LiteralPath $ShutdownRequestedMarkerPath -Value (Get-Date).ToUniversalTime().ToString('o') -Encoding UTF8
+        Write-ProofLog "Sandbox proof evidence has been written. Requesting Windows Sandbox shutdown in $DelaySeconds second(s)."
+        $shutdownExe = Join-Path $env:SystemRoot 'System32\shutdown.exe'
+        $arguments = "/s /t $DelaySeconds /f"
+        Start-Process -FilePath $shutdownExe -ArgumentList $arguments -WindowStyle Hidden | Out-Null
+    }
+    catch {
+        Write-ProofLog "Sandbox auto-close request failed: $($_.Exception.Message)"
+    }
 }
 
 function ConvertTo-PlainObject {
@@ -3277,6 +3383,7 @@ catch {
 }
 finally {
     try { Stop-Transcript | Out-Null } catch {}
+    Request-SandboxAutoClose -DelaySeconds 3
 }
 """;
     }

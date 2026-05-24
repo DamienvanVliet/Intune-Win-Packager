@@ -2743,6 +2743,11 @@ public partial class MainViewModel : ObservableObject
                 timeoutMinutes,
                 cancellationToken).ConfigureAwait(false);
 
+            if (result.Completed)
+            {
+                await _sandboxProofService.CloseActiveSandboxAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             await RunOnUiThreadAsync(() =>
             {
                 if (!result.Completed)
@@ -2753,6 +2758,7 @@ public partial class MainViewModel : ObservableObject
                 }
 
                 SandboxProofCandidateSummary = result.Message;
+                AppendLog("Sandbox proof result is ready; Windows Sandbox auto-close was requested.");
                 ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
 
                 if (result.Failed)
@@ -2775,19 +2781,7 @@ public partial class MainViewModel : ObservableObject
                     return;
                 }
 
-                if (DetectionRuleType == IntuneDetectionRuleType.None)
-                {
-                    TryApplySandboxProofDetectionResult(result, showStatus: true);
-                    return;
-                }
-
-                SandboxProofStatus = TF(
-                    "Vm.SandboxProof.Status.ResultReady",
-                    result.CandidateCount);
-                SetStatus(
-                    OperationState.Success,
-                    T("Vm.Status.SandboxProofLaunchedTitle"),
-                    SandboxProofStatus);
+                TryApplySandboxProofDetectionResult(result, showStatus: true);
             }).ConfigureAwait(false);
 
         }

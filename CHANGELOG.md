@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.28] - 2026-05-25
+
+### Fixed
+- Sandbox Proof now requests shutdown from inside the proof runner after `result.json`, `report.txt`, and completion markers are written.
+- The app now performs host-side Windows Sandbox cleanup after reading a completed proof result, closing leftover Sandbox windows/processes automatically.
+- Successful Sandbox Proof results now automatically apply the best evidence-approved detection rule and commands instead of requiring the Apply Proven Detection button.
+
 ## [3.0.27] - 2026-05-24
 
 ### Fixed

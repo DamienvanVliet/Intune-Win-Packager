@@ -11,4 +11,7 @@ public interface ISandboxProofService
     Task<SandboxProofDetectionResult> ReadResultAsync(
         string resultPath,
         CancellationToken cancellationToken = default);
+
+    Task CloseActiveSandboxAsync(
+        CancellationToken cancellationToken = default);
 }

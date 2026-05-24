@@ -48,6 +48,22 @@ public class UiRegressionSmokeTests
     }
 
     [Fact]
+    public void SandboxProofWatcher_AutoClosesSandbox_And_AutoAppliesDetection()
+    {
+        var viewModel = File.ReadAllText(GetPath("IntuneWinPackager.App", "ViewModels", "MainViewModel.cs"));
+        var sandboxService = File.ReadAllText(GetPath("IntuneWinPackager.Infrastructure", "Services", "SandboxProofService.cs"));
+        var watcherStart = viewModel.IndexOf("private async Task WatchSandboxProofResultAsync", StringComparison.Ordinal);
+        var watcherEnd = viewModel.IndexOf("private async Task<SandboxProofDetectionResult>", watcherStart, StringComparison.Ordinal);
+        var watcher = viewModel[watcherStart..watcherEnd];
+
+        Assert.Contains("CloseActiveSandboxAsync", watcher, StringComparison.Ordinal);
+        Assert.Contains("TryApplySandboxProofDetectionResult(result, showStatus: true);", watcher, StringComparison.Ordinal);
+        Assert.DoesNotContain("DetectionRuleType == IntuneDetectionRuleType.None", watcher, StringComparison.Ordinal);
+        Assert.Contains("CloseActiveWindowsSandboxProcesses", sandboxService, StringComparison.Ordinal);
+        Assert.Contains("WindowsSandboxRemoteSession", sandboxService, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Localization_English_And_Dutch_StayInSync()
     {
         var englishKeys = ExtractResourceKeys(GetPath("IntuneWinPackager.App", "Localization", "Strings.en.xaml"));
