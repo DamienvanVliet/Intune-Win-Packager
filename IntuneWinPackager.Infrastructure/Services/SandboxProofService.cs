@@ -231,70 +231,135 @@ public sealed class SandboxProofService : ISandboxProofService
 
     private static void CloseActiveWindowsSandboxProcesses(CancellationToken cancellationToken)
     {
-        Process[] processes;
+        var cleanupErrors = new List<string>();
+
+        for (var attempt = 0; attempt < 6; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var processes = TryGetWindowsSandboxProcesses();
+            if (processes.Length == 0)
+            {
+                return;
+            }
+
+            foreach (var process in processes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    if (!process.HasExited && process.MainWindowHandle != IntPtr.Zero)
+                    {
+                        process.CloseMainWindow();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    cleanupErrors.Add($"{SafeProcessName(process)} close request failed: {ex.Message}");
+                }
+            }
+
+            DelaySandboxClose(TimeSpan.FromSeconds(attempt == 0 ? 2 : 1), cancellationToken);
+
+            foreach (var process in processes
+                         .Where(process => !HasExitedSafe(process))
+                         .OrderBy(GetSandboxClosePriority))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(3000);
+                }
+                catch (Exception ex)
+                {
+                    cleanupErrors.Add($"{SafeProcessName(process)} forced close failed: {ex.Message}");
+                }
+            }
+
+            DelaySandboxClose(TimeSpan.FromSeconds(2), cancellationToken);
+        }
+
+        var remaining = TryGetWindowsSandboxProcesses()
+            .Where(process => !HasExitedSafe(process))
+            .Select(process => $"{SafeProcessName(process)} ({process.Id})")
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (remaining.Length > 0)
+        {
+            var details = cleanupErrors.Count == 0
+                ? string.Empty
+                : " Last cleanup error: " + cleanupErrors[^1];
+            throw new InvalidOperationException(
+                "Windows Sandbox close was requested, but these sandbox processes are still running: " +
+                string.Join(", ", remaining) +
+                ". Run the app as administrator or close the sandbox from Task Manager." +
+                details);
+        }
+    }
+
+    private static Process[] TryGetWindowsSandboxProcesses()
+    {
         try
         {
-            processes = GetWindowsSandboxProcesses();
+            return GetWindowsSandboxProcesses();
         }
         catch
         {
-            return;
+            return Array.Empty<Process>();
         }
+    }
 
-        foreach (var process in processes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                if (!process.HasExited && process.MainWindowHandle != IntPtr.Zero)
-                {
-                    process.CloseMainWindow();
-                }
-            }
-            catch
-            {
-                // Best-effort cleanup only. Failure to close must not invalidate proof evidence.
-            }
-        }
-
+    private static void DelaySandboxClose(TimeSpan delay, CancellationToken cancellationToken)
+    {
         try
         {
-            Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).GetAwaiter().GetResult();
+            Task.Delay(delay, cancellationToken).GetAwaiter().GetResult();
         }
         catch (OperationCanceledException)
         {
             throw;
         }
-        catch
+    }
+
+    private static int GetSandboxClosePriority(Process process)
+    {
+        var processName = SafeProcessName(process);
+        if (processName.Equals("WindowsSandboxRemoteSession", StringComparison.OrdinalIgnoreCase))
         {
-            // Ignore wait failures and continue with best-effort cleanup.
+            return 0;
         }
 
+        if (processName.Equals("WindowsSandbox", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("WindowsSandboxClient", StringComparison.OrdinalIgnoreCase))
+        {
+            return 1;
+        }
+
+        return 2;
+    }
+
+    private static bool HasExitedSafe(Process process)
+    {
         try
         {
-            processes = GetWindowsSandboxProcesses()
-                .OrderBy(process => process.ProcessName.Equals("WindowsSandboxRemoteSession", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                .ToArray();
+            return process.HasExited;
         }
         catch
         {
-            return;
+            return true;
         }
+    }
 
-        foreach (var process in processes)
+    private static string SafeProcessName(Process process)
+    {
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch
-            {
-                // Best-effort cleanup only. Windows may already be tearing the sandbox down.
-            }
+            return process.ProcessName;
+        }
+        catch
+        {
+            return "WindowsSandbox";
         }
     }
 

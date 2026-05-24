@@ -67,6 +67,8 @@ public class UiRegressionSmokeTests
         Assert.Contains("private async Task CloseSandboxAsync()", viewModel, StringComparison.Ordinal);
         Assert.Contains("CloseActiveSandboxAsync", viewModel, StringComparison.Ordinal);
         Assert.Contains("CloseActiveWindowsSandboxProcesses", sandboxService, StringComparison.Ordinal);
+        Assert.Contains("Run the app as administrator", sandboxService, StringComparison.Ordinal);
+        Assert.Contains("WaitForExit(3000)", sandboxService, StringComparison.Ordinal);
         Assert.Contains("WindowsSandboxRemoteSession", sandboxService, StringComparison.Ordinal);
     }
 

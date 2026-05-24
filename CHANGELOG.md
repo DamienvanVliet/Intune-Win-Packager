@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.0.30] - 2026-05-25
+
+### Fixed
+- The `Close Sandbox` action now retries shutdown, waits for sandbox processes to exit, and reports a clear admin-rights error when Windows leaves the sandbox VM process running.
+
 ## [3.0.29] - 2026-05-25
 
 ### Changed
