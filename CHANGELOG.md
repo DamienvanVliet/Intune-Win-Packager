@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.27] - 2026-05-24
+
+### Fixed
+- Sandbox Proof launch validation now tries multiple real application targets and filters Edge/WebView helper executables, so user-context apps such as PowerToys and GitHub Desktop no longer produce false non-blocking launch warnings.
+- Launch proof reports now show when process-only proof was accepted, how many launch targets were tried, and keep real blank/white windows as failures.
+- SYSTEM proof commands now preserve timeout evidence from the inner scheduled-task runner, so hung installers are reported as timed out instead of a generic `-1` exit code.
+
 ## [3.0.26] - 2026-05-24
 
 ### Fixed

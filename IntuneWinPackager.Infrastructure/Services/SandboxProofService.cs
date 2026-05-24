@@ -1485,6 +1485,7 @@ function Invoke-ProofCommandAsSystem {
     )
 
     $exitCodePath = Join-Path $LogsPath "$Phase-exitcode.txt"
+    $timeoutPath = Join-Path $LogsPath "$Phase-timeout.txt"
     $cmdPath = New-ProofCommandBatch -Command $Command -WorkingDirectory $WorkingDirectory -Phase $Phase -StdoutPath $StdoutPath -StderrPath $StderrPath -ExitCodePath $exitCodePath
     $runnerPath = Join-Path $LogsPath "$Phase-system-runner.ps1"
     $taskName = "IwpSandboxProof-$Phase-$([guid]::NewGuid().ToString('N'))"
@@ -1495,6 +1496,7 @@ function Invoke-ProofCommandAsSystem {
         '$ProgressPreference = ''SilentlyContinue''',
         '$cmdPath = ' + (ConvertTo-PowerShellLiteral $cmdPath),
         '$exitCodePath = ' + (ConvertTo-PowerShellLiteral $exitCodePath),
+        '$timeoutPath = ' + (ConvertTo-PowerShellLiteral $timeoutPath),
         '$logPath = ' + (ConvertTo-PowerShellLiteral $logPath),
         '$timeoutMs = ' + $timeoutMs.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         '$phase = ' + (ConvertTo-PowerShellLiteral $Phase),
@@ -1511,6 +1513,7 @@ function Invoke-ProofCommandAsSystem {
         '        try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }',
         '        try { $process.WaitForExit(5000) | Out-Null } catch {}',
         '        Set-Content -LiteralPath $exitCodePath -Value ''-1'' -Encoding ASCII',
+        '        Set-Content -LiteralPath $timeoutPath -Value ''true'' -Encoding ASCII',
         '        exit -1',
         '    }',
         '    if (-not (Test-Path -LiteralPath $exitCodePath)) {',
@@ -1574,6 +1577,9 @@ function Invoke-ProofCommandAsSystem {
             $timedOut = $true
             Write-ProofLog "$Phase command timed out after $TimeoutMinutes minute(s); stopping scheduled task."
             try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch {}
+        }
+        elseif (Test-Path -LiteralPath $timeoutPath) {
+            $timedOut = $true
         }
     }
     finally {
@@ -2257,11 +2263,12 @@ function Test-ExecutablePathLooksAuxiliary {
     if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
     $name = ''
     try { $name = [IO.Path]::GetFileNameWithoutExtension($Path) } catch { $name = [string]$Path }
-    if ($Path -match '(?i)\\(update|updates|updater|installer|maintenance|temp|cache)\\') { return $true }
+    if ($Path -match '(?i)\\(update|updates|updater|installer|maintenance|temp|cache|Package Cache)\\') { return $true }
     if ($Path -match '(?i)\\Common Files\\Adobe\\ARM\\') { return $true }
     if ($Path -match '(?i)\\resources\\app\\git\\') { return $true }
+    if ($Path -match '(?i)\\Microsoft\\(EdgeCore|EdgeWebView|EdgeUpdate)\\') { return $true }
 
-    return $name -match '(?i)(^unins|^uninstall|^setup|^installer|^gup$|^chrmstp$|^squirrel$|^armsvc$|^adobearm$|update|updater|crash|helper|bootstrap|repair|activate|activation|licen[cs]e|register|registration|plugin|mailagent|reader_sl|trackreview|previewhost|preview|thumbnail|private_browsing|default-browser-agent|desktop-launcher|pingsender|proxy|pwa_launcher|elevation_service|elevated_tracing_service|maintenanceservice)'
+    return $name -match '(?i)(^unins|^uninstall|^setup|^installer|^gup$|^chrmstp$|^squirrel$|^armsvc$|^adobearm$|^ie_to_edge_stub$|^cookie_exporter$|^uc_connector$|^microsoftedge_x64$|update|updater|crash|helper|bootstrap|repair|activate|activation|licen[cs]e|register|registration|plugin|mailagent|reader_sl|trackreview|previewhost|thumbnail|private_browsing|default-browser-agent|desktop-launcher|pingsender|proxy|pwa_launcher|elevation_service|elevated_tracing_service|maintenanceservice|msedgewebview2)'
 }
 
 function Test-DetectionFolderLooksAuxiliary {
@@ -2480,13 +2487,14 @@ function Get-LaunchTargets {
         $candidatePath = Resolve-PathCandidate -Value $Path
         if ([string]::IsNullOrWhiteSpace($candidatePath) -or -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) { return }
         if ([IO.Path]::GetExtension($candidatePath) -ine '.exe') { return }
+        if (Test-ExecutablePathLooksAuxiliary -Path $candidatePath) { return }
         $name = [IO.Path]::GetFileName($candidatePath)
         $sourceName = ''
         if ($Source -match '^Shortcut:\s*(.+)$') {
             try { $sourceName = [IO.Path]::GetFileNameWithoutExtension($Matches[1]) } catch { $sourceName = '' }
         }
         $launchText = "$name $sourceName"
-        if ($launchText -match '(?i)(unins|uninstall|setup|installer|update|updater|crash|helper|bootstrap|repair|vcredist|vc_redist|activate|activation|licen[cs]e|register|registration|plugin|service|mailagent|reader_sl|trackreview|previewhost|preview|thumbnail)') { return }
+        if ($launchText -match '(?i)(unins|uninstall|setup|installer|update|updater|crash|helper|bootstrap|repair|vcredist|vc_redist|activate|activation|licen[cs]e|register|registration|plugin|service|mailagent|reader_sl|trackreview|previewhost|thumbnail)') { return }
         if ([string]::IsNullOrWhiteSpace($WorkingDirectory) -or -not (Test-Path -LiteralPath $WorkingDirectory -PathType Container)) {
             try { $WorkingDirectory = [IO.Path]::GetDirectoryName($candidatePath) } catch { $WorkingDirectory = '' }
         }
@@ -2789,109 +2797,185 @@ function Invoke-LaunchValidation {
             hasWindow = $false
             whiteRatio = 0.0
             screenshotPath = ''
+            noWindowAccepted = $false
+            attempts = @()
             candidates = $targets
         }
     }
 
-    $target = $targets | Select-Object -First 1
-    Write-ProofLog "Launch validation target: $($target.path) [$($target.source)]"
-    $process = $null
-    $screenshotPath = Join-Path $LogsPath 'launch-window.png'
-    try {
-        $startProcessParameters = @{
-            FilePath = [string]$target.path
-            WorkingDirectory = [string]$target.workingDirectory
-            PassThru = $true
-            WindowStyle = 'Normal'
-        }
-        if (-not [string]::IsNullOrWhiteSpace([string]$target.arguments)) {
-            $startProcessParameters.ArgumentList = [string]$target.arguments
-        }
+    $attempts = New-Object System.Collections.ArrayList
+    $noWindowAccepted = $null
+    foreach ($target in @($targets | Select-Object -First 6)) {
+        Write-ProofLog "Launch validation target: $($target.path) [$($target.source)]"
+        $process = $null
+        $screenshotPath = Join-Path $LogsPath ("launch-window-{0}.png" -f ($attempts.Count + 1))
+        try {
+            $startProcessParameters = @{
+                FilePath = [string]$target.path
+                WorkingDirectory = [string]$target.workingDirectory
+                PassThru = $true
+                WindowStyle = 'Normal'
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$target.arguments)) {
+                $startProcessParameters.ArgumentList = [string]$target.arguments
+            }
 
-        $process = Start-Process @startProcessParameters
-        Start-Sleep -Seconds 15
-        try { $process.Refresh() } catch {}
+            $process = Start-Process @startProcessParameters
+            $handle = [IntPtr]::Zero
+            $deadline = (Get-Date).AddSeconds(30)
+            while ((Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 500
+                try { $process.Refresh() } catch {}
 
-        $handle = [IntPtr]::Zero
-        if ($null -ne $process) {
-            try {
-                $mainHandle = $process.MainWindowHandle
-                if ($null -ne $mainHandle -and $mainHandle -ne [IntPtr]::Zero) {
-                    $handle = $mainHandle
+                if ($null -ne $process) {
+                    try {
+                        $mainHandle = $process.MainWindowHandle
+                        if ($null -ne $mainHandle -and $mainHandle -ne [IntPtr]::Zero) {
+                            $handle = $mainHandle
+                            break
+                        }
+                    } catch {}
                 }
-            } catch {}
-        }
 
-        if ($handle -eq [IntPtr]::Zero) {
-            foreach ($child in @(Get-Process -ErrorAction SilentlyContinue)) {
-                $childHandle = [IntPtr]::Zero
-                $childPath = ''
-                try { $childHandle = $child.MainWindowHandle } catch {}
-                try { $childPath = [string]$child.Path } catch {}
-                if ($null -ne $childHandle -and
-                    $childHandle -ne [IntPtr]::Zero -and
-                    -not [string]::IsNullOrWhiteSpace($childPath) -and
-                    $childPath -ieq [string]$target.path) {
-                    $handle = $childHandle
-                    $process = $child
-                    break
+                foreach ($child in @(Get-Process -ErrorAction SilentlyContinue)) {
+                    $childHandle = [IntPtr]::Zero
+                    $childPath = ''
+                    try { $childHandle = $child.MainWindowHandle } catch {}
+                    try { $childPath = [string]$child.Path } catch {}
+                    if ($null -ne $childHandle -and
+                        $childHandle -ne [IntPtr]::Zero -and
+                        -not [string]::IsNullOrWhiteSpace($childPath) -and
+                        $childPath -ieq [string]$target.path) {
+                        $handle = $childHandle
+                        $process = $child
+                        break
+                    }
+                }
+
+                if ($handle -ne [IntPtr]::Zero) { break }
+                try {
+                    if ($process.HasExited) { break }
+                } catch {}
+            }
+
+            $rect = $null
+            if ($null -ne $handle -and $handle -ne [IntPtr]::Zero) {
+                $rect = Get-WindowRect -Handle $handle
+            }
+            $hasWindow = $null -ne $rect
+            $whiteRatio = 0.0
+            if ($hasWindow -and (Save-WindowScreenshot -Rect $rect -Path $screenshotPath)) {
+                $whiteRatio = Measure-WhiteWindowRatio -ImagePath $screenshotPath
+            }
+
+            $processStillRunning = $false
+            $exitCode = 0
+            if ($null -ne $process) {
+                try { $process.Refresh() } catch {}
+                try { $processStillRunning = -not $process.HasExited } catch {}
+                if (-not $processStillRunning) {
+                    try { $exitCode = [int]$process.ExitCode } catch { $exitCode = 0 }
+                }
+            }
+
+            $attempt = [pscustomobject]@{
+                target = $target
+                processId = if ($null -ne $process) { $process.Id } else { 0 }
+                hasWindow = $hasWindow
+                whiteRatio = $whiteRatio
+                processStillRunning = $processStillRunning
+                exitCode = $exitCode
+                screenshotPath = if (Test-Path -LiteralPath $screenshotPath) { $screenshotPath } else { '' }
+            }
+            [void]$attempts.Add($attempt)
+
+            if ($hasWindow -and $whiteRatio -ge 0.985) {
+                return [pscustomobject]@{
+                    success = $false
+                    summary = "Installed application launched to a mostly blank/light window (blank ratio $whiteRatio)."
+                    target = $target
+                    processId = $attempt.processId
+                    hasWindow = $true
+                    whiteRatio = $whiteRatio
+                    screenshotPath = $attempt.screenshotPath
+                    noWindowAccepted = $false
+                    attempts = @($attempts)
+                    candidates = $targets
+                }
+            }
+
+            if ($hasWindow) {
+                return [pscustomobject]@{
+                    success = $true
+                    summary = "Installed application launched with a non-blank window (blank ratio $whiteRatio)."
+                    target = $target
+                    processId = $attempt.processId
+                    hasWindow = $true
+                    whiteRatio = $whiteRatio
+                    screenshotPath = $attempt.screenshotPath
+                    noWindowAccepted = $false
+                    attempts = @($attempts)
+                    candidates = $targets
+                }
+            }
+
+            if (($processStillRunning -or $exitCode -eq 0) -and $null -eq $noWindowAccepted) {
+                $noWindowAccepted = [pscustomobject]@{
+                    success = $true
+                    summary = 'Installed application process started successfully but did not expose a visible window in Windows Sandbox; no blank window was detected.'
+                    target = $target
+                    processId = $attempt.processId
+                    hasWindow = $false
+                    whiteRatio = 0.0
+                    screenshotPath = ''
+                    noWindowAccepted = $true
+                    attempts = @($attempts)
+                    candidates = $targets
                 }
             }
         }
-
-        $rect = $null
-        if ($null -ne $handle -and $handle -ne [IntPtr]::Zero) {
-            $rect = Get-WindowRect -Handle $handle
+        catch {
+            [void]$attempts.Add([pscustomobject]@{
+                target = $target
+                processId = if ($null -ne $process) { $process.Id } else { 0 }
+                hasWindow = $false
+                whiteRatio = 0.0
+                processStillRunning = $false
+                exitCode = -1
+                screenshotPath = ''
+                error = $_.Exception.Message
+            })
         }
-        $hasWindow = $null -ne $rect
-        $whiteRatio = 0.0
-        if ($hasWindow -and (Save-WindowScreenshot -Rect $rect -Path $screenshotPath)) {
-            $whiteRatio = Measure-WhiteWindowRatio -ImagePath $screenshotPath
-        }
-
-        $success = $hasWindow -and $whiteRatio -lt 0.985
-        $summary = if (-not $hasWindow) {
-            'Installed application launched but no usable window was detected.'
-        } elseif ($whiteRatio -ge 0.985) {
-            "Installed application launched to a mostly blank/light window (blank ratio $whiteRatio)."
-        } else {
-            "Installed application launched with a non-blank window (blank ratio $whiteRatio)."
-        }
-
-        return [pscustomobject]@{
-            success = $success
-            summary = $summary
-            target = $target
-            processId = if ($null -ne $process) { $process.Id } else { 0 }
-            hasWindow = $hasWindow
-            whiteRatio = $whiteRatio
-            screenshotPath = if (Test-Path -LiteralPath $screenshotPath) { $screenshotPath } else { '' }
-            candidates = $targets
-        }
-    }
-    catch {
-        return [pscustomobject]@{
-            success = $false
-            summary = "Launch validation failed: $($_.Exception.Message)"
-            target = $target
-            processId = if ($null -ne $process) { $process.Id } else { 0 }
-            hasWindow = $false
-            whiteRatio = 0.0
-            screenshotPath = if (Test-Path -LiteralPath $screenshotPath) { $screenshotPath } else { '' }
-            candidates = $targets
-        }
-    }
-    finally {
-        if ($null -ne $process) {
-            try { $process.Refresh() } catch {}
-            if (-not $process.HasExited) {
-                try { [void]$process.CloseMainWindow(); Start-Sleep -Seconds 2 } catch {}
+        finally {
+            if ($null -ne $process) {
                 try { $process.Refresh() } catch {}
                 if (-not $process.HasExited) {
-                    try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }
+                    try { [void]$process.CloseMainWindow(); Start-Sleep -Seconds 2 } catch {}
+                    try { $process.Refresh() } catch {}
+                    if (-not $process.HasExited) {
+                        try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }
+                    }
                 }
             }
         }
+    }
+
+    if ($null -ne $noWindowAccepted) {
+        return $noWindowAccepted
+    }
+
+    $lastAttempt = @($attempts | Select-Object -Last 1)
+    return [pscustomobject]@{
+        success = $false
+        summary = 'Installed application launch targets were tried, but no usable window or stable process launch was detected.'
+        target = if ($lastAttempt.Count -gt 0) { $lastAttempt[0].target } else { $targets | Select-Object -First 1 }
+        processId = if ($lastAttempt.Count -gt 0) { $lastAttempt[0].processId } else { 0 }
+        hasWindow = $false
+        whiteRatio = 0.0
+        screenshotPath = ''
+        noWindowAccepted = $false
+        attempts = @($attempts)
+        candidates = $targets
     }
 }
 
@@ -2963,6 +3047,12 @@ function Write-Report {
             $lines += "Launch remediation tool: $($Result.launchRemediation.displaySettingPath)"
         }
         $lines += "Launch window detected: $($Result.launchValidation.hasWindow)"
+        if ($null -ne $Result.launchValidation.noWindowAccepted) {
+            $lines += "Launch process-only proof: $($Result.launchValidation.noWindowAccepted)"
+        }
+        if ($null -ne $Result.launchValidation.attempts) {
+            $lines += "Launch targets tried: $(@($Result.launchValidation.attempts).Count)"
+        }
         $lines += "Launch white ratio: $($Result.launchValidation.whiteRatio)"
         if (-not [string]::IsNullOrWhiteSpace($Result.launchValidation.screenshotPath)) {
             $lines += "Launch screenshot: $($Result.launchValidation.screenshotPath)"

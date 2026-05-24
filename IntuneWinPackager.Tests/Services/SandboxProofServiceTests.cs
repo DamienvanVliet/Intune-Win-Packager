@@ -88,6 +88,8 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("Executing ${Phase} command directly because Intune install context is User.", script, StringComparison.Ordinal);
             Assert.Contains("Install context: $($Result.request.installContext)", script, StringComparison.Ordinal);
             Assert.Contains("scheduled task finished without writing exit code file", script, StringComparison.Ordinal);
+            Assert.Contains("$Phase-timeout.txt", script, StringComparison.Ordinal);
+            Assert.Contains("Set-Content -LiteralPath $timeoutPath -Value ''true''", script, StringComparison.Ordinal);
             Assert.Contains("Resolve-ProofUninstallCommand", script, StringComparison.Ordinal);
             Assert.Contains("uninstallResolution", script, StringComparison.Ordinal);
             Assert.Contains("$looksNsis", script, StringComparison.Ordinal);
@@ -101,11 +103,19 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("Measure-WhiteWindowRatio", script, StringComparison.Ordinal);
             Assert.Contains("$brightness -ge 185", script, StringComparison.Ordinal);
             Assert.Contains("$spread -le 70", script, StringComparison.Ordinal);
-            Assert.Contains("$whiteRatio -lt 0.985", script, StringComparison.Ordinal);
+            Assert.Contains("$whiteRatio -ge 0.985", script, StringComparison.Ordinal);
             Assert.Contains("blank/light window", script, StringComparison.Ordinal);
+            Assert.Contains("Select-Object -First 6", script, StringComparison.Ordinal);
+            Assert.Contains("noWindowAccepted", script, StringComparison.Ordinal);
+            Assert.Contains("$null -eq $noWindowAccepted", script, StringComparison.Ordinal);
+            Assert.Contains("Launch process-only proof", script, StringComparison.Ordinal);
+            Assert.Contains("Installed application process started successfully", script, StringComparison.Ordinal);
             Assert.Contains("activate|activation", script, StringComparison.Ordinal);
             Assert.Contains("$sourceName", script, StringComparison.Ordinal);
             Assert.Contains("Test-ExecutablePathLooksAuxiliary", script, StringComparison.Ordinal);
+            Assert.Contains("EdgeCore|EdgeWebView|EdgeUpdate", script, StringComparison.Ordinal);
+            Assert.Contains("^ie_to_edge_stub$", script, StringComparison.Ordinal);
+            Assert.Contains("msedgewebview2", script, StringComparison.Ordinal);
             Assert.Contains("private_browsing", script, StringComparison.Ordinal);
             Assert.Contains("default-browser-agent", script, StringComparison.Ordinal);
             Assert.Contains("desktop-launcher", script, StringComparison.Ordinal);
@@ -118,7 +128,7 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("elevated_tracing_service", script, StringComparison.Ordinal);
             Assert.Contains("Common Files\\\\Adobe\\\\ARM", script, StringComparison.Ordinal);
             Assert.Contains("resources\\\\app\\\\git", script, StringComparison.Ordinal);
-            Assert.Contains("\\\\(update|updates|updater|installer|maintenance|temp|cache)\\\\", script, StringComparison.Ordinal);
+            Assert.Contains("\\\\(update|updates|updater|installer|maintenance|temp|cache|Package Cache)\\\\", script, StringComparison.Ordinal);
             Assert.Contains("maintenance\\s+service", script, StringComparison.Ordinal);
             Assert.Contains("Test-DetectionFolderLooksAuxiliary", script, StringComparison.Ordinal);
             Assert.Contains("^C:\\\\ProgramData\\\\", script, StringComparison.Ordinal);
@@ -127,7 +137,7 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("Program Files \\(x86\\)\\\\Google", script, StringComparison.Ordinal);
             Assert.Contains("GetExtension($fileTarget.fullName) -ine '.exe'", script, StringComparison.Ordinal);
             Assert.Contains("$candidates[$existingIndex] = $candidate", script, StringComparison.Ordinal);
-            Assert.Contains("launch-window.png", script, StringComparison.Ordinal);
+            Assert.Contains("launch-window-{0}.png", script, StringComparison.Ordinal);
             Assert.Contains("$handle = [IntPtr]::Zero", script, StringComparison.Ordinal);
             Assert.Contains("$rect = $null", script, StringComparison.Ordinal);
             Assert.Contains("Invoke-WeintekSoftwareRenderWorkaround", script, StringComparison.Ordinal);
