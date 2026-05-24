@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.0.29] - 2026-05-25
+
+### Changed
+- Sandbox Proof now leaves Windows Sandbox open after the proof runner finishes, so you can validate the installed app yourself before closing the session.
+- Added a manual `Close Sandbox` action and an `Open Sandbox Results` action in the Sandbox Proof panel.
+- Added live Sandbox Proof progress based on the proof log, showing baseline, install, evidence capture, uninstall, and result-reading stages.
+
+### Fixed
+- Removed the remaining WSB-level shutdown command so Sandbox Proof close behavior is controlled by the app instead of automatic sandbox shutdown.
+
 ## [3.0.28] - 2026-05-25
 
 ### Fixed

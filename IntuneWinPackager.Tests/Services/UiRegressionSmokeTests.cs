@@ -48,17 +48,24 @@ public class UiRegressionSmokeTests
     }
 
     [Fact]
-    public void SandboxProofWatcher_AutoClosesSandbox_And_AutoAppliesDetection()
+    public void SandboxProofUi_UsesManualClose_Progress_And_AutoAppliesDetection()
     {
+        var xaml = File.ReadAllText(GetPath("IntuneWinPackager.App", "MainWindow.xaml"));
         var viewModel = File.ReadAllText(GetPath("IntuneWinPackager.App", "ViewModels", "MainViewModel.cs"));
         var sandboxService = File.ReadAllText(GetPath("IntuneWinPackager.Infrastructure", "Services", "SandboxProofService.cs"));
         var watcherStart = viewModel.IndexOf("private async Task WatchSandboxProofResultAsync", StringComparison.Ordinal);
         var watcherEnd = viewModel.IndexOf("private async Task<SandboxProofDetectionResult>", watcherStart, StringComparison.Ordinal);
         var watcher = viewModel[watcherStart..watcherEnd];
 
-        Assert.Contains("CloseActiveSandboxAsync", watcher, StringComparison.Ordinal);
+        Assert.Contains("OpenSandboxResultsCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("CloseSandboxCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("SandboxProofProgressValue", xaml, StringComparison.Ordinal);
+        Assert.Contains("SandboxProofProgressText", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("CloseActiveSandboxAsync", watcher, StringComparison.Ordinal);
         Assert.Contains("TryApplySandboxProofDetectionResult(result, showStatus: true);", watcher, StringComparison.Ordinal);
         Assert.DoesNotContain("DetectionRuleType == IntuneDetectionRuleType.None", watcher, StringComparison.Ordinal);
+        Assert.Contains("private async Task CloseSandboxAsync()", viewModel, StringComparison.Ordinal);
+        Assert.Contains("CloseActiveSandboxAsync", viewModel, StringComparison.Ordinal);
         Assert.Contains("CloseActiveWindowsSandboxProcesses", sandboxService, StringComparison.Ordinal);
         Assert.Contains("WindowsSandboxRemoteSession", sandboxService, StringComparison.Ordinal);
     }

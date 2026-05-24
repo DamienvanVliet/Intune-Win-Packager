@@ -147,6 +147,8 @@
     <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Bewezen detectie toepassen</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Runmap</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.OpenResults">Open Sandbox-resultaten</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.CloseSandbox">Sluit Sandbox</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Rapport</sys:String>
 
     <sys:String x:Key="Ui.AppUpdates.Title">App-updates</sys:String>
@@ -364,8 +366,24 @@
     <sys:String x:Key="Vm.SandboxProof.Status.WaitingForResult">Wachten tot de sandbox klaar is en result.json wegschrijft...</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultReady">Sandbox proof heeft {0} detectiekandidaat/kandidaten gevonden. Alleen kandidaten die door de evidence-score komen worden toegepast.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.DetectionApplied">Sandbox proof-detectie toegepast: {0} ({1}, {2} kandidaat/kandidaten gevonden).</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.CloseRequested">Windows Sandbox sluiten is aangevraagd. Als het venster na een paar seconden nog zichtbaar is, sluit het dan handmatig vanuit Windows.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultMissing">Sandbox proof result.json is nog niet beschikbaar.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultTimedOut">Sandbox proof is niet binnen de verwachte tijd afgerond. Open de runmap om logs te bekijken.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Preparing">Sandbox Proof-workspace voorbereiden...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Waiting">Wachten tot Windows Sandbox start...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Started">Sandbox-runner is gestart.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Baseline">Schone-machine baseline vastleggen...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Installing">Applicatie installeren in Windows Sandbox...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.PostInstall">Geinstalleerde staat en detection evidence vastleggen...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.LaunchValidation">Geinstalleerde app-launch target valideren...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.ResolveUninstall">Uninstall command bepalen vanuit sandbox evidence...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Uninstalling">Uninstall uitvoeren en cleanup valideren...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.PostUninstall">Post-uninstall staat vastleggen...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.ReadingResult">Proof afgerond. result.json lezen...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Completed">Sandbox Proof is afgerond en de beste bewezen detectie is toegepast.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Failed">Sandbox Proof is afgerond met een blokkerend probleem.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.NeedsReview">Sandbox Proof is afgerond, maar het resultaat moet gecontroleerd worden.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.TimedOut">Sandbox Proof is verlopen. Open Sandbox-resultaten om de logs te bekijken.</sys:String>
 
     <sys:String x:Key="Vm.Progress.ReadyStep">Klaar</sys:String>
     <sys:String x:Key="Vm.Progress.ReadyDetail">Wachten om te starten.</sys:String>
@@ -454,6 +472,7 @@
     <sys:String x:Key="Vm.Status.SandboxProofRunningTitle">Sandbox Proof</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofRunningMessage">Proof-workspace wordt gemaakt en Windows Sandbox wordt gestart...</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofLaunchedTitle">Sandbox gestart</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofCloseTitle">Sandbox sluiten</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofDetectionAppliedTitle">Detectie toegepast</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofFailedTitle">Sandbox Proof mislukt</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Los preflight-fouten op voordat package-creatie start.</sys:String>

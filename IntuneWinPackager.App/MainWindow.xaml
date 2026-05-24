@@ -1586,10 +1586,14 @@
                                         <Button Content="{DynamicResource Ui.SandboxProof.Run}"
                                                 Style="{StaticResource PrimaryButtonStyle}"
                                                 Command="{Binding RunSandboxProofCommand}" />
-                                        <Button Content="{DynamicResource Ui.SandboxProof.OpenFolder}"
+                                        <Button Content="{DynamicResource Ui.SandboxProof.OpenResults}"
                                                 Style="{StaticResource SecondaryButtonStyle}"
                                                 Margin="8,0,0,0"
-                                                Command="{Binding OpenSandboxProofFolderCommand}" />
+                                                Command="{Binding OpenSandboxResultsCommand}" />
+                                        <Button Content="{DynamicResource Ui.SandboxProof.CloseSandbox}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding CloseSandboxCommand}" />
                                         <Button Content="{DynamicResource Ui.SandboxProof.OpenReport}"
                                                 Style="{StaticResource SecondaryButtonStyle}"
                                                 Margin="8,0,0,0"
@@ -1609,6 +1613,18 @@
                                             <TextBlock Text="{Binding SandboxProofStatus}"
                                                        Style="{StaticResource BodyTextStyle}"
                                                        TextWrapping="Wrap" />
+                                            <StackPanel Margin="0,8,0,0"
+                                                        Visibility="{Binding IsSandboxProofProgressVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                <ProgressBar Minimum="0"
+                                                             Maximum="100"
+                                                             Height="8"
+                                                             Value="{Binding SandboxProofProgressValue}" />
+                                                <TextBlock Text="{Binding SandboxProofProgressText}"
+                                                           Style="{StaticResource BodyTextStyle}"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                                           Margin="0,6,0,0"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
                                             <TextBlock Text="{Binding SandboxProofRunFolder}"
                                                        Style="{StaticResource BodyTextStyle}"
                                                        FontFamily="Consolas"

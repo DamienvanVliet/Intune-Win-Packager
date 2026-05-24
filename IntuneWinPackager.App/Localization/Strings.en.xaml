@@ -147,6 +147,8 @@
     <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Apply Proven Detection</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Run Folder</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.OpenResults">Open Sandbox Results</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.CloseSandbox">Close Sandbox</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenReport">Open Report</sys:String>
 
     <sys:String x:Key="Ui.AppUpdates.Title">App Updates</sys:String>
@@ -446,6 +448,7 @@
     <sys:String x:Key="Vm.Status.SandboxProofRunningTitle">Sandbox Proof</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofRunningMessage">Creating proof workspace and launching Windows Sandbox...</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofLaunchedTitle">Sandbox Launched</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofCloseTitle">Sandbox Close</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofDetectionAppliedTitle">Detection Applied</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofFailedTitle">Sandbox Proof Failed</sys:String>
     <sys:String x:Key="Vm.Status.PreflightResolveBeforePackaging">Resolve preflight errors before starting package creation.</sys:String>
@@ -458,8 +461,24 @@
     <sys:String x:Key="Vm.SandboxProof.Status.WaitingForResult">Waiting for the sandbox to finish and write result.json...</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultReady">Sandbox proof found {0} detection candidate(s). Apply only candidates that pass evidence scoring.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.DetectionApplied">Applied sandbox proof detection: {0} ({1}, {2} candidate(s) found).</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Status.CloseRequested">Windows Sandbox close requested. If the window is still visible after a few seconds, close it manually from Windows.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultMissing">Sandbox proof result.json is not available yet.</sys:String>
     <sys:String x:Key="Vm.SandboxProof.Status.ResultTimedOut">Sandbox proof did not finish within the expected time. Open the run folder to inspect logs.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Preparing">Preparing Sandbox Proof workspace...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Waiting">Waiting for Windows Sandbox to start...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Started">Sandbox runner started.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Baseline">Capturing clean-machine baseline...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Installing">Installing the application in Windows Sandbox...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.PostInstall">Capturing installed state and detection evidence...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.LaunchValidation">Validating the installed app launch target...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.ResolveUninstall">Resolving the uninstall command from sandbox evidence...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Uninstalling">Running uninstall and validating cleanup...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.PostUninstall">Capturing post-uninstall state...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.ReadingResult">Proof completed. Reading result.json...</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Completed">Sandbox Proof completed and applied the best proven detection.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.Failed">Sandbox Proof finished with a blocking issue.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.NeedsReview">Sandbox Proof finished, but the result needs review.</sys:String>
+    <sys:String x:Key="Vm.SandboxProof.Progress.TimedOut">Sandbox Proof timed out. Open Sandbox Results to inspect logs.</sys:String>
     <sys:String x:Key="Vm.Status.UnexpectedErrorTitle">Unexpected Error</sys:String>
     <sys:String x:Key="Vm.Status.ProfileNameRequiredTitle">Profile Name Required</sys:String>
     <sys:String x:Key="Vm.Status.ProfileNameRequiredMessage">Provide a profile name before saving.</sys:String>

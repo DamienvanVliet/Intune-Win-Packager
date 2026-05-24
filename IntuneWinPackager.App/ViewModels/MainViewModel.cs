@@ -411,6 +411,15 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string sandboxProofResultPath = string.Empty;
 
+    [ObservableProperty]
+    private bool isSandboxProofProgressVisible;
+
+    [ObservableProperty]
+    private int sandboxProofProgressValue;
+
+    [ObservableProperty]
+    private string sandboxProofProgressText = string.Empty;
+
     public MainViewModel(
         IPackagingWorkflowService packagingWorkflowService,
         IValidationService validationService,
@@ -549,7 +558,9 @@ public partial class MainViewModel : ObservableObject
         ResetCommand = new RelayCommand(ResetConfiguration, () => !IsBusy);
         OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder, CanOpenOutputFolder);
         OpenSandboxProofFolderCommand = new RelayCommand(OpenSandboxProofFolder, CanOpenSandboxProofFolder);
+        OpenSandboxResultsCommand = new RelayCommand(OpenSandboxResults, CanOpenSandboxResults);
         OpenSandboxProofReportCommand = new RelayCommand(OpenSandboxProofReport, CanOpenSandboxProofReport);
+        CloseSandboxCommand = new AsyncRelayCommand(CloseSandboxAsync, CanCloseSandbox);
         SaveProfileCommand = new AsyncRelayCommand(SaveProfileAsync, () => !IsBusy);
         LoadProfileCommand = new AsyncRelayCommand(LoadProfileAsync, () => !IsBusy);
         DeleteProfileCommand = new AsyncRelayCommand(DeleteProfileAsync, CanDeleteProfile);
@@ -1047,7 +1058,11 @@ public partial class MainViewModel : ObservableObject
 
     public IRelayCommand OpenSandboxProofFolderCommand { get; }
 
+    public IRelayCommand OpenSandboxResultsCommand { get; }
+
     public IRelayCommand OpenSandboxProofReportCommand { get; }
+
+    public IAsyncRelayCommand CloseSandboxCommand { get; }
 
     public IAsyncRelayCommand SaveProfileCommand { get; }
 
@@ -1616,7 +1631,9 @@ public partial class MainViewModel : ObservableObject
         DeleteProfileCommand.NotifyCanExecuteChanged();
         OpenOutputFolderCommand.NotifyCanExecuteChanged();
         OpenSandboxProofFolderCommand.NotifyCanExecuteChanged();
+        OpenSandboxResultsCommand.NotifyCanExecuteChanged();
         OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
+        CloseSandboxCommand.NotifyCanExecuteChanged();
         CheckForUpdatesCommand.NotifyCanExecuteChanged();
         InstallUpdateCommand.NotifyCanExecuteChanged();
         SearchCatalogCommand.NotifyCanExecuteChanged();
@@ -1651,6 +1668,8 @@ public partial class MainViewModel : ObservableObject
     partial void OnSandboxProofRunFolderChanged(string value)
     {
         OpenSandboxProofFolderCommand.NotifyCanExecuteChanged();
+        OpenSandboxResultsCommand.NotifyCanExecuteChanged();
+        CloseSandboxCommand.NotifyCanExecuteChanged();
         NotifyPackagingCoachChanged();
     }
 
@@ -2633,6 +2652,9 @@ public partial class MainViewModel : ObservableObject
         IsBusy = true;
         SandboxProofStatus = T("Vm.SandboxProof.Status.Running");
         SandboxProofCandidateSummary = precheck.Summary;
+        IsSandboxProofProgressVisible = true;
+        SandboxProofProgressValue = 3;
+        SandboxProofProgressText = T("Vm.SandboxProof.Progress.Preparing");
         AppendLog("Preparing Windows Sandbox proof run...");
         AppendLog(precheck.Summary);
 
@@ -2707,8 +2729,10 @@ public partial class MainViewModel : ObservableObject
         SandboxProofReportPath = session.ReportPath;
         SandboxProofResultPath = session.ResultPath;
         OpenSandboxProofFolderCommand.NotifyCanExecuteChanged();
+        OpenSandboxResultsCommand.NotifyCanExecuteChanged();
         OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
         ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
+        CloseSandboxCommand.NotifyCanExecuteChanged();
 
         SandboxProofStatus = session.Message;
         AppendLog($"Sandbox proof workspace: {session.RunDirectory}");
@@ -2723,6 +2747,9 @@ public partial class MainViewModel : ObservableObject
         _sandboxProofWatchCancellation = new CancellationTokenSource();
 
         SandboxProofCandidateSummary = T("Vm.SandboxProof.Status.WaitingForResult");
+        IsSandboxProofProgressVisible = true;
+        SandboxProofProgressValue = 5;
+        SandboxProofProgressText = T("Vm.SandboxProof.Progress.Waiting");
         ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
 
         _ = WatchSandboxProofResultAsync(
@@ -2743,26 +2770,24 @@ public partial class MainViewModel : ObservableObject
                 timeoutMinutes,
                 cancellationToken).ConfigureAwait(false);
 
-            if (result.Completed)
-            {
-                await _sandboxProofService.CloseActiveSandboxAsync(cancellationToken).ConfigureAwait(false);
-            }
-
             await RunOnUiThreadAsync(() =>
             {
                 if (!result.Completed)
                 {
                     SandboxProofCandidateSummary = T("Vm.SandboxProof.Status.ResultTimedOut");
+                    SandboxProofProgressValue = 100;
+                    SandboxProofProgressText = T("Vm.SandboxProof.Progress.TimedOut");
                     ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
                     return;
                 }
 
                 SandboxProofCandidateSummary = result.Message;
-                AppendLog("Sandbox proof result is ready; Windows Sandbox auto-close was requested.");
                 ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
 
                 if (result.Failed)
                 {
+                    SandboxProofProgressValue = 100;
+                    SandboxProofProgressText = T("Vm.SandboxProof.Progress.Failed");
                     SandboxProofStatus = result.Message;
                     SetStatus(
                         OperationState.Error,
@@ -2773,6 +2798,8 @@ public partial class MainViewModel : ObservableObject
 
                 if (result.BestCandidate is null)
                 {
+                    SandboxProofProgressValue = 100;
+                    SandboxProofProgressText = T("Vm.SandboxProof.Progress.NeedsReview");
                     SandboxProofStatus = result.Message;
                     SetStatus(
                         OperationState.Error,
@@ -2781,6 +2808,8 @@ public partial class MainViewModel : ObservableObject
                     return;
                 }
 
+                SandboxProofProgressValue = 100;
+                SandboxProofProgressText = T("Vm.SandboxProof.Progress.Completed");
                 TryApplySandboxProofDetectionResult(result, showStatus: true);
             }).ConfigureAwait(false);
 
@@ -2797,15 +2826,32 @@ public partial class MainViewModel : ObservableObject
         CancellationToken cancellationToken)
     {
         var deadline = DateTimeOffset.UtcNow.AddMinutes(Math.Clamp(timeoutMinutes + 5, 10, 245));
+        var lastProgressValue = -1;
+        var lastProgressText = string.Empty;
 
         while (!cancellationToken.IsCancellationRequested && DateTimeOffset.UtcNow <= deadline)
         {
-            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+            var progress = ReadSandboxProofProgress(resultPath);
+            if (progress.Value != lastProgressValue ||
+                !string.Equals(progress.Text, lastProgressText, StringComparison.Ordinal))
+            {
+                lastProgressValue = progress.Value;
+                lastProgressText = progress.Text;
+                await RunOnUiThreadAsync(() =>
+                {
+                    IsSandboxProofProgressVisible = true;
+                    SandboxProofProgressValue = progress.Value;
+                    SandboxProofProgressText = progress.Text;
+                }).ConfigureAwait(false);
+            }
+
             var result = await _sandboxProofService.ReadResultAsync(resultPath, cancellationToken).ConfigureAwait(false);
             if (result.Completed)
             {
                 return result;
             }
+
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
         }
 
         return new SandboxProofDetectionResult
@@ -2814,6 +2860,88 @@ public partial class MainViewModel : ObservableObject
             Failed = false,
             ResultPath = resultPath
         };
+    }
+
+    private SandboxProofProgress ReadSandboxProofProgress(string resultPath)
+    {
+        if (!string.IsNullOrWhiteSpace(resultPath) && File.Exists(resultPath))
+        {
+            return new SandboxProofProgress(98, T("Vm.SandboxProof.Progress.ReadingResult"));
+        }
+
+        var runFolder = string.IsNullOrWhiteSpace(resultPath)
+            ? SandboxProofRunFolder
+            : Path.GetDirectoryName(resultPath) ?? SandboxProofRunFolder;
+        var logPath = string.IsNullOrWhiteSpace(runFolder)
+            ? string.Empty
+            : Path.Combine(runFolder, "logs", "proof.log");
+
+        if (string.IsNullOrWhiteSpace(logPath) || !File.Exists(logPath))
+        {
+            return new SandboxProofProgress(5, T("Vm.SandboxProof.Progress.Waiting"));
+        }
+
+        string logText;
+        try
+        {
+            logText = File.ReadAllText(logPath);
+        }
+        catch (IOException)
+        {
+            return new SandboxProofProgress(SandboxProofProgressValue, SandboxProofProgressText);
+        }
+
+        return ResolveSandboxProofProgressFromLog(logText);
+    }
+
+    private SandboxProofProgress ResolveSandboxProofProgressFromLog(string logText)
+    {
+        if (logText.Contains("Sandbox proof run completed", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SandboxProofProgress(96, T("Vm.SandboxProof.Progress.ReadingResult"));
+        }
+
+        if (logText.Contains("Capturing post-uninstall snapshot", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SandboxProofProgress(90, T("Vm.SandboxProof.Progress.PostUninstall"));
+        }
+
+        if (logText.Contains("Running uninstall command", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SandboxProofProgress(78, T("Vm.SandboxProof.Progress.Uninstalling"));
+        }
+
+        if (logText.Contains("Resolved uninstall command", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SandboxProofProgress(70, T("Vm.SandboxProof.Progress.ResolveUninstall"));
+        }
+
+        if (logText.Contains("Launch validation target", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SandboxProofProgress(62, T("Vm.SandboxProof.Progress.LaunchValidation"));
+        }
+
+        if (logText.Contains("Capturing post-install snapshot", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SandboxProofProgress(50, T("Vm.SandboxProof.Progress.PostInstall"));
+        }
+
+        if (logText.Contains("Running install command", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SandboxProofProgress(30, T("Vm.SandboxProof.Progress.Installing"));
+        }
+
+        if (logText.Contains("Capturing baseline snapshot", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SandboxProofProgress(18, T("Vm.SandboxProof.Progress.Baseline"));
+        }
+
+        if (logText.Contains("Starting sandbox proof run", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SandboxProofProgress(10, T("Vm.SandboxProof.Progress.Started"));
+        }
+
+        return new SandboxProofProgress(5, T("Vm.SandboxProof.Progress.Waiting"));
     }
 
     private bool CanOpenSandboxProofFolder()
@@ -2826,6 +2954,50 @@ public partial class MainViewModel : ObservableObject
         if (CanOpenSandboxProofFolder())
         {
             _dialogService.OpenFolder(SandboxProofRunFolder);
+        }
+    }
+
+    private bool CanOpenSandboxResults()
+    {
+        return CanOpenSandboxProofFolder();
+    }
+
+    private void OpenSandboxResults()
+    {
+        OpenSandboxProofFolder();
+    }
+
+    private bool CanCloseSandbox()
+    {
+        return !IsBusy && !string.IsNullOrWhiteSpace(SandboxProofRunFolder);
+    }
+
+    private async Task CloseSandboxAsync()
+    {
+        try
+        {
+            await _sandboxProofService.CloseActiveSandboxAsync().ConfigureAwait(false);
+            await RunOnUiThreadAsync(() =>
+            {
+                SandboxProofStatus = T("Vm.SandboxProof.Status.CloseRequested");
+                SetStatus(
+                    OperationState.Success,
+                    T("Vm.Status.SandboxProofCloseTitle"),
+                    SandboxProofStatus);
+                AppendLog("Windows Sandbox close requested from the app.");
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await RunOnUiThreadAsync(() =>
+            {
+                SandboxProofStatus = ex.Message;
+                SetStatus(
+                    OperationState.Error,
+                    T("Vm.Status.SandboxProofFailedTitle"),
+                    ex.Message);
+                AppendLog($"Windows Sandbox close failed: {ex.Message}");
+            }).ConfigureAwait(false);
         }
     }
 
@@ -5181,6 +5353,9 @@ public partial class MainViewModel : ObservableObject
             SandboxProofRunFolder = string.Empty;
             SandboxProofReportPath = string.Empty;
             SandboxProofResultPath = string.Empty;
+            IsSandboxProofProgressVisible = false;
+            SandboxProofProgressValue = 0;
+            SandboxProofProgressText = string.Empty;
             HasPackagingRun = false;
             HasPreflightRun = false;
             PreflightSummary = T("Vm.Preflight.DefaultSummary");
@@ -5295,9 +5470,14 @@ public partial class MainViewModel : ObservableObject
         SandboxProofRunFolder = string.Empty;
         SandboxProofReportPath = string.Empty;
         SandboxProofResultPath = string.Empty;
+        IsSandboxProofProgressVisible = false;
+        SandboxProofProgressValue = 0;
+        SandboxProofProgressText = string.Empty;
         ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
         OpenSandboxProofFolderCommand.NotifyCanExecuteChanged();
+        OpenSandboxResultsCommand.NotifyCanExecuteChanged();
         OpenSandboxProofReportCommand.NotifyCanExecuteChanged();
+        CloseSandboxCommand.NotifyCanExecuteChanged();
     }
 
     private static bool PathsEqual(string left, string right)
@@ -6044,6 +6224,8 @@ public partial class MainViewModel : ObservableObject
         int AdditionalDetectionRuleCount,
         string InstallCommandPreview,
         string UninstallCommandPreview);
+
+    private sealed record SandboxProofProgress(int Value, string Text);
 
     private sealed record CatalogCommandResolution(string Command, string Message);
 
