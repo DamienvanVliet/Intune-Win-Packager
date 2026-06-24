@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.31] - 2026-06-24
+
+### Fixed
+- Sandbox Proof no longer marks launch validation as non-blank when screenshot capture fails; a visible window now requires a captured screenshot before blank-window analysis can pass.
+- Sandbox Proof reports now state that uninstall proof intentionally removes the app after validation, making it clear why a proven app may no longer be visible in the still-open sandbox.
+
 ## [3.0.30] - 2026-05-25
 
 ### Fixed

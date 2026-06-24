@@ -3014,7 +3014,9 @@ function Invoke-LaunchValidation {
             }
             $hasWindow = $null -ne $rect
             $whiteRatio = 0.0
+            $screenshotCaptured = $false
             if ($hasWindow -and (Save-WindowScreenshot -Rect $rect -Path $screenshotPath)) {
+                $screenshotCaptured = $true
                 $whiteRatio = Measure-WhiteWindowRatio -ImagePath $screenshotPath
             }
 
@@ -3035,11 +3037,17 @@ function Invoke-LaunchValidation {
                 whiteRatio = $whiteRatio
                 processStillRunning = $processStillRunning
                 exitCode = $exitCode
+                screenshotCaptured = $screenshotCaptured
                 screenshotPath = if (Test-Path -LiteralPath $screenshotPath) { $screenshotPath } else { '' }
             }
             [void]$attempts.Add($attempt)
 
-            if ($hasWindow -and $whiteRatio -ge 0.985) {
+            if ($hasWindow -and -not $screenshotCaptured) {
+                Write-ProofLog "Launch validation could not capture a screenshot for $($target.path); trying the next launch target when available."
+                continue
+            }
+
+            if ($hasWindow -and $screenshotCaptured -and $whiteRatio -ge 0.985) {
                 return [pscustomobject]@{
                     success = $false
                     summary = "Installed application launched to a mostly blank/light window (blank ratio $whiteRatio)."
@@ -3054,7 +3062,7 @@ function Invoke-LaunchValidation {
                 }
             }
 
-            if ($hasWindow) {
+            if ($hasWindow -and $screenshotCaptured) {
                 return [pscustomobject]@{
                     success = $true
                     summary = "Installed application launched with a non-blank window (blank ratio $whiteRatio)."
@@ -3092,6 +3100,7 @@ function Invoke-LaunchValidation {
                 whiteRatio = 0.0
                 processStillRunning = $false
                 exitCode = -1
+                screenshotCaptured = $false
                 screenshotPath = ''
                 error = $_.Exception.Message
             })
@@ -3115,12 +3124,19 @@ function Invoke-LaunchValidation {
     }
 
     $lastAttempt = @($attempts | Select-Object -Last 1)
+    $lastHadWindowWithoutScreenshot = $lastAttempt.Count -gt 0 -and
+        [bool]$lastAttempt[0].hasWindow -and
+        -not [bool]$lastAttempt[0].screenshotCaptured
     return [pscustomobject]@{
         success = $false
-        summary = 'Installed application launch targets were tried, but no usable window or stable process launch was detected.'
+        summary = if ($lastHadWindowWithoutScreenshot) {
+            'Installed application exposed a window, but Sandbox Proof could not capture a screenshot; launch proof cannot confirm the window is usable.'
+        } else {
+            'Installed application launch targets were tried, but no usable window or stable process launch was detected.'
+        }
         target = if ($lastAttempt.Count -gt 0) { $lastAttempt[0].target } else { $targets | Select-Object -First 1 }
         processId = if ($lastAttempt.Count -gt 0) { $lastAttempt[0].processId } else { 0 }
-        hasWindow = $false
+        hasWindow = if ($lastAttempt.Count -gt 0) { [bool]$lastAttempt[0].hasWindow } else { $false }
         whiteRatio = 0.0
         screenshotPath = ''
         noWindowAccepted = $false
@@ -3210,6 +3226,7 @@ function Write-Report {
         $lines += ''
     }
     $lines += 'Uninstall proof'
+    $lines += 'Note: Sandbox Proof intentionally uninstalls the application after validation so the sandbox is clean after the run.'
     $lines += "Uninstall command: $($Result.uninstall.command)"
     if (-not [string]::IsNullOrWhiteSpace([string]$Result.uninstall.executionMode)) {
         $lines += "Uninstall execution mode: $($Result.uninstall.executionMode)"

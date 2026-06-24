@@ -106,6 +106,10 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("$spread -le 70", script, StringComparison.Ordinal);
             Assert.Contains("$whiteRatio -ge 0.985", script, StringComparison.Ordinal);
             Assert.Contains("blank/light window", script, StringComparison.Ordinal);
+            Assert.Contains("$screenshotCaptured = $false", script, StringComparison.Ordinal);
+            Assert.Contains("could not capture a screenshot", script, StringComparison.Ordinal);
+            Assert.Contains("launch proof cannot confirm the window is usable", script, StringComparison.Ordinal);
+            Assert.Contains("intentionally uninstalls the application after validation", script, StringComparison.Ordinal);
             Assert.Contains("Select-Object -First 6", script, StringComparison.Ordinal);
             Assert.Contains("noWindowAccepted", script, StringComparison.Ordinal);
             Assert.Contains("$null -eq $noWindowAccepted", script, StringComparison.Ordinal);
