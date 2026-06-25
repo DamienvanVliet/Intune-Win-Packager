@@ -33,6 +33,8 @@ public class UiRegressionSmokeTests
         Assert.Contains("Ui.Workflow.Title", xaml, StringComparison.Ordinal);
         Assert.Contains("RestartAsAdministratorCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("ShouldShowRestartAsAdministrator", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding IntuneWinAppUtilPath, UpdateSourceTrigger=PropertyChanged}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("BrowseToolPathCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding InstallCommandPreview, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding UninstallCommandPreview, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("Command=\"{Binding TestDetectionCommand}\"", xaml, StringComparison.Ordinal);
@@ -83,6 +85,35 @@ public class UiRegressionSmokeTests
 
         Assert.True(missingInDutch.Count == 0, $"Missing Dutch keys: {string.Join(", ", missingInDutch)}");
         Assert.True(missingInEnglish.Count == 0, $"Missing English keys: {string.Join(", ", missingInEnglish)}");
+    }
+
+    [Fact]
+    public void CatalogSearchAndDetails_GuardAgainstStaleAsyncResults()
+    {
+        var viewModel = File.ReadAllText(GetPath("IntuneWinPackager.App", "ViewModels", "MainViewModel.cs"));
+
+        Assert.Contains("private int _catalogSearchRequestId;", viewModel, StringComparison.Ordinal);
+        Assert.Contains("private int _catalogDetailsRequestId;", viewModel, StringComparison.Ordinal);
+        Assert.Contains("requestId != _catalogSearchRequestId", viewModel, StringComparison.Ordinal);
+        Assert.Contains("requestId != _catalogDetailsRequestId || !IsSelectedCatalogEntry(entry)", viewModel, StringComparison.Ordinal);
+        Assert.Contains("if (requestId == _catalogDetailsRequestId)", viewModel, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SetupSelection_RefreshesInstallerMetadataOnce()
+    {
+        var viewModel = File.ReadAllText(GetPath("IntuneWinPackager.App", "ViewModels", "MainViewModel.cs"));
+        var selectStart = viewModel.IndexOf("private async Task SelectSetupFileAsync", StringComparison.Ordinal);
+        var selectEnd = viewModel.IndexOf("private void ResetPackageSpecificStateForSetupChange", selectStart, StringComparison.Ordinal);
+        var selectMethod = viewModel[selectStart..selectEnd];
+
+        Assert.Contains("_suppressSetupRefresh = true;", selectMethod, StringComparison.Ordinal);
+        Assert.Contains("_suppressSetupRefresh = wasSuppressingSetupRefresh;", selectMethod, StringComparison.Ordinal);
+        Assert.Equal(1, Regex.Matches(selectMethod, "HandleSetupFileChangedAsync").Count);
+        Assert.Contains("private int _setupRefreshRequestId;", viewModel, StringComparison.Ordinal);
+        Assert.Contains("IsCurrentSetupRefresh(requestId, filePath)", viewModel, StringComparison.Ordinal);
+        Assert.Contains("_ = RefreshSetupFilePathAsync(value);", viewModel, StringComparison.Ordinal);
+        Assert.Contains("Setup refresh failed:", viewModel, StringComparison.Ordinal);
     }
 
     [Fact]

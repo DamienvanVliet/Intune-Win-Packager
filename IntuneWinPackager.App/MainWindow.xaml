@@ -229,6 +229,23 @@
                                                Foreground="{DynamicResource TextSecondaryBrush}"
                                                TextWrapping="Wrap"
                                                Margin="0,0,0,10" />
+                                    <TextBlock Text="{DynamicResource Ui.ToolPath}"
+                                               Style="{StaticResource BodyTextStyle}" />
+                                    <Grid Margin="0,6,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox Grid.Column="0"
+                                                 Text="{Binding IntuneWinAppUtilPath, UpdateSourceTrigger=PropertyChanged}"
+                                                 FontFamily="Consolas"
+                                                 FontSize="12" />
+                                        <Button Grid.Column="1"
+                                                Content="{DynamicResource Ui.Browse}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding BrowseToolPathCommand}" />
+                                    </Grid>
                                     <WrapPanel>
                                         <Button Content="{DynamicResource Ui.SetupWizard.Step2.Action}"
                                                 Style="{StaticResource SecondaryButtonStyle}"

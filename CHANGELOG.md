@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.33] - 2026-06-25
+
+### Fixed
+- Store search and package detail loading now ignore stale async results, preventing old catalog responses from overwriting a newer selection or enabling actions while newer details are still loading.
+- Setup file selection now refreshes installer metadata exactly once and ignores stale MSI/EXE analysis results when another installer is selected quickly.
+- Settings, profiles, history, and catalog profile persistence now write JSON atomically so a crash or cancellation cannot leave a half-written file behind.
+
 ## [3.0.32] - 2026-06-25
 
 ### Fixed

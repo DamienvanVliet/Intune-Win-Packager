@@ -81,6 +81,7 @@ public partial class MainViewModel : ObservableObject
     private static readonly TimeSpan MinimumUpdateRecheckInterval = TimeSpan.FromMinutes(10);
 
     private CancellationTokenSource? _msiInspectionCancellation;
+    private int _setupRefreshRequestId;
     private CancellationTokenSource? _sandboxProofWatchCancellation;
     private bool _isInitialized;
     private bool _suppressSetupRefresh;
@@ -91,7 +92,9 @@ public partial class MainViewModel : ObservableObject
     private DateTimeOffset? _lastUpdateCheckCompletedAtUtc;
     private DateTimeOffset? _lastPreflightCompletedAtUtc;
     private CancellationTokenSource? _catalogSearchCancellation;
+    private int _catalogSearchRequestId;
     private CancellationTokenSource? _catalogDetailsCancellation;
+    private int _catalogDetailsRequestId;
     private List<CatalogPackageProfile> _catalogProfiles = [];
     private CatalogSelectionContext? _activeCatalogSelectionContext;
     private IReadOnlyList<IntuneDetectionRule> _additionalDetectionRules = [];
@@ -1465,7 +1468,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        _ = HandleSetupFileChangedAsync(value);
+        _ = RefreshSetupFilePathAsync(value);
     }
 
     partial void OnInstallerTypeChanged(InstallerType value)
@@ -3555,6 +3558,7 @@ public partial class MainViewModel : ObservableObject
         _catalogSearchCancellation?.Dispose();
         _catalogSearchCancellation = new CancellationTokenSource();
         var cancellationToken = _catalogSearchCancellation.Token;
+        var requestId = ++_catalogSearchRequestId;
 
         IsPackageCatalogBusy = true;
         PackageCatalogStatus = T("Vm.Store.Searching");
@@ -3593,6 +3597,11 @@ public partial class MainViewModel : ObservableObject
                 IncludeNuGet = IncludeNuGetCatalogSource
             }, cancellationToken);
 
+            if (requestId != _catalogSearchRequestId || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
             foreach (var item in results)
             {
                 PackageCatalogResults.Add(DecorateCatalogEntry(item));
@@ -3617,16 +3626,25 @@ public partial class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            PackageCatalogStatus = T("Vm.Store.Canceled");
+            if (requestId == _catalogSearchRequestId)
+            {
+                PackageCatalogStatus = T("Vm.Store.Canceled");
+            }
         }
         catch (Exception ex)
         {
-            PackageCatalogStatus = TF("Vm.Store.Error", ex.Message);
+            if (requestId == _catalogSearchRequestId)
+            {
+                PackageCatalogStatus = TF("Vm.Store.Error", ex.Message);
+            }
         }
         finally
         {
-            IsPackageCatalogBusy = false;
-            SearchCatalogCommand.NotifyCanExecuteChanged();
+            if (requestId == _catalogSearchRequestId)
+            {
+                IsPackageCatalogBusy = false;
+                SearchCatalogCommand.NotifyCanExecuteChanged();
+            }
         }
     }
 
@@ -3635,6 +3653,9 @@ public partial class MainViewModel : ObservableObject
         CatalogEntryDetails = null;
         if (entry is null)
         {
+            _catalogDetailsCancellation?.Cancel();
+            _catalogDetailsRequestId++;
+            IsPackageCatalogDetailBusy = false;
             return;
         }
 
@@ -3642,6 +3663,7 @@ public partial class MainViewModel : ObservableObject
         _catalogDetailsCancellation?.Dispose();
         _catalogDetailsCancellation = new CancellationTokenSource();
         var cancellationToken = _catalogDetailsCancellation.Token;
+        var requestId = ++_catalogDetailsRequestId;
 
         IsPackageCatalogDetailBusy = true;
         PackageCatalogStatus = TF("Vm.Store.LoadingDetails", entry.Name);
@@ -3650,6 +3672,11 @@ public partial class MainViewModel : ObservableObject
         {
             var detailed = await _packageCatalogService.GetDetailsAsync(entry, cancellationToken);
             if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (requestId != _catalogDetailsRequestId || !IsSelectedCatalogEntry(entry))
             {
                 return;
             }
@@ -3663,13 +3690,27 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            if (requestId != _catalogDetailsRequestId || !IsSelectedCatalogEntry(entry))
+            {
+                return;
+            }
+
             CatalogEntryDetails = DecorateCatalogEntry(entry);
             PackageCatalogStatus = TF("Vm.Store.DetailsError", ex.Message);
         }
         finally
         {
-            IsPackageCatalogDetailBusy = false;
+            if (requestId == _catalogDetailsRequestId)
+            {
+                IsPackageCatalogDetailBusy = false;
+            }
         }
+    }
+
+    private bool IsSelectedCatalogEntry(PackageCatalogEntry entry)
+    {
+        return SelectedCatalogEntry is not null &&
+               IsCatalogQueueEquivalent(SelectedCatalogEntry, entry);
     }
 
     private async Task DownloadCatalogEntryAsync()
@@ -5231,7 +5272,7 @@ public partial class MainViewModel : ObservableObject
 
         if (File.Exists(SetupFilePath) && InstallerType == InstallerType.Msi)
         {
-            await RefreshMsiMetadataSummaryAsync(SetupFilePath);
+            await RefreshMsiMetadataSummaryAsync(SetupFilePath, ++_setupRefreshRequestId);
         }
 
         UpdateValidation();
@@ -5435,16 +5476,25 @@ public partial class MainViewModel : ObservableObject
             ResetPackageSpecificStateForSetupChange();
         }
 
-        SetupFilePath = filePath;
-
-        if (string.IsNullOrWhiteSpace(SourceFolder) || !IsPathInsideFolder(filePath, SourceFolder))
+        var wasSuppressingSetupRefresh = _suppressSetupRefresh;
+        _suppressSetupRefresh = true;
+        try
         {
-            SourceFolder = Path.GetDirectoryName(filePath) ?? string.Empty;
+            SetupFilePath = filePath;
+
+            if (string.IsNullOrWhiteSpace(SourceFolder) || !IsPathInsideFolder(filePath, SourceFolder))
+            {
+                SourceFolder = Path.GetDirectoryName(filePath) ?? string.Empty;
+            }
+
+            if (updateOutputWhenEmpty && string.IsNullOrWhiteSpace(OutputFolder) && !string.IsNullOrWhiteSpace(SourceFolder))
+            {
+                OutputFolder = BuildDefaultOutputFolder(SourceFolder);
+            }
         }
-
-        if (updateOutputWhenEmpty && string.IsNullOrWhiteSpace(OutputFolder) && !string.IsNullOrWhiteSpace(SourceFolder))
+        finally
         {
-            OutputFolder = BuildDefaultOutputFolder(SourceFolder);
+            _suppressSetupRefresh = wasSuppressingSetupRefresh;
         }
 
         await HandleSetupFileChangedAsync(filePath);
@@ -5501,8 +5551,14 @@ public partial class MainViewModel : ObservableObject
 
     private async Task HandleSetupFileChangedAsync(string filePath)
     {
+        var requestId = ++_setupRefreshRequestId;
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
         {
+            if (!IsCurrentSetupRefresh(requestId, filePath))
+            {
+                return;
+            }
+
             InstallerType = InstallerType.Unknown;
             MsiMetadataSummary = string.Empty;
             InstallerParameterProbeDetected = false;
@@ -5510,13 +5566,27 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (!IsCurrentSetupRefresh(requestId, filePath))
+        {
+            return;
+        }
+
         InstallerType = _installerCommandService.DetectInstallerType(filePath);
 
         if (InstallerType == InstallerType.Msi)
         {
-            await RefreshMsiMetadataSummaryAsync(filePath);
+            await RefreshMsiMetadataSummaryAsync(filePath, requestId);
+            if (!IsCurrentSetupRefresh(requestId, filePath))
+            {
+                return;
+            }
 
             var metadata = await _msiInspectorService.InspectAsync(filePath);
+            if (!IsCurrentSetupRefresh(requestId, filePath))
+            {
+                return;
+            }
+
             var suggestion = _installerCommandService.CreateSuggestion(
                 filePath,
                 InstallerType.Msi,
@@ -5547,7 +5617,9 @@ public partial class MainViewModel : ObservableObject
         }
 
         UpdateValidation();
-        if (InstallerType == InstallerType.Exe && IsSetupFileValid)
+        if (IsCurrentSetupRefresh(requestId, filePath) &&
+            InstallerType == InstallerType.Exe &&
+            IsSetupFileValid)
         {
             var precheck = BuildSandboxProofPrecheck();
             SandboxProofCandidateSummary = precheck.Summary;
@@ -5555,7 +5627,27 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private async Task RefreshMsiMetadataSummaryAsync(string msiPath)
+    private bool IsCurrentSetupRefresh(int requestId, string filePath)
+    {
+        return requestId == _setupRefreshRequestId &&
+               (string.IsNullOrWhiteSpace(filePath) || PathsEqual(SetupFilePath, filePath));
+    }
+
+    private async Task RefreshSetupFilePathAsync(string filePath)
+    {
+        try
+        {
+            await HandleSetupFileChangedAsync(filePath);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(OperationState.Error, T("Vm.Status.UnexpectedErrorTitle"), ex.Message);
+            AppendLog($"Setup refresh failed: {ex.Message}");
+            UpdateValidation();
+        }
+    }
+
+    private async Task RefreshMsiMetadataSummaryAsync(string msiPath, int setupRefreshRequestId)
     {
         _msiInspectionCancellation?.Cancel();
         _msiInspectionCancellation?.Dispose();
@@ -5567,6 +5659,11 @@ public partial class MainViewModel : ObservableObject
 
             if (metadata is null)
             {
+                if (!IsCurrentSetupRefresh(setupRefreshRequestId, msiPath))
+                {
+                    return;
+                }
+
                 MsiMetadataSummary = string.Empty;
                 return;
             }
@@ -5592,9 +5689,12 @@ public partial class MainViewModel : ObservableObject
                 summaryParts.Add(TF("Vm.Msi.WarningFormat", metadata.InspectionWarning));
             }
 
-            MsiMetadataSummary = summaryParts.Count == 0
-                ? T("Vm.Msi.MetadataAvailable")
-                : string.Join(" | ", summaryParts);
+            if (IsCurrentSetupRefresh(setupRefreshRequestId, msiPath))
+            {
+                MsiMetadataSummary = summaryParts.Count == 0
+                    ? T("Vm.Msi.MetadataAvailable")
+                    : string.Join(" | ", summaryParts);
+            }
         }
         catch (OperationCanceledException)
         {

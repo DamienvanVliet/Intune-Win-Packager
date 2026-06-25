@@ -40,6 +40,7 @@ internal sealed class JsonFileStore
     public async Task WriteAsync<T>(string filePath, T payload, CancellationToken cancellationToken = default)
     {
         await _semaphore.WaitAsync(cancellationToken);
+        string? tempPath = null;
         try
         {
             var directory = Path.GetDirectoryName(filePath);
@@ -48,12 +49,46 @@ internal sealed class JsonFileStore
                 Directory.CreateDirectory(directory);
             }
 
-            await using var stream = File.Create(filePath);
-            await JsonSerializer.SerializeAsync(stream, payload, SerializerOptions, cancellationToken);
+            tempPath = Path.Combine(
+                directory ?? AppContext.BaseDirectory,
+                $"{Path.GetFileName(filePath)}.{Guid.NewGuid():N}.tmp");
+
+            await using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                await JsonSerializer.SerializeAsync(stream, payload, SerializerOptions, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+            }
+
+            if (File.Exists(filePath))
+            {
+                File.Replace(tempPath, filePath, null);
+            }
+            else
+            {
+                File.Move(tempPath, filePath);
+            }
+
+            tempPath = null;
         }
         finally
         {
+            TryDeleteTempFile(tempPath);
             _semaphore.Release();
+        }
+    }
+
+    private static void TryDeleteTempFile(string? tempPath)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(tempPath) && File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup only; the next write uses a unique temp name.
         }
     }
 }
