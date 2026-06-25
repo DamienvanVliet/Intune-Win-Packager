@@ -437,7 +437,7 @@ public sealed class SandboxProofService : ISandboxProofService
                 ? candidates.Where(candidate => candidate.IsProven)
                 : candidates;
             var bestCandidate = selectableCandidates
-                .OrderByDescending(candidate => candidate.Score)
+                .OrderByDescending(GetSandboxCandidateSelectionScore)
                 .ThenByDescending(candidate => ConfidenceScore(candidate.Confidence))
                 .ThenBy(candidate => DetectionTypePriority(candidate.Rule.RuleType))
                 .FirstOrDefault();
@@ -957,13 +957,34 @@ public sealed class SandboxProofService : ISandboxProofService
         };
     }
 
+    private static int GetSandboxCandidateSelectionScore(SandboxProofDetectionCandidate candidate)
+    {
+        var score = candidate.Score;
+        if (candidate.Rule.RuleType == IntuneDetectionRuleType.File &&
+            candidate.Rule.File.Operator == IntuneDetectionOperator.Exists)
+        {
+            score += candidate.Rule.File.FileOrFolderName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                ? 10
+                : 8;
+        }
+
+        if (candidate.Rule.RuleType == IntuneDetectionRuleType.Registry &&
+            candidate.Rule.Registry.ValueName.Equals("DisplayVersion", StringComparison.OrdinalIgnoreCase) &&
+            candidate.Rule.Registry.Operator == IntuneDetectionOperator.GreaterThanOrEqual)
+        {
+            score -= 6;
+        }
+
+        return Math.Clamp(score, 0, 100);
+    }
+
     private static int DetectionTypePriority(IntuneDetectionRuleType ruleType)
     {
         return ruleType switch
         {
-            IntuneDetectionRuleType.Registry => 0,
-            IntuneDetectionRuleType.MsiProductCode => 1,
-            IntuneDetectionRuleType.File => 2,
+            IntuneDetectionRuleType.MsiProductCode => 0,
+            IntuneDetectionRuleType.File => 1,
+            IntuneDetectionRuleType.Registry => 2,
             IntuneDetectionRuleType.Script => 3,
             _ => 4
         };

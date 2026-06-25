@@ -5841,8 +5841,11 @@ public partial class MainViewModel : ObservableObject
             ValidationErrors.Add(LocalizeWithFallback(issue.Key, issue.Message));
         }
 
-        RunSandboxProofCommand.NotifyCanExecuteChanged();
-        ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
+        RunSandboxProofCommand?.NotifyCanExecuteChanged();
+        ApplySandboxProofDetectionCommand?.NotifyCanExecuteChanged();
+        PackageCommand?.NotifyCanExecuteChanged();
+        RunPreflightCommand?.NotifyCanExecuteChanged();
+        SaveProfileCommand?.NotifyCanExecuteChanged();
 
         NotifyReadinessChanged();
     }

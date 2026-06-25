@@ -572,6 +572,83 @@ public sealed class SandboxProofServiceTests
     }
 
     [Fact]
+    public async Task ReadResultAsync_WhenRegistryAndFileAreProven_PrefersStableFileExistsDetection()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+            {
+              "schemaVersion": 2,
+              "candidates": [
+                {
+                  "type": "Registry",
+                  "confidence": "High",
+                  "score": 90,
+                  "reason": "New uninstall entry with DisplayVersion after install.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox install, detection, and uninstall validation.",
+                    "negativePhase": { "success": true, "summary": "Registry entry was new.", "details": "" },
+                    "positivePhase": { "success": true, "summary": "Registry comparison passed.", "details": "Actual='1.2.3'" },
+                    "uninstallPhase": { "success": true, "summary": "Uninstall validation cleared 1 detection rule(s).", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "Registry",
+                    "registry": {
+                      "hive": "HKEY_LOCAL_MACHINE",
+                      "keyPath": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VDR Explorer",
+                      "valueName": "DisplayVersion",
+                      "operator": "GreaterThanOrEqual",
+                      "value": "1.2.3"
+                    }
+                  }
+                },
+                {
+                  "type": "File",
+                  "confidence": "High",
+                  "score": 84,
+                  "reason": "New uninstall entry InstallLocation contains an executable install footprint.",
+                  "proof": {
+                    "success": true,
+                    "summary": "Candidate passed sandbox install, detection, and uninstall validation.",
+                    "negativePhase": { "success": true, "summary": "Install folder was new.", "details": "" },
+                    "positivePhase": { "success": true, "summary": "File detection exists check passed.", "details": "" },
+                    "uninstallPhase": { "success": true, "summary": "Uninstall validation cleared 1 detection rule(s).", "details": "" }
+                  },
+                  "rule": {
+                    "ruleType": "File",
+                    "file": {
+                      "path": "C:\\Program Files",
+                      "fileOrFolderName": "VDR Explorer",
+                      "operator": "Exists",
+                      "value": ""
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var sut = new SandboxProofService();
+
+        try
+        {
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.NotNull(result.BestCandidate);
+            Assert.Equal(IntuneDetectionRuleType.File, result.BestCandidate.Rule.RuleType);
+            Assert.Equal(@"C:\Program Files", result.BestCandidate.Rule.File.Path);
+            Assert.Equal("VDR Explorer", result.BestCandidate.Rule.File.FileOrFolderName);
+            Assert.Equal(IntuneDetectionOperator.Exists, result.BestCandidate.Rule.File.Operator);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
     public async Task ReadResultAsync_WhenMsiProductCodeCandidateExists_ParsesMsiRule()
     {
         var tempRoot = CreateTempDirectory();

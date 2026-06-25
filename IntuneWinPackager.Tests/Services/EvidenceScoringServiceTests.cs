@@ -126,6 +126,46 @@ public sealed class EvidenceScoringServiceTests
     }
 
     [Fact]
+    public void Score_PrefersProvenFileDetectionOverProvenRegistry_WhenScoresTie()
+    {
+        var sut = new EvidenceScoringService();
+
+        var decision = sut.Score(new EvidenceScoringRequest
+        {
+            InstallerType = InstallerType.Exe,
+            Candidates =
+            [
+                new EvidenceCandidate
+                {
+                    CandidateId = "sandbox-registry",
+                    DisplayName = "Sandbox registry",
+                    Kind = EvidenceCandidateKind.DetectionRule,
+                    Source = EvidenceSourceType.SandboxSnapshot,
+                    BaseScore = 90,
+                    ProofAvailable = true,
+                    IsProven = true,
+                    DetectionRule = RegistryRule("DisplayVersion", "1.2.3")
+                },
+                new EvidenceCandidate
+                {
+                    CandidateId = "sandbox-file",
+                    DisplayName = "Sandbox file",
+                    Kind = EvidenceCandidateKind.DetectionRule,
+                    Source = EvidenceSourceType.SandboxSnapshot,
+                    BaseScore = 84,
+                    ProofAvailable = true,
+                    IsProven = true,
+                    DetectionRule = FileRule()
+                }
+            ]
+        });
+
+        Assert.NotNull(decision.BestCandidate);
+        Assert.Equal("sandbox-file", decision.BestCandidate!.Candidate.CandidateId);
+        Assert.Equal(EvidenceDecisionStatus.Proven, decision.BestCandidate.Score.Status);
+    }
+
+    [Fact]
     public void Score_RecommendsMsiProductCode_ForMsiInstallerMetadata()
     {
         var sut = new EvidenceScoringService();

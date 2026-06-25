@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.32] - 2026-06-25
+
+### Fixed
+- Sandbox Proof now prefers stable proven File/Folder Exists detection over fragile registry `DisplayVersion >=` evidence for EXE apps when both validate, matching Intune behavior for apps such as VDR Explorer.
+- Packaging command availability now refreshes immediately after catalog import, Sandbox Proof detection apply, and validation updates so Start Packaging is not left disabled after the app fills in valid package data.
+
 ## [3.0.31] - 2026-06-24
 
 ### Fixed

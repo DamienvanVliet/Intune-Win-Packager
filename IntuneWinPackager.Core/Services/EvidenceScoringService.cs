@@ -255,8 +255,8 @@ public sealed class EvidenceScoringService : IEvidenceScoringService
         return ruleType switch
         {
             IntuneDetectionRuleType.MsiProductCode => 0,
-            IntuneDetectionRuleType.Registry => 1,
-            IntuneDetectionRuleType.File => 2,
+            IntuneDetectionRuleType.File => 1,
+            IntuneDetectionRuleType.Registry => 2,
             IntuneDetectionRuleType.Script => 3,
             _ => 99
         };
