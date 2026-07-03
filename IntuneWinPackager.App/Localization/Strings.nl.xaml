@@ -90,7 +90,7 @@
     <sys:String x:Key="Ui.Reset">Reset</sys:String>
     <sys:String x:Key="Ui.OpenOutput">Open Output</sys:String>
     <sys:String x:Key="Ui.Tooltip.StartPackaging">Bouwt de .intunewin-package met de huidige source, setup, commando's, detectieregel en requirements. Gebruik dit pas als validatie groen is. Blokkeert wanneer verplichte argumenten of detectiedata ontbreken.</sys:String>
-    <sys:String x:Key="Ui.Tooltip.SandboxProof">Draait de volledige proof-flow: pre-check op ingestelde detectie, stille install, bewezen detectie-evidence, launch-check, stille uninstall en report.txt/result.json.</sys:String>
+    <sys:String x:Key="Ui.Tooltip.SandboxProof">Draait een schone Windows Sandbox-commandtest en schrijft report.txt/result.json. Install en uninstall kunnen apart getest worden.</sys:String>
     <sys:String x:Key="Ui.Tooltip.FixForMe">Past veilige automatische fixes toe, zoals commandosuggesties, metadata-detectie en gangbare defaults. Controleer daarna de preview en validatie.</sys:String>
     <sys:String x:Key="Ui.Tooltip.Reset">Wist de huidige packageconfiguratie en proof-status. Gebruik dit voordat je met een ander package begint.</sys:String>
     <sys:String x:Key="Ui.Tooltip.OpenOutput">Opent de outputmap of de nieuwste gegenereerde artifactlocatie. Beschikbaar zodra output is ingesteld of een package is gemaakt.</sys:String>
@@ -142,9 +142,13 @@
     <sys:String x:Key="Ui.Verification.Title">Verificatie-aanpak</sys:String>
     <sys:String x:Key="Ui.Verification.Body">1. Run lokale preflight en los alle blokkerende fouten op.&#10;2. Package en controleer de gegenereerde .intune.json en .intune-checklist.md outputs.&#10;3. Valideer install/uninstall/detectie in een schone test-VM voor Intune-import.&#10;4. Maak de app aan in Intune met de checklist en start met een pilot assignment.&#10;5. Bevestig detectie- en uninstall-gedrag via Intune device logs voordat je breed uitrolt.</sys:String>
     <sys:String x:Key="Ui.SandboxProof.Title">Windows Sandbox Proof</sys:String>
-    <sys:String x:Key="Ui.SandboxProof.Description">Start een schone Windows Sandbox-run die beschikbare detectie vooraf controleert, het install command bewijst, detection evidence valideert, het uninstall command verifieert en de beste regel importeert zodra result.json klaar is.</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.Description">Run schone Windows Sandbox-checks apart: test alleen het install command, of test uninstall na een verse install-voorbereiding. Bewezen detectie kan nog steeds vanuit result.json worden toegepast wanneer beschikbaar.</sys:String>
     <sys:String x:Key="Ui.SandboxProof.Run">Run Sandbox Proof</sys:String>
     <sys:String x:Key="Ui.SandboxProof.RunShort">Sandbox Proof</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.TestInstall">Test install in Sandbox</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.TestInstallShort">Test install</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.TestUninstall">Test uninstall in Sandbox</sys:String>
+    <sys:String x:Key="Ui.SandboxProof.TestUninstallShort">Test uninstall</sys:String>
     <sys:String x:Key="Ui.SandboxProof.ApplyDetection">Bewezen detectie toepassen</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenFolder">Open Runmap</sys:String>
     <sys:String x:Key="Ui.SandboxProof.OpenResults">Open Sandbox-resultaten</sys:String>
@@ -472,6 +476,7 @@
     <sys:String x:Key="Vm.Status.SandboxProofRunningTitle">Sandbox Proof</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofRunningMessage">Proof-workspace wordt gemaakt en Windows Sandbox wordt gestart...</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofLaunchedTitle">Sandbox gestart</sys:String>
+    <sys:String x:Key="Vm.Status.SandboxProofCompletedTitle">Sandbox-test voltooid</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofCloseTitle">Sandbox sluiten</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofDetectionAppliedTitle">Detectie toegepast</sys:String>
     <sys:String x:Key="Vm.Status.SandboxProofFailedTitle">Sandbox Proof mislukt</sys:String>

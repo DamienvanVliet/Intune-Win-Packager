@@ -1217,11 +1217,18 @@
                                     <WrapPanel>
                                         <StackPanel Orientation="Horizontal" Margin="0,0,4,6">
                                             <Button Style="{StaticResource PrimaryButtonStyle}"
-                                                    Content="{DynamicResource Ui.SandboxProof.RunShort}"
+                                                    Content="{DynamicResource Ui.SandboxProof.TestInstallShort}"
                                                     MinWidth="140"
                                                     ToolTip="{DynamicResource Ui.Tooltip.SandboxProof}"
-                                                    Command="{Binding RunSandboxProofCommand}" />
+                                                    Command="{Binding TestSandboxInstallCommand}" />
+                                            <Button Style="{StaticResource SecondaryButtonStyle}"
+                                                    Content="{DynamicResource Ui.SandboxProof.TestUninstallShort}"
+                                                    MinWidth="150"
+                                                    Margin="8,0,0,0"
+                                                    ToolTip="{DynamicResource Ui.Tooltip.SandboxProof}"
+                                                    Command="{Binding TestSandboxUninstallCommand}" />
                                             <Border Style="{StaticResource InfoIconBorderStyle}"
+                                                    Margin="8,0,0,0"
                                                     ToolTip="{DynamicResource Ui.Tooltip.SandboxProof}">
                                                 <TextBlock Style="{StaticResource InfoIconTextStyle}" />
                                             </Border>
@@ -1600,9 +1607,13 @@
                                                TextWrapping="Wrap" />
 
                                     <WrapPanel Margin="0,0,0,10">
-                                        <Button Content="{DynamicResource Ui.SandboxProof.Run}"
+                                        <Button Content="{DynamicResource Ui.SandboxProof.TestInstall}"
                                                 Style="{StaticResource PrimaryButtonStyle}"
-                                                Command="{Binding RunSandboxProofCommand}" />
+                                                Command="{Binding TestSandboxInstallCommand}" />
+                                        <Button Content="{DynamicResource Ui.SandboxProof.TestUninstall}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding TestSandboxUninstallCommand}" />
                                         <Button Content="{DynamicResource Ui.SandboxProof.OpenResults}"
                                                 Style="{StaticResource SecondaryButtonStyle}"
                                                 Margin="8,0,0,0"

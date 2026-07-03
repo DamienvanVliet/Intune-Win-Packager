@@ -4,6 +4,8 @@ namespace IntuneWinPackager.Models.Entities;
 
 public sealed record SandboxProofRequest
 {
+    public SandboxProofMode Mode { get; init; } = SandboxProofMode.Full;
+
     public InstallerType InstallerType { get; init; } = InstallerType.Unknown;
 
     public IntuneInstallContext InstallContext { get; init; } = IntuneInstallContext.System;

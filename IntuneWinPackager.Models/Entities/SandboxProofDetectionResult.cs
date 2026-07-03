@@ -1,7 +1,11 @@
+using IntuneWinPackager.Models.Enums;
+
 namespace IntuneWinPackager.Models.Entities;
 
 public sealed record SandboxProofDetectionResult
 {
+    public SandboxProofMode Mode { get; init; } = SandboxProofMode.Full;
+
     public bool Completed { get; init; }
 
     public bool Failed { get; init; }

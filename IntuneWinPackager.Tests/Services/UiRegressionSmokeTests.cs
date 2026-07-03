@@ -40,13 +40,15 @@ public class UiRegressionSmokeTests
         Assert.DoesNotContain("Command=\"{Binding TestDetectionCommand}\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("Command=\"{Binding ProofAndPackageCommand}\"", xaml, StringComparison.Ordinal);
 
-        var sandboxProofCommandIndex = xaml.IndexOf("Command=\"{Binding RunSandboxProofCommand}\"", StringComparison.Ordinal);
+        var sandboxInstallCommandIndex = xaml.IndexOf("Command=\"{Binding TestSandboxInstallCommand}\"", StringComparison.Ordinal);
+        var sandboxUninstallCommandIndex = xaml.IndexOf("Command=\"{Binding TestSandboxUninstallCommand}\"", StringComparison.Ordinal);
         var packageCommandIndex = xaml.IndexOf("Command=\"{Binding PackageCommand}\"", StringComparison.Ordinal);
-        Assert.True(sandboxProofCommandIndex >= 0, "Sandbox Proof command should be visible.");
+        Assert.True(sandboxInstallCommandIndex >= 0, "Sandbox install test command should be visible.");
+        Assert.True(sandboxUninstallCommandIndex >= 0, "Sandbox uninstall test command should be visible.");
         Assert.True(packageCommandIndex >= 0, "Package command should be visible.");
         Assert.True(
-            sandboxProofCommandIndex < packageCommandIndex,
-            "Sandbox Proof should be presented before Start Packaging in the quick actions.");
+            sandboxInstallCommandIndex < packageCommandIndex && sandboxUninstallCommandIndex < packageCommandIndex,
+            "Sandbox install/uninstall tests should be presented before Start Packaging in the quick actions.");
     }
 
     [Fact]
@@ -60,6 +62,8 @@ public class UiRegressionSmokeTests
         var watcher = viewModel[watcherStart..watcherEnd];
 
         Assert.Contains("OpenSandboxResultsCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("TestSandboxInstallCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("TestSandboxUninstallCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("CloseSandboxCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("SandboxProofProgressValue", xaml, StringComparison.Ordinal);
         Assert.Contains("SandboxProofProgressText", xaml, StringComparison.Ordinal);

@@ -45,6 +45,7 @@ public sealed class SandboxProofServiceTests
             var installCommand = input.RootElement.GetProperty("installCommand").GetString();
             var uninstallCommand = input.RootElement.GetProperty("uninstallCommand").GetString();
 
+            Assert.Equal("Full", input.RootElement.GetProperty("mode").GetString());
             Assert.Equal(@"C:\IwpSandboxSource\Example.Setup.exe", sandboxSetupPath);
             Assert.Contains(@"C:\IwpSandboxSource\Example.Setup.exe", installCommand, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(@"C:\IwpSandboxSource\Example.Setup.exe", uninstallCommand, StringComparison.OrdinalIgnoreCase);
@@ -159,6 +160,10 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("New-ProofCommandBatch", script, StringComparison.Ordinal);
             Assert.Contains("system-runner.ps1", script, StringComparison.Ordinal);
             Assert.Contains("timed out inside SYSTEM runner; terminating process tree", script, StringComparison.Ordinal);
+            Assert.Contains("Sandbox proof mode: $proofMode", script, StringComparison.Ordinal);
+            Assert.Contains("$runInstallOnly = $proofMode -eq 'InstallOnly'", script, StringComparison.Ordinal);
+            Assert.Contains("Skipping uninstall command for install-only mode.", script, StringComparison.Ordinal);
+            Assert.Contains("Skipping launch validation for $proofMode mode.", script, StringComparison.Ordinal);
             Assert.DoesNotContain("ReadToEndAsync", script, StringComparison.Ordinal);
         }
         finally
@@ -745,6 +750,98 @@ public sealed class SandboxProofServiceTests
             Assert.Equal(0, result.ProvenCandidateCount);
             Assert.Null(result.BestCandidate);
             Assert.Contains("none passed", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenInstallOnlyCompletesWithoutCandidates_ReturnsSuccessfulInstallTest()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+          {
+            "schemaVersion": 2,
+            "mode": "InstallOnly",
+            "failed": false,
+            "request": {
+              "mode": "InstallOnly"
+            },
+            "install": {
+              "command": "setup.exe /quiet",
+              "exitCode": 0,
+              "timedOut": false
+            },
+            "candidates": []
+          }
+          """);
+
+        try
+        {
+            var sut = new SandboxProofService();
+
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.False(result.Failed);
+            Assert.Equal(SandboxProofMode.InstallOnly, result.Mode);
+            Assert.True(result.InstallProven);
+            Assert.True(result.UninstallProven);
+            Assert.Null(result.BestCandidate);
+            Assert.Contains("Sandbox install test completed successfully", result.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ReadResultAsync_WhenUninstallOnlyCompletesWithoutCandidates_ReturnsSuccessfulUninstallTest()
+    {
+        var tempRoot = CreateTempDirectory();
+        var resultPath = Path.Combine(tempRoot, "result.json");
+        await File.WriteAllTextAsync(resultPath, """
+          {
+            "schemaVersion": 2,
+            "mode": "UninstallOnly",
+            "failed": false,
+            "request": {
+              "mode": "UninstallOnly"
+            },
+            "install": {
+              "command": "setup.exe /quiet",
+              "exitCode": 0,
+              "timedOut": false
+            },
+            "uninstall": {
+              "command": "setup.exe /uninstall /quiet",
+              "exitCode": 0,
+              "timedOut": false
+            },
+            "uninstallValidation": {
+              "success": true
+            },
+            "candidates": []
+          }
+          """);
+
+        try
+        {
+            var sut = new SandboxProofService();
+
+            var result = await sut.ReadResultAsync(resultPath);
+
+            Assert.True(result.Completed);
+            Assert.False(result.Failed);
+            Assert.Equal(SandboxProofMode.UninstallOnly, result.Mode);
+            Assert.True(result.InstallProven);
+            Assert.True(result.UninstallProven);
+            Assert.Null(result.BestCandidate);
+            Assert.Contains("Sandbox uninstall test completed successfully", result.Message, StringComparison.Ordinal);
         }
         finally
         {

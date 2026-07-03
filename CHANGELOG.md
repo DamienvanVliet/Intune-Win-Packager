@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.34] - 2026-07-03
+
+### Changed
+- Windows Sandbox Proof now exposes separate `Test Install` and `Test Uninstall` actions so install and uninstall commands can be validated independently.
+- Install-only sandbox runs now stop after install evidence is collected instead of forcing uninstall, while uninstall tests still prepare a fresh install before validating cleanup.
+
 ## [3.0.33] - 2026-06-25
 
 ### Fixed

@@ -555,7 +555,9 @@ public partial class MainViewModel : ObservableObject
         ApplyPresetCommand = new RelayCommand(ApplySelectedPreset);
         PackageCommand = new AsyncRelayCommand(PackageAsync, CanPackage);
         RunPreflightCommand = new AsyncRelayCommand(RunPreflightAsync, () => !IsBusy);
-        RunSandboxProofCommand = new AsyncRelayCommand(RunSandboxProofAsync, CanRunSandboxProof);
+        RunSandboxProofCommand = new AsyncRelayCommand(() => RunSandboxProofAsync(SandboxProofMode.Full), CanRunSandboxProof);
+        TestSandboxInstallCommand = new AsyncRelayCommand(() => RunSandboxProofAsync(SandboxProofMode.InstallOnly), CanRunSandboxProof);
+        TestSandboxUninstallCommand = new AsyncRelayCommand(() => RunSandboxProofAsync(SandboxProofMode.UninstallOnly), CanRunSandboxProof);
         ApplySandboxProofDetectionCommand = new AsyncRelayCommand(ApplySandboxProofDetectionAsync, CanApplySandboxProofDetection);
         QuickFixCommand = new AsyncRelayCommand(ApplyQuickFixesAsync, () => !IsBusy);
         ResetCommand = new RelayCommand(ResetConfiguration, () => !IsBusy);
@@ -1050,6 +1052,10 @@ public partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand RunPreflightCommand { get; }
 
     public IAsyncRelayCommand RunSandboxProofCommand { get; }
+
+    public IAsyncRelayCommand TestSandboxInstallCommand { get; }
+
+    public IAsyncRelayCommand TestSandboxUninstallCommand { get; }
 
     public IAsyncRelayCommand ApplySandboxProofDetectionCommand { get; }
 
@@ -1622,6 +1628,8 @@ public partial class MainViewModel : ObservableObject
         PackageCommand.NotifyCanExecuteChanged();
         RunPreflightCommand.NotifyCanExecuteChanged();
         RunSandboxProofCommand.NotifyCanExecuteChanged();
+        TestSandboxInstallCommand.NotifyCanExecuteChanged();
+        TestSandboxUninstallCommand.NotifyCanExecuteChanged();
         ApplySandboxProofDetectionCommand.NotifyCanExecuteChanged();
         CreateWorkspaceFoldersCommand.NotifyCanExecuteChanged();
         EnableWindowsSandboxCommand.NotifyCanExecuteChanged();
@@ -2644,7 +2652,7 @@ public partial class MainViewModel : ObservableObject
             uninstallPreview);
     }
 
-    private async Task RunSandboxProofAsync()
+    private async Task RunSandboxProofAsync(SandboxProofMode mode)
     {
         if (!CanRunSandboxProof())
         {
@@ -2652,13 +2660,19 @@ public partial class MainViewModel : ObservableObject
         }
 
         var precheck = BuildSandboxProofPrecheck();
+        var modeLabel = mode switch
+        {
+            SandboxProofMode.InstallOnly => "install command sandbox test",
+            SandboxProofMode.UninstallOnly => "uninstall command sandbox test",
+            _ => "Windows Sandbox proof run"
+        };
         IsBusy = true;
         SandboxProofStatus = T("Vm.SandboxProof.Status.Running");
         SandboxProofCandidateSummary = precheck.Summary;
         IsSandboxProofProgressVisible = true;
         SandboxProofProgressValue = 3;
         SandboxProofProgressText = T("Vm.SandboxProof.Progress.Preparing");
-        AppendLog("Preparing Windows Sandbox proof run...");
+        AppendLog($"Preparing {modeLabel}...");
         AppendLog(precheck.Summary);
 
         SetStatus(
@@ -2668,12 +2682,12 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            var session = await StartSandboxProofSessionAsync(precheck);
+            var session = await StartSandboxProofSessionAsync(precheck, mode);
             ApplySandboxProofSession(session);
 
             if (session.Success)
             {
-                StartSandboxProofWatcher(session, Math.Max(5, MaxRunTimeMinutes));
+                StartSandboxProofWatcher(session, Math.Max(5, MaxRunTimeMinutes), mode);
 
                 SetStatus(
                     OperationState.Success,
@@ -2706,11 +2720,13 @@ public partial class MainViewModel : ObservableObject
 
     private Task<SandboxProofSession> StartSandboxProofSessionAsync(
         SandboxProofPrecheck? precheck = null,
+        SandboxProofMode mode = SandboxProofMode.Full,
         CancellationToken cancellationToken = default)
     {
         precheck ??= BuildSandboxProofPrecheck();
         return _sandboxProofService.StartAsync(new SandboxProofRequest
         {
+            Mode = mode,
             InstallerType = InstallerType,
             InstallContext = InstallContext,
             SourceFolder = SourceFolder,
@@ -2743,7 +2759,7 @@ public partial class MainViewModel : ObservableObject
         AppendLog($"Sandbox proof report path: {session.ReportPath}");
     }
 
-    private void StartSandboxProofWatcher(SandboxProofSession session, int timeoutMinutes)
+    private void StartSandboxProofWatcher(SandboxProofSession session, int timeoutMinutes, SandboxProofMode mode)
     {
         _sandboxProofWatchCancellation?.Cancel();
         _sandboxProofWatchCancellation?.Dispose();
@@ -2758,12 +2774,14 @@ public partial class MainViewModel : ObservableObject
         _ = WatchSandboxProofResultAsync(
             session.ResultPath,
             timeoutMinutes,
+            mode,
             _sandboxProofWatchCancellation.Token);
     }
 
     private async Task WatchSandboxProofResultAsync(
         string resultPath,
         int timeoutMinutes,
+        SandboxProofMode mode,
         CancellationToken cancellationToken)
     {
         try
@@ -2799,7 +2817,14 @@ public partial class MainViewModel : ObservableObject
                     return;
                 }
 
-                if (result.BestCandidate is null)
+                var splitModeSucceeded = mode switch
+                {
+                    SandboxProofMode.InstallOnly => result.InstallProven,
+                    SandboxProofMode.UninstallOnly => result.InstallProven && result.UninstallProven,
+                    _ => false
+                };
+
+                if (result.BestCandidate is null && !splitModeSucceeded)
                 {
                     SandboxProofProgressValue = 100;
                     SandboxProofProgressText = T("Vm.SandboxProof.Progress.NeedsReview");
@@ -2813,7 +2838,17 @@ public partial class MainViewModel : ObservableObject
 
                 SandboxProofProgressValue = 100;
                 SandboxProofProgressText = T("Vm.SandboxProof.Progress.Completed");
-                TryApplySandboxProofDetectionResult(result, showStatus: true);
+                if (mode == SandboxProofMode.Full)
+                {
+                    TryApplySandboxProofDetectionResult(result, showStatus: true);
+                    return;
+                }
+
+                SandboxProofStatus = result.Message;
+                SetStatus(
+                    OperationState.Success,
+                    T("Vm.Status.SandboxProofCompletedTitle"),
+                    result.Message);
             }).ConfigureAwait(false);
 
         }
@@ -5942,6 +5977,8 @@ public partial class MainViewModel : ObservableObject
         }
 
         RunSandboxProofCommand?.NotifyCanExecuteChanged();
+        TestSandboxInstallCommand?.NotifyCanExecuteChanged();
+        TestSandboxUninstallCommand?.NotifyCanExecuteChanged();
         ApplySandboxProofDetectionCommand?.NotifyCanExecuteChanged();
         PackageCommand?.NotifyCanExecuteChanged();
         RunPreflightCommand?.NotifyCanExecuteChanged();
