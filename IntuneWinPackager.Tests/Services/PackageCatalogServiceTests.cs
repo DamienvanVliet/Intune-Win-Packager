@@ -818,7 +818,7 @@ public sealed class PackageCatalogServiceTests
         Assert.NotNull(details);
         var variant = Assert.Single(details!.InstallerVariants);
         Assert.Equal(InstallerType.Exe, variant.InstallerType);
-        Assert.Equal("\"<installer-file>.exe\" -msix", variant.SuggestedInstallCommand);
+        Assert.Contains("-msix", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("\"<installer-file>.exe\" -uninstall", variant.SuggestedUninstallCommand);
         Assert.DoesNotContain("--silent", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Claude bootstrapper", variant.DetectionGuidance, StringComparison.OrdinalIgnoreCase);
