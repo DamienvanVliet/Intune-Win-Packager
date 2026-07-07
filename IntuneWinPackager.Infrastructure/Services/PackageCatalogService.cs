@@ -1898,6 +1898,10 @@ public sealed class PackageCatalogService : IPackageCatalogService
             var uninstallCommand = ResolveUninstallTemplate(template.UninstallCommand, installerType, msiProductCode, appxIdentity);
             var confidence = Math.Min(100, template.ConfidenceScore + 8);
 
+            var guidance = string.IsNullOrWhiteSpace(template.DetectionGuidance)
+                ? detection.Guidance
+                : $"{template.DetectionGuidance} {detection.Guidance}";
+
             variants.Add(BuildInstallerVariant(
                 source,
                 sourceDisplayName,
@@ -1917,7 +1921,7 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 suggestedInstallCommand: installCommand,
                 suggestedUninstallCommand: uninstallCommand,
                 detectionRule: detection.Rule,
-                detectionGuidance: detection.Guidance,
+                detectionGuidance: guidance,
                 isDeterministicDetection: detection.IsDeterministic,
                 confidenceScore: confidence,
                 publishedAtUtc: DateTimeOffset.TryParse(manifest.ReleaseDate, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var releaseDate)
