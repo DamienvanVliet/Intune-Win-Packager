@@ -78,6 +78,11 @@ public sealed class SandboxProofService : ISandboxProofService
             setupSandboxPath,
             sourceFolder,
             SandboxSourceRoot);
+        if (request.InstallerType == InstallerType.Exe && IsClaudeSetupPath(setupPath))
+        {
+            sandboxInstallCommand = NormalizeClaudeInstallCommand(sandboxInstallCommand, setupSandboxPath);
+            sandboxUninstallCommand = NormalizeClaudeUninstallCommand(sandboxUninstallCommand, setupSandboxPath);
+        }
 
         var proofInput = new SandboxProofInput
         {
@@ -1120,6 +1125,39 @@ public sealed class SandboxProofService : ISandboxProofService
         rewritten = ReplacePath(rewritten, setupHostPath, setupSandboxPath);
         rewritten = ReplacePath(rewritten, sourceHostFolder, sourceSandboxFolder);
         return rewritten;
+    }
+
+    private static bool IsClaudeSetupPath(string setupPath)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(setupPath);
+        return fileName.Contains("claude", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeClaudeInstallCommand(string command, string setupSandboxPath)
+    {
+        if (string.IsNullOrWhiteSpace(command) ||
+            command.Contains("--silent", StringComparison.OrdinalIgnoreCase) ||
+            command.Contains("/silent", StringComparison.OrdinalIgnoreCase) ||
+            command.Contains("<silent-args>", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{QuoteCommandValue(setupSandboxPath)} -msix";
+        }
+
+        return command;
+    }
+
+    private static string NormalizeClaudeUninstallCommand(string command, string setupSandboxPath)
+    {
+        if (string.IsNullOrWhiteSpace(command) ||
+            command.Contains("--silent", StringComparison.OrdinalIgnoreCase) ||
+            command.Contains("/silent", StringComparison.OrdinalIgnoreCase) ||
+            command.Contains("<auto-detect-uninstall>", StringComparison.OrdinalIgnoreCase) ||
+            command.Contains("<uninstall-args>", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{QuoteCommandValue(setupSandboxPath)} -uninstall";
+        }
+
+        return command;
     }
 
     private static string ReplacePath(string input, string hostPath, string sandboxPath)

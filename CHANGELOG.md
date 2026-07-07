@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.40] - 2026-07-07
+
+### Fixed
+- Claude Setup.exe commands are now corrected defensively before packaging and before Sandbox Proof starts, so stale profiles or cached suggestions using `--silent` are replaced with `-msix` and `-uninstall`.
+- Sandbox Proof also normalizes Claude commands inside the proof workspace as a final safety net, preventing old UI state from launching the unsupported Claude `--silent` path.
+
 ## [3.0.39] - 2026-07-07
 
 ### Fixed

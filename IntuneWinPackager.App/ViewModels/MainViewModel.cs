@@ -2659,6 +2659,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        NormalizeClaudeCommandsIfNeeded(refreshUi: true);
         var precheck = BuildSandboxProofPrecheck();
         var modeLabel = mode switch
         {
@@ -4036,6 +4037,71 @@ public partial class MainViewModel : ObservableObject
     private static bool ContainsCatalogTemplatePlaceholder(string command)
     {
         return !string.IsNullOrWhiteSpace(command) && CommandPlaceholderRegex.IsMatch(command);
+    }
+
+    private void NormalizeClaudeCommandsIfNeeded(bool refreshUi)
+    {
+        if (InstallerType != InstallerType.Exe ||
+            !IsClaudeSetupFile(SetupFilePath))
+        {
+            return;
+        }
+
+        var setupFileName = Path.GetFileName(SetupFilePath);
+        var changed = false;
+        if (IsUnsafeClaudeInstallCommand(InstallCommand))
+        {
+            InstallCommand = $"\"{setupFileName}\" -msix";
+            changed = true;
+        }
+
+        if (IsUnsafeClaudeUninstallCommand(UninstallCommand))
+        {
+            UninstallCommand = $"\"{setupFileName}\" -uninstall";
+            changed = true;
+        }
+
+        if (InstallContext != IntuneInstallContext.User)
+        {
+            InstallContext = IntuneInstallContext.User;
+            changed = true;
+        }
+
+        if (changed && refreshUi)
+        {
+            AppendLog("Claude Setup.exe command corrected: use -msix for install and -uninstall for removal; --silent is not supported by Claude.");
+            RefreshSwitchVerificationStatus();
+            UpdateValidation();
+            NotifyReadinessChanged();
+        }
+    }
+
+    private static bool IsClaudeSetupFile(string setupFilePath)
+    {
+        if (string.IsNullOrWhiteSpace(setupFilePath))
+        {
+            return false;
+        }
+
+        return Path.GetFileNameWithoutExtension(setupFilePath)
+            .Contains("claude", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUnsafeClaudeInstallCommand(string command)
+    {
+        return string.IsNullOrWhiteSpace(command) ||
+               command.Contains("--silent", StringComparison.OrdinalIgnoreCase) ||
+               command.Contains("/silent", StringComparison.OrdinalIgnoreCase) ||
+               command.Contains("<silent-args>", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUnsafeClaudeUninstallCommand(string command)
+    {
+        return string.IsNullOrWhiteSpace(command) ||
+               command.Contains("--silent", StringComparison.OrdinalIgnoreCase) ||
+               command.Contains("/silent", StringComparison.OrdinalIgnoreCase) ||
+               command.Contains("<auto-detect-uninstall>", StringComparison.OrdinalIgnoreCase) ||
+               command.Contains("<uninstall-args>", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ApplyCatalogMetadataToCurrentPackage(
@@ -5784,6 +5850,7 @@ public partial class MainViewModel : ObservableObject
 
     private PackageConfiguration BuildConfiguration()
     {
+        NormalizeClaudeCommandsIfNeeded(refreshUi: false);
         return new PackageConfiguration
         {
             SourceFolder = SourceFolder,

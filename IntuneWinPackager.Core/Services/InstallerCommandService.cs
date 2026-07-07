@@ -233,7 +233,9 @@ public sealed class InstallerCommandService : IInstallerCommandService
             installerType,
             sourceChannelHint,
             installerArchitectureHint);
-        if (lookupContext is not null && TryGetKnowledgeEntry(lookupContext, out var cachedEntry))
+        if (lookupContext is not null &&
+            TryGetKnowledgeEntry(lookupContext, out var cachedEntry) &&
+            !ShouldBypassKnowledgeCache(setupFilePath, installerType, cachedEntry))
         {
             var cachedRules = NormalizeVerifiedCacheRules(installerType, cachedEntry.IntuneRules);
             var cacheGuidance = string.IsNullOrWhiteSpace(cachedEntry.TemplateGuidance)
@@ -991,6 +993,24 @@ public sealed class InstallerCommandService : IInstallerCommandService
             PersistKnowledgeStoreUnsafe();
             return true;
         }
+    }
+
+    private static bool ShouldBypassKnowledgeCache(
+        string setupFilePath,
+        InstallerType installerType,
+        InstallerKnowledgeEntry entry)
+    {
+        if (installerType != InstallerType.Exe ||
+            !Path.GetFileNameWithoutExtension(setupFilePath).Contains("claude", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return entry.InstallCommand.Contains("--silent", StringComparison.OrdinalIgnoreCase) ||
+               entry.InstallCommand.Contains("/silent", StringComparison.OrdinalIgnoreCase) ||
+               entry.UninstallCommand.Contains("--silent", StringComparison.OrdinalIgnoreCase) ||
+               entry.UninstallCommand.Contains("/silent", StringComparison.OrdinalIgnoreCase) ||
+               entry.UninstallCommand.Contains("<auto-detect-uninstall>", StringComparison.OrdinalIgnoreCase);
     }
 
     private void EnsureKnowledgeLoaded()

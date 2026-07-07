@@ -260,6 +260,47 @@ public sealed class SandboxProofServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_WhenClaudeCommandIsStale_RewritesUnsupportedSilentSwitches()
+    {
+        var tempRoot = CreateTempDirectory();
+        var setupPath = Path.Combine(tempRoot, "Claude Setup.exe");
+        await File.WriteAllTextAsync(setupPath, "not a real exe");
+
+        var sut = new SandboxProofService();
+
+        var session = await sut.StartAsync(new SandboxProofRequest
+        {
+            InstallerType = InstallerType.Exe,
+            InstallContext = IntuneInstallContext.User,
+            SourceFolder = tempRoot,
+            SetupFilePath = setupPath,
+            InstallCommand = "\"Claude Setup.exe\" --silent",
+            UninstallCommand = "\"Claude Setup.exe\" <auto-detect-uninstall>",
+            DetectionRule = BuildFileDetectionRule(),
+            LaunchSandbox = false
+        });
+
+        try
+        {
+            Assert.True(session.Success);
+
+            var input = await ReadInputAsync(session.InputPath);
+            var installCommand = input.RootElement.GetProperty("installCommand").GetString();
+            var uninstallCommand = input.RootElement.GetProperty("uninstallCommand").GetString();
+
+            Assert.Equal("\"C:\\IwpSandboxSource\\Claude Setup.exe\" -msix", installCommand);
+            Assert.Equal("\"C:\\IwpSandboxSource\\Claude Setup.exe\" -uninstall", uninstallCommand);
+            Assert.DoesNotContain("--silent", installCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("<auto-detect-uninstall>", uninstallCommand, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(session.RunDirectory);
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
     public async Task StartAsync_WhenSetupMissing_ReturnsFailure()
     {
         var sut = new SandboxProofService();
