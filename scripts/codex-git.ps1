@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('status', 'push-main', 'push-tag', 'publish-current')]
+    [ValidateSet('status', 'push-main', 'push-tag', 'delete-tag', 'publish-current')]
     [string]$Action,
 
     [string]$Tag = '',
@@ -81,6 +81,23 @@ switch ($Action) {
         }
 
         Show-HelpfulPushFailure { Invoke-Git push $Remote "$head`:refs/tags/$Tag" }
+    }
+    'delete-tag' {
+        if ([string]::IsNullOrWhiteSpace($Tag)) {
+            throw 'Tag is required for delete-tag.'
+        }
+
+        Disable-DeadProxyForGitProcess
+        $localTag = (& git tag --list $Tag).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not inspect local tag $Tag."
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($localTag)) {
+            Invoke-Git tag -d $Tag
+        }
+
+        Show-HelpfulPushFailure { Invoke-Git push $Remote ":refs/tags/$Tag" }
     }
     'publish-current' {
         if ([string]::IsNullOrWhiteSpace($Tag)) {
