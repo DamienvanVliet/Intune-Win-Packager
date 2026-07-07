@@ -88,11 +88,12 @@ switch ($Action) {
         }
 
         Disable-DeadProxyForGitProcess
-        $localTag = (& git tag --list $Tag).Trim()
+        $localTagOutput = & git tag --list $Tag
         if ($LASTEXITCODE -ne 0) {
             throw "Could not inspect local tag $Tag."
         }
 
+        $localTag = ($localTagOutput -join "`n").Trim()
         if (-not [string]::IsNullOrWhiteSpace($localTag)) {
             Invoke-Git tag -d $Tag
         }
