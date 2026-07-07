@@ -721,7 +721,10 @@ public sealed class PackageCatalogServiceTests
         Assert.Equal("DisplayVersion", variant.DetectionRule.Registry.ValueName);
         Assert.Equal(IntuneDetectionOperator.Equals, variant.DetectionRule.Registry.Operator);
         Assert.Equal("4.5.6", variant.DetectionRule.Registry.Value);
-        Assert.Equal(2, variant.AdditionalDetectionRules.Count);
+        Assert.Collection(
+            variant.AdditionalDetectionRules,
+            _ => { },
+            _ => { });
         Assert.Contains(variant.AdditionalDetectionRules, rule =>
             rule.RuleType == IntuneDetectionRuleType.Registry &&
             rule.Registry.ValueName == "DisplayName" &&

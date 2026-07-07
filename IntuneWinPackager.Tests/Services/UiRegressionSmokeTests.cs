@@ -87,8 +87,8 @@ public class UiRegressionSmokeTests
         var missingInDutch = englishKeys.Except(dutchKeys).ToList();
         var missingInEnglish = dutchKeys.Except(englishKeys).ToList();
 
-        Assert.True(missingInDutch.Count == 0, $"Missing Dutch keys: {string.Join(", ", missingInDutch)}");
-        Assert.True(missingInEnglish.Count == 0, $"Missing English keys: {string.Join(", ", missingInEnglish)}");
+        Assert.Empty(missingInDutch);
+        Assert.Empty(missingInEnglish);
     }
 
     [Fact]

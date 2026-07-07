@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.0.37] - 2026-07-07
+## [3.0.38] - 2026-07-07
 
 ### Fixed
 - Claude Setup.exe is now detected as the Claude bootstrapper and no longer receives the invalid `--silent` argument; generated commands use `-msix` for install and `-uninstall` for removal.
