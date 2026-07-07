@@ -113,7 +113,7 @@ public class UiRegressionSmokeTests
 
         Assert.Contains("_suppressSetupRefresh = true;", selectMethod, StringComparison.Ordinal);
         Assert.Contains("_suppressSetupRefresh = wasSuppressingSetupRefresh;", selectMethod, StringComparison.Ordinal);
-        Assert.Equal(1, Regex.Matches(selectMethod, "HandleSetupFileChangedAsync").Count);
+        Assert.Single(Regex.Matches(selectMethod, "HandleSetupFileChangedAsync"));
         Assert.Contains("private int _setupRefreshRequestId;", viewModel, StringComparison.Ordinal);
         Assert.Contains("IsCurrentSetupRefresh(requestId, filePath)", viewModel, StringComparison.Ordinal);
         Assert.Contains("_ = RefreshSetupFilePathAsync(value);", viewModel, StringComparison.Ordinal);
