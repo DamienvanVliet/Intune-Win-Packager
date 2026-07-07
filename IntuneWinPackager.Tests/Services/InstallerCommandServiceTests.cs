@@ -124,7 +124,7 @@ public class InstallerCommandServiceTests
         var sut = new InstallerCommandService();
         var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-squirrel-exe-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
-        var setupFile = Path.Combine(tempRoot, "ClaudeSetup.exe");
+        var setupFile = Path.Combine(tempRoot, "AcmeChatSetup.exe");
         File.WriteAllText(setupFile, "squirrel --squirrel-install --squirrel-uninstall");
 
         try
@@ -134,9 +134,38 @@ public class InstallerCommandServiceTests
                 installerType: InstallerType.Exe);
 
             Assert.Contains("--silent", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal("\"ClaudeSetup.exe\" <auto-detect-uninstall>", suggestion.UninstallCommand);
+            Assert.Equal("\"AcmeChatSetup.exe\" <auto-detect-uninstall>", suggestion.UninstallCommand);
             Assert.Equal(IntuneInstallContext.User, suggestion.SuggestedRules.InstallContext);
             Assert.True(suggestion.SuggestedRules.RequireSilentSwitchReview);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CreateSuggestion_ForClaudeBootstrapper_DoesNotUseInvalidSilentFlag()
+    {
+        var sut = new InstallerCommandService();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"iwp-claude-exe-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var setupFile = Path.Combine(tempRoot, "Claude Setup.exe");
+        File.WriteAllText(
+            setupFile,
+            "Usage of Claude Setup.exe: -all-users -elevated -exe -local-msix string -log-path string -msix -msix-path string -uninstall");
+
+        try
+        {
+            var suggestion = sut.CreateSuggestion(
+                setupFilePath: setupFile,
+                installerType: InstallerType.Exe);
+
+            Assert.Equal("\"Claude Setup.exe\" -msix", suggestion.InstallCommand);
+            Assert.Equal("\"Claude Setup.exe\" -uninstall", suggestion.UninstallCommand);
+            Assert.DoesNotContain("--silent", suggestion.InstallCommand, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(IntuneInstallContext.User, suggestion.SuggestedRules.InstallContext);
+            Assert.Contains("Claude bootstrapper", suggestion.SuggestedRules.TemplateGuidance, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

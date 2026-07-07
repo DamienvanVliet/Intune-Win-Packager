@@ -5735,6 +5735,15 @@ public sealed class PackageCatalogService : IPackageCatalogService
                 50);
         }
 
+        if (installerType == InstallerType.Exe && IsAnthropicClaudePackage(packageId))
+        {
+            return new(
+                "\"<installer-file>.exe\" -msix",
+                "\"<installer-file>.exe\" -uninstall",
+                "Claude bootstrapper detected. Do not use --silent; Claude Setup.exe exposes -msix for install and -uninstall for removal. Validate in user context before packaging.",
+                82);
+        }
+
         if (installerType == InstallerType.Msi)
         {
             return new("msiexec /i \"<installer-file>.msi\" /quiet /norestart", "msiexec /x \"{PRODUCT-CODE}\" /quiet /norestart", "Use MSI Product Code detection in Intune.", 90);
@@ -5777,6 +5786,12 @@ public sealed class PackageCatalogService : IPackageCatalogService
     {
         return packageId.Equals("Foxit.FoxitReader", StringComparison.OrdinalIgnoreCase) ||
                packageId.Equals("Foxit.FoxitReader.Inno", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAnthropicClaudePackage(string packageId)
+    {
+        return packageId.Equals("Anthropic.Claude", StringComparison.OrdinalIgnoreCase) ||
+               packageId.Equals("Claude", StringComparison.OrdinalIgnoreCase);
     }
 
     private static InstallerType InferInstallerType(string? raw, string? fallback)

@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.35] - 2026-07-07
+
+### Fixed
+- Claude Setup.exe is now detected as the Claude bootstrapper and no longer receives the invalid `--silent` argument; generated commands use `-msix` for install and `-uninstall` for removal.
+- Sandbox install tests now stop immediately on a failed install command and write `result.json`/`report.txt` with the real exit code instead of continuing into expensive evidence collection.
+
 ## [3.0.34] - 2026-07-03
 
 ### Changed

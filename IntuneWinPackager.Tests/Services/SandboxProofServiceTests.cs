@@ -162,6 +162,8 @@ public sealed class SandboxProofServiceTests
             Assert.Contains("timed out inside SYSTEM runner; terminating process tree", script, StringComparison.Ordinal);
             Assert.Contains("Sandbox proof mode: $proofMode", script, StringComparison.Ordinal);
             Assert.Contains("$runInstallOnly = $proofMode -eq 'InstallOnly'", script, StringComparison.Ordinal);
+            Assert.Contains("Sandbox proof stopped after install failure", script, StringComparison.Ordinal);
+            Assert.Contains("Install failed before post-install evidence collection", script, StringComparison.Ordinal);
             Assert.Contains("Skipping uninstall command for install-only mode.", script, StringComparison.Ordinal);
             Assert.Contains("Skipping launch validation for $proofMode mode.", script, StringComparison.Ordinal);
             Assert.DoesNotContain("ReadToEndAsync", script, StringComparison.Ordinal);

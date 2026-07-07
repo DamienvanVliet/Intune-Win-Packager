@@ -512,6 +512,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
                 BaseConfidenceScore = 32
             })
             : BuildTemplateFromPreset(preset);
+        var isClaudeBootstrapper = IsClaudeBootstrapperTemplate(template);
 
         var quotedSetup = $"\"{setupFileName}\"";
         var installArguments = template.InstallArguments;
@@ -640,6 +641,7 @@ public sealed class InstallerCommandService : IInstallerCommandService
             SuggestedRules = new IntuneWin32AppRules
             {
                 InstallContext = template.Framework == ExeInstallerFramework.Squirrel
+                    || isClaudeBootstrapper
                     ? IntuneInstallContext.User
                     : IntuneInstallContext.System,
                 RestartBehavior = IntuneRestartBehavior.DetermineBehaviorBasedOnReturnCodes,
@@ -796,6 +798,18 @@ public sealed class InstallerCommandService : IInstallerCommandService
         var productName = versionInfo?.ProductName?.ToLowerInvariant() ?? string.Empty;
         var fileDescription = versionInfo?.FileDescription?.ToLowerInvariant() ?? string.Empty;
         var signerSubject = TryGetSignerSubject(setupFilePath).ToLowerInvariant();
+        if (IsClaudeBootstrapper(setupFilePath, markersText, fileName, productName, fileDescription, signerSubject))
+        {
+            return new ExeFrameworkTemplate
+            {
+                Framework = ExeInstallerFramework.VendorSpecific,
+                Name = "Claude Bootstrapper",
+                InstallArguments = "-msix",
+                UninstallArguments = "-uninstall",
+                Guidance = "Claude bootstrapper detected. Claude Setup.exe does not accept --silent; use the vendor MSIX bootstrap path and validate install/uninstall in user context.",
+                BaseConfidenceScore = 82
+            };
+        }
 
         foreach (var template in ExeFrameworkTemplates)
         {
@@ -819,6 +833,35 @@ public sealed class InstallerCommandService : IInstallerCommandService
             Guidance = "Installer framework could not be determined. Provide vendor-specific silent install/uninstall switches.",
             BaseConfidenceScore = 32
         };
+    }
+
+    private static bool IsClaudeBootstrapper(
+        string setupFilePath,
+        string markersText,
+        string fileName,
+        string productName,
+        string fileDescription,
+        string signerSubject)
+    {
+        var combined = string.Join(
+            " ",
+            Path.GetFileName(setupFilePath),
+            fileName,
+            productName,
+            fileDescription,
+            signerSubject,
+            markersText).ToLowerInvariant();
+
+        return combined.Contains("claude", StringComparison.Ordinal) &&
+               combined.Contains("-msix", StringComparison.Ordinal) &&
+               combined.Contains("-uninstall", StringComparison.Ordinal) &&
+               combined.Contains("-local-msix", StringComparison.Ordinal);
+    }
+
+    private static bool IsClaudeBootstrapperTemplate(ExeFrameworkTemplate template)
+    {
+        return template.Framework == ExeInstallerFramework.VendorSpecific &&
+               template.Name.Contains("Claude", StringComparison.OrdinalIgnoreCase);
     }
 
     private static ExeFrameworkTemplate BuildTemplateFromPreset(SilentInstallPreset preset)

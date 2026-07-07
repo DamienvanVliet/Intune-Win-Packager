@@ -3370,6 +3370,72 @@ try {
     $executionMode = if ([string]$inputData.installContext -eq 'User') { 'User' } else { 'System' }
     $installResult = Invoke-ProofCommand -Command ([string]$inputData.installCommand) -WorkingDirectory ([string]$inputData.sandboxWorkingDirectory) -TimeoutMinutes ([int]$inputData.timeoutMinutes) -Phase 'install' -ExecutionMode $executionMode
     Start-Sleep -Seconds 3
+    $installAcceptedEarly = Test-ProofCommandSucceeded -Result $installResult
+    if (-not $installAcceptedEarly) {
+        $emptyDiff = [pscustomobject]@{
+            newUninstallEntries = @()
+            newProgramDirectories = @()
+            newExecutables = @()
+            newServices = @()
+            newScheduledTasks = @()
+            newShortcuts = @()
+        }
+        $installFailureMessage = if ([bool]$installResult.timedOut) {
+            'Install command timed out before completing unattended.'
+        } else {
+            "Install command failed with exit code $($installResult.exitCode)."
+        }
+        $result = [pscustomobject]@{
+            schemaVersion = 2
+            mode = $proofMode
+            completedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+            failed = $true
+            failureKind = 'Install'
+            error = $installFailureMessage
+            precheck = [pscustomobject]@{
+                detectionRuleAvailable = [bool]$inputData.precheckDetectionRuleAvailable
+                additionalDetectionRuleCount = [int]$inputData.precheckAdditionalDetectionRuleCount
+                summary = [string]$inputData.precheckSummary
+                ruleType = [string]$inputData.detectionRule.ruleType
+            }
+            request = $inputData
+            install = $installResult
+            uninstall = $null
+            uninstallResolution = $null
+            uninstallValidation = $null
+            launchRemediation = $null
+            launchValidation = $null
+            preInstallDetection = $preDetection
+            postInstallDetection = $null
+            postUninstallDetection = $null
+            diff = $emptyDiff
+            candidates = @()
+            snapshots = [pscustomobject]@{
+                baseline = $baseline
+                postInstall = $null
+                postUninstall = $null
+            }
+        }
+
+        $result | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+        Set-Content -LiteralPath $ReportPath -Value @(
+            'Intune Win Packager - Windows Sandbox Proof',
+            '================================================',
+            '',
+            "Mode: $proofMode",
+            "Install command: $($inputData.installCommand)",
+            "Install exit code: $($installResult.exitCode)",
+            "Install timed out: $($installResult.timedOut)",
+            "Install verdict: Failed - $installFailureMessage",
+            '',
+            'Install failed before post-install evidence collection. Fix the install command and run the sandbox test again.',
+            '',
+            'Full machine-readable evidence is available in result.json.'
+        ) -Encoding UTF8
+        Set-Content -LiteralPath $CompletedMarkerPath -Value (Get-Date).ToUniversalTime().ToString('o') -Encoding UTF8
+        Write-ProofLog "Sandbox proof stopped after install failure: $installFailureMessage"
+        return
+    }
 
     $postInstall = Get-Snapshot -Name 'post-install'
     $postDetection = Test-ProofDetection -Rule $inputData.detectionRule

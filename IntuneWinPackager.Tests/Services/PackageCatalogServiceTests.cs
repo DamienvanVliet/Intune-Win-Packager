@@ -733,6 +733,98 @@ public sealed class PackageCatalogServiceTests
     }
 
     [Fact]
+    public async Task GetDetailsAsync_WingetManifestClaudeExe_UsesClaudeBootstrapperSwitches()
+    {
+        var processRunner = new StubProcessRunner(
+        [
+            new StubProcessResult(0,
+            [
+                "Found Claude [Anthropic.Claude]",
+                "Version: 1.5354.0",
+                "Publisher: Anthropic",
+                "Installer:",
+                "  No applicable installer found; see logs for more details."
+            ])
+        ]);
+
+        using var httpClient = new HttpClient(new StaticHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            if (url.EndsWith("Anthropic.Claude.installer.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Anthropic.Claude
+                    PackageVersion: 1.5354.0
+                    InstallerType: exe
+                    Installers:
+                    - Architecture: x64
+                      Scope: user
+                      InstallerUrl: https://download.example.test/claude-setup.exe
+                      InstallerSha256: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+                    ManifestType: installer
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Anthropic.Claude.locale.en-US.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Anthropic.Claude
+                    PackageVersion: 1.5354.0
+                    PackageLocale: en-US
+                    Publisher: Anthropic
+                    PackageName: Claude
+                    ManifestType: defaultLocale
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            if (url.EndsWith("Anthropic.Claude.yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    PackageIdentifier: Anthropic.Claude
+                    PackageVersion: 1.5354.0
+                    DefaultLocale: en-US
+                    ManifestType: version
+                    ManifestVersion: 1.12.0
+                    """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var sut = new PackageCatalogService(processRunner, httpClient);
+        var entry = new PackageCatalogEntry
+        {
+            Source = PackageCatalogSource.Winget,
+            SourceDisplayName = "WinGet",
+            SourceChannel = "winget",
+            PackageId = "Anthropic.Claude",
+            Name = "Claude",
+            Version = "1.5354.0"
+        };
+
+        var details = await sut.GetDetailsAsync(entry);
+
+        Assert.NotNull(details);
+        var variant = Assert.Single(details!.InstallerVariants);
+        Assert.Equal(InstallerType.Exe, variant.InstallerType);
+        Assert.Equal("\"<installer-file>.exe\" -msix", variant.SuggestedInstallCommand);
+        Assert.Equal("\"<installer-file>.exe\" -uninstall", variant.SuggestedUninstallCommand);
+        Assert.DoesNotContain("--silent", variant.SuggestedInstallCommand, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Claude bootstrapper", variant.DetectionGuidance, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task GetDetailsAsync_WingetManifestExe_CustomOnlySwitchesKeepInstallerSilentTemplate()
     {
         var processRunner = new StubProcessRunner(
